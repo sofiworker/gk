@@ -2,6 +2,8 @@ package ghttp
 
 import (
 	"encoding/json"
+	"encoding/xml"
+	"gopkg.in/yaml.v3"
 	"io"
 	"sync"
 )
@@ -18,9 +20,9 @@ func init() {
 		decoders: make(map[string]Decoder),
 	}
 
-	_ = RegisterDecoder("application/json", &jsonDecoder{})
-	_ = RegisterDecoder("application/xml", &xmlDecoder{})
-	_ = RegisterDecoder("application/yaml", &yamlDecoder{})
+	_ = RegisterDecoder("application/json", NewJsonDecoder())
+	_ = RegisterDecoder("application/xml", NewXmlDecoder())
+	_ = RegisterDecoder("application/yaml", NewYamlDecoder())
 }
 
 func RegisterDecoder(name string, d Decoder) error {
@@ -53,13 +55,21 @@ func (d *jsonDecoder) Decode(reader io.Reader, v interface{}) error {
 
 type xmlDecoder struct{}
 
+func NewXmlDecoder() Decoder {
+	return &xmlDecoder{}
+}
+
 func (d *xmlDecoder) Decode(reader io.Reader, v interface{}) error {
-	return nil
+	return xml.NewDecoder(reader).Decode(v)
 }
 
 type yamlDecoder struct {
 }
 
+func NewYamlDecoder() Decoder {
+	return &yamlDecoder{}
+}
+
 func (d *yamlDecoder) Decode(reader io.Reader, v interface{}) error {
-	return nil
+	return yaml.NewDecoder(reader).Decode(v)
 }

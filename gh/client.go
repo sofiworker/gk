@@ -52,7 +52,7 @@ func NewClient() *Client {
 	}
 	return &Client{fastClient: c,
 		defaultDecoder: NewJsonDecoder(),
-		resolver:       gresolver.NewDefaultResolver(),
+		resolver:       gresolver.NewDefaultResolver(nil),
 		readTimeout:    defaultTimeout,
 		writeTimeout:   defaultTimeout,
 	}

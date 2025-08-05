@@ -1,14 +1,12 @@
 package ghttp
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/valyala/fasthttp"
 	"gk/gresolver"
 	"io"
 	"mime"
-	"net"
 	"reflect"
 	"time"
 )
@@ -155,16 +153,7 @@ func (r *Request) Done() (*Response, error) {
 
 	if r.resolver != nil {
 		r.client.fastClient.Dial = (&fasthttp.TCPDialer{
-			Resolver: &net.Resolver{
-				PreferGo:     true,
-				StrictErrors: false,
-				Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-					return r.resolver.GoResolve(ctx, network, address)
-					//d := net.Dialer{}
-					//d.DialContext(ctx, "tcp", addr)
-					//return nil, nil
-				},
-			},
+			Resolver: r.resolver,
 		}).Dial
 	}
 
