@@ -1,4 +1,3 @@
-// router.go
 package ghttp
 
 import (
@@ -17,11 +16,6 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/valyala/fasthttp"
 )
-
-// Context 封装 fasthttp.RequestCtx 提供更友好的 API
-type Context struct {
-	ctx *fasthttp.RequestCtx
-}
 
 // NewContext 创建新的 Context 实例
 func NewContext(ctx *fasthttp.RequestCtx) *Context {

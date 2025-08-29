@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	defaultTimeout = 30 * time.Second
+	DefaultTimeout = 30 * time.Second
 )
 
 var (
@@ -50,8 +50,8 @@ type Client struct {
 	readTimeout             time.Duration
 	writeTimeout            time.Duration
 	cache                   Cache
-	unifiedResponseTemplate interface{} // 统一响应体模板
-	enableUnifiedResponse   bool        // 是否启用统一响应体处理
+	unifiedResponseTemplate interface{}
+	enableUnifiedResponse   bool
 	redirectConfig          RedirectConfig
 	uploadConfig            UploadConfig
 	http2Config             HTTP2Config
@@ -59,19 +59,17 @@ type Client struct {
 	middlewares             []MiddlewareFunc
 }
 
-// 在 NewClient 中添加默认HTTP/2配置
 func NewClient() *Client {
 	c := &fasthttp.Client{
-		ReadTimeout:  defaultTimeout,
-		WriteTimeout: defaultTimeout,
-		// HTTP/2 配置需要在底层支持
+		ReadTimeout:  DefaultTimeout,
+		WriteTimeout: DefaultTimeout,
 	}
 	return &Client{
 		fastClient:     c,
 		defaultDecoder: NewJsonDecoder(),
 		resolver:       gresolver.NewDefaultResolver(nil),
-		readTimeout:    defaultTimeout,
-		writeTimeout:   defaultTimeout,
+		readTimeout:    DefaultTimeout,
+		writeTimeout:   DefaultTimeout,
 		uploadConfig: UploadConfig{
 			LargeFileSizeThreshold: 100 * 1024 * 1024,
 			UseStreamingUpload:     true,
@@ -123,19 +121,19 @@ func (c *Client) SetResolver(r gresolver.Resolver) *Client {
 	return c
 }
 
-func (c *Client) SetBeforeRequestHook(hooks ...func(r *Request)) *Client {
+func (c *Client) SetBeforeRequestHook(hooks ...Middleware) *Client {
 	return c
 }
 
-func (c *Client) SeAfterRequestHook(hooks ...func(r *Request)) *Client {
+func (c *Client) SeAfterRequestHook(hooks ...Middleware) *Client {
 	return c
 }
 
-func (c *Client) SetBeforeResponseHook(hooks ...func(r *Request, resp *Response)) *Client {
+func (c *Client) SetBeforeResponseHook(hooks ...Middleware) *Client {
 	return c
 }
 
-func (c *Client) SetAfterResponseHook(hooks ...func(r *Request, resp *Response)) *Client {
+func (c *Client) SetAfterResponseHook(hooks ...Middleware) *Client {
 	return c
 }
 
@@ -218,7 +216,6 @@ func SendFile(url string, file *os.File) (*Response, error) {
 	return defaultClient.R().SetMethod(http.MethodPut).SetUrl(url).Done()
 }
 
-// Client 级别的便捷方法
 func (c *Client) WebSocket(url string) *WebSocketRequest {
 	return NewWebSocketRequest(defaultClient.R())
 }
@@ -227,7 +224,6 @@ func WebSocket(url string, handler WebSocketHandler) *WebSocketRequest {
 	return defaultClient.WebSocket(url).SetWebSocketHandler(handler)
 }
 
-// 全局便捷方法
 func SSE(url string, handler SSEHandler) *SSERequest {
 	return defaultClient.SSE(url).SetSSEHandler(handler)
 }
@@ -247,7 +243,6 @@ func (c *Client) SetConnectionPool(poolSize int, idleTimeout time.Duration) *Cli
 	return c
 }
 
-// 添加响应缓存支持
 type Cache interface {
 	Get(key string) ([]byte, bool)
 	Set(key string, data []byte, expiration time.Duration)
@@ -258,7 +253,6 @@ func (c *Client) SetCache(cache Cache) *Client {
 	return c
 }
 
-// 添加条件请求支持
 func (r *Request) SetIfModifiedSince(time time.Time) *Request {
 	r.fr.Header.Set("If-Modified-Since", time.Format(http.TimeFormat))
 	return r
@@ -275,52 +269,42 @@ func (c *Client) SetUnifiedResponse(template interface{}) *Client {
 	return c
 }
 
-// client.go 中添加重定向配置
-
 type RedirectConfig struct {
 	MaxRedirects     int
 	FollowRedirects  bool
-	RedirectHandlers []func(*Response) bool // 自定义重定向处理函数
+	RedirectHandlers []func(*Response) bool
 }
 
-// 添加设置重定向配置的方法
 func (c *Client) SetRedirectConfig(config RedirectConfig) *Client {
 	c.redirectConfig = config
 	return c
 }
 
-// request.go 中添加重定向相关方法
-
-// SetMaxRedirects 设置最大重定向次数
 func (r *Request) SetMaxRedirects(max int) *Request {
 	// 在请求级别设置重定向配置
 	return r
 }
 
-// SetFollowRedirects 设置是否跟随重定向
 func (r *Request) SetFollowRedirects(follow bool) *Request {
 	// 在请求级别设置重定向配置
 	return r
 }
 
-// AddRedirectHandler 添加重定向处理函数
 func (r *Request) AddRedirectHandler(handler func(*Response) bool) *Request {
 	// 在请求级别添加重定向处理函数
 	return r
 }
 
 type UploadConfig struct {
-	LargeFileSizeThreshold int64 // 大文件阈值，单位字节，默认100MB
-	UseStreamingUpload     bool  // 是否启用流式上传
+	LargeFileSizeThreshold int64
+	UseStreamingUpload     bool
 }
 
-// 添加设置上传配置的方法
 func (c *Client) SetUploadConfig(config UploadConfig) *Client {
 	c.uploadConfig = config
 	return c
 }
 
-// HTTP2Config HTTP/2配置
 type HTTP2Config struct {
 	Enable               bool
 	MaxConcurrentStreams uint32
@@ -328,19 +312,15 @@ type HTTP2Config struct {
 	DisableCompression   bool
 }
 
-// SetHTTP2Config 设置HTTP/2配置
 func (c *Client) SetHTTP2Config(config HTTP2Config) *Client {
 	c.http2Config = config
 	return c
 }
 
-// RetryCondition 重试条件函数
 type RetryCondition func(*Response, error) bool
 
-// BackoffStrategy 退避策略
 type BackoffStrategy func(attempt int) time.Duration
 
-// ExponentialBackoff 指数退避策略
 func ExponentialBackoff(baseDelay time.Duration) BackoffStrategy {
 	return func(attempt int) time.Duration {
 		delay := baseDelay * time.Duration(1<<uint(attempt))
@@ -350,17 +330,15 @@ func ExponentialBackoff(baseDelay time.Duration) BackoffStrategy {
 	}
 }
 
-// RetryConfig 增强的重试配置
 type RetryConfig struct {
 	MaxRetries      int
 	RetryConditions []RetryCondition
 	Backoff         BackoffStrategy
-	MaxRetryTime    time.Duration // 最大重试时间
+	MaxRetryTime    time.Duration
 }
 
-// DefaultRetryCondition 默认重试条件
 func DefaultRetryCondition(resp *Response, err error) bool {
-	// 网络错误重试
+
 	if err != nil {
 		return true
 	}
@@ -378,15 +356,12 @@ func DefaultRetryCondition(resp *Response, err error) bool {
 	return false
 }
 
-// Use 添加中间件
 func (c *Client) Use(middleware MiddlewareFunc) *Client {
 	c.middlewares = append(c.middlewares, middleware)
 	return c
 }
 
-// ChainMiddlewares 链式调用中间件
 func (c *Client) ChainMiddlewares(handler Handler) Handler {
-	// 从后往前应用中间件
 	for i := len(c.middlewares) - 1; i >= 0; i-- {
 		handler = c.middlewares[i](handler)
 	}

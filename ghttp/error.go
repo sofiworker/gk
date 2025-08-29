@@ -2,7 +2,6 @@ package ghttp
 
 import "fmt"
 
-// 定义更丰富的错误类型
 type HTTPError struct {
 	StatusCode int
 	Message    string
