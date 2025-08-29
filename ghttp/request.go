@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime"
 	"mime/multipart"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -44,9 +45,14 @@ type Request struct {
 	ctx                   context.Context
 	timeout               time.Duration
 	enableUnifiedResponse bool
-	fileHandle            *os.File // 用于大文件上传时保持文件句
-	isLargeFileUpload     bool     // 标记是否为大文件上传柄
+	fileHandle            *os.File
+	isLargeFileUpload     bool
 	retryConfig           *RetryConfig
+}
+
+func (r *Request) SetDecoder(decoder Decoder) *Request {
+
+	return r
 }
 
 func (r *Request) SetBearToken(token string) *Request {
@@ -160,6 +166,16 @@ func (r *Request) SetEnableUnifiedResponse(enable bool) *Request {
 func (r *Request) SetHeader(k, v string) *Request {
 	r.fr.Header.Set(k, v)
 	return r
+}
+
+func (r *Request) POST() (*Response, error) {
+	r.SetMethod(http.MethodPost)
+	return r.Done()
+}
+
+func (r *Request) Get() (*Response, error) {
+	r.SetMethod(http.MethodGet)
+	return r.Done()
 }
 
 // handleRequestBody 处理普通请求体
