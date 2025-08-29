@@ -3,10 +3,11 @@ package gresolver
 import (
 	"context"
 	"fmt"
-	"golang.org/x/net/dns/dnsmessage"
 	"net"
 	"strconv"
 	"time"
+
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 type DefaultResolver struct {

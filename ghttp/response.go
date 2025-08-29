@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"reflect"
 
 	"github.com/valyala/fasthttp"
@@ -48,12 +50,34 @@ type Response struct {
 	decoder    Decoder
 }
 
-func (r *Response) SetCommonBody(body interface{}) {
+func (r *Response) SetCommonBody(body interface{}) *Response {
 	r.commonBody = body
+	return r
 }
 
-func (r *Response) SetDecoder(d Decoder) {
+func (r *Response) SetDecoder(d Decoder) *Response {
 	r.decoder = d
+	return r
+}
+
+func (r *Response) Unmarshal(v interface{}) error {
+	return nil
+}
+
+func (r *Response) PrintRawRespWithWriter(w io.Writer) error {
+	_, err := w.Write(r.BodyRaw)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *Response) PrintRawResp() error {
+	err := r.PrintRawRespWithWriter(os.Stdout)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r *Response) Decode(v interface{}) error {
@@ -183,8 +207,6 @@ func (r *Response) IsUnifiedResponseSuccess(template interface{}) (bool, error) 
 	return false, fmt.Errorf("cannot determine success status")
 }
 
-// response.go 中添加新方法
-
 // UnifiedResponseDecodeWithDecoder 使用指定解码器解码统一响应体
 func (r *Response) UnifiedResponseDecodeWithDecoder(template interface{}, target interface{}, decoder Decoder) error {
 	if template == nil {
@@ -222,4 +244,10 @@ func (r *Response) DecodeUnifiedResponse(target interface{}) error {
 	}
 
 	return r.UnifiedResponseDecode(r.commonBody, target)
+}
+
+func (r *Response) Close() {
+	if r.fResp != nil {
+		fasthttp.ReleaseResponse(r.fResp)
+	}
 }

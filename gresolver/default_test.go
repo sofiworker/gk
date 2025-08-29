@@ -3,8 +3,9 @@ package gresolver
 import (
 	"context"
 	"errors"
-	"golang.org/x/net/dns/dnsmessage"
 	"testing"
+
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 // mock DefaultResolver.exchange 方法
