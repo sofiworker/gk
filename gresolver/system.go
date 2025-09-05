@@ -5,12 +5,10 @@ import (
 	"net"
 )
 
-// SystemResolver 使用系统DNS设置的解析器
 type SystemResolver struct {
 	*net.Resolver
 }
 
-// NewSystemResolver 创建一个系统DNS解析器
 func NewSystemResolver() *SystemResolver {
 	return &SystemResolver{
 		Resolver: net.DefaultResolver,

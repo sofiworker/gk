@@ -2,7 +2,20 @@ package rawcap
 
 import (
 	"net"
+	"time"
 )
+
+type PacketInfo struct {
+	Timestamp      time.Time
+	CaptureLength  int
+	Length         int
+	InterfaceIndex int
+}
+
+type Packet struct {
+	Data []byte
+	Info *PacketInfo
+}
 
 type Interface struct {
 	Index       int
@@ -15,7 +28,7 @@ type Interface struct {
 }
 
 type PcapWriter interface {
-	WritePacket(Packet) error
+	WritePacket(*Packet) error
 	Close() error
 }
 

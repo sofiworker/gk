@@ -14,7 +14,7 @@ const (
 	udpMaxSize = 512
 )
 
-var defaultNS = []string{"127.0.0.1:53", "[::1]:53"}
+var DefaultNS = []string{"127.0.0.1:53", "[::1]:53"}
 
 type DnsConfig struct {
 	Nameservers []string
@@ -98,7 +98,7 @@ func ParseResolveFile(file string) (*DnsConfig, error) {
 
 func (c *DnsConfig) Validate() {
 	if len(c.Nameservers) == 0 {
-		c.Nameservers = defaultNS
+		c.Nameservers = DefaultNS
 	}
 	if c.Timeout <= 0 {
 		c.Timeout = 5 * time.Second
@@ -108,5 +108,66 @@ func (c *DnsConfig) Validate() {
 	}
 	if c.Ndots <= 0 {
 		c.Ndots = 1
+	}
+}
+
+type Option func(*DnsConfig)
+
+func WithResolveFile(file string) Option {
+	return func(c *DnsConfig) {
+		conf, err := ParseResolveFile(file)
+		if err != nil {
+			panic(err)
+		}
+		conf.Validate()
+		c.Nameservers = conf.Nameservers
+		c.Search = conf.Search
+		c.Domain = conf.Domain
+		c.Options = conf.Options
+		c.Ndots = conf.Ndots
+		c.Timeout = conf.Timeout
+		c.Attempts = conf.Attempts
+	}
+}
+
+func WithNameservers(nameservers []string) Option {
+	return func(c *DnsConfig) {
+		c.Nameservers = nameservers
+	}
+}
+
+func WithSearch(search []string) Option {
+	return func(c *DnsConfig) {
+		c.Search = search
+	}
+}
+
+func WithDomain(domain string) Option {
+	return func(c *DnsConfig) {
+		c.Domain = domain
+	}
+}
+
+func WithOptions(options []string) Option {
+	return func(c *DnsConfig) {
+		c.Options = options
+	}
+}
+
+func WithNdots(ndots int) Option {
+	return func(c *DnsConfig) {
+		c.Ndots = ndots
+	}
+}
+
+func WithTimeout(timeout time.Duration) Option {
+	return func(c *DnsConfig) {
+		c.Timeout = timeout
+	}
+}
+
+func WithAttempts(attempts int) Option {
+	return func(c *DnsConfig) {
+		c.Attempts = attempts
 	}
 }

@@ -1,10 +1,12 @@
-// middleware.go - 增强中间件系统
-
 package ghttp
 
 import (
 	"time"
 )
+
+type Middleware func(next Handler) Handler
+
+type Handler func(*Request, *Response) error
 
 // MiddlewareFunc 中间件函数类型
 type MiddlewareFunc func(Handler) Handler
