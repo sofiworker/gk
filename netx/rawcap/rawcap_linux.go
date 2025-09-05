@@ -8,11 +8,38 @@ import (
 )
 
 type LinuxHandle struct {
-	fd int
+	fd     int
+	filter string
 }
 
-func NewHandle() (*LinuxHandle, error) {
+func NewHandle() (Handle, error) {
 	return &LinuxHandle{}, nil
+}
+
+func (h *LinuxHandle) SetFilter(filter string) error {
+	h.filter = filter
+	return nil
+}
+
+func (h *LinuxHandle) RawHandle() (interface{}, error) {
+	return h, nil
+}
+
+func (h *LinuxHandle) ReadPacket() (*Packet, error) {
+	return nil, nil
+}
+
+func (h *LinuxHandle) WritePacketData(data []byte) error {
+	_, err := syscall.Write(h.fd, data)
+	return err
+}
+
+func (h *LinuxHandle) Stats() *Stats {
+	return &Stats{}
+}
+
+func (h *LinuxHandle) Close() error {
+	return syscall.Close(h.fd)
 }
 
 func (h *LinuxHandle) NewRawSocket() (int, error) {
@@ -41,10 +68,6 @@ func (h *LinuxHandle) Bind(idx int) error {
 		return err
 	}
 	return nil
-}
-
-func (h *LinuxHandle) Close() error {
-	return syscall.Close(h.fd)
 }
 
 type RingBuffer struct {

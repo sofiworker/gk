@@ -53,7 +53,7 @@ func NewWriter(w io.Writer) (PcapWriter, error) {
 	return &pcapWriter{w: w}, nil
 }
 
-func (w *pcapWriter) WritePacket(pkt Packet) error {
+func (w *pcapWriter) WritePacket(pkt *Packet) error {
 	// 写入PCAP包头
 	ts := pkt.Info.Timestamp
 	header := PacketHeader{

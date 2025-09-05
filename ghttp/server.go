@@ -14,12 +14,13 @@ func NewServer() *Server {
 }
 
 func (s *Server) ListenAndServe(addr string) error {
+
 	return nil
 }
 
 func (s *Server) ListenAndServeUNIX(addr string, mode os.FileMode) error {
 	if err := os.Remove(addr); err != nil && !os.IsNotExist(err) {
-
+		return err
 	}
 	ln, err := net.Listen("unix", addr)
 	if err != nil {

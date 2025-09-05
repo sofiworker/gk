@@ -3,9 +3,10 @@ package ghttp
 import (
 	"encoding/json"
 	"encoding/xml"
-	"gopkg.in/yaml.v3"
 	"io"
 	"sync"
+
+	"gopkg.in/yaml.v3"
 )
 
 var decoders *DecoderInstance
@@ -72,4 +73,15 @@ func NewYamlDecoder() Decoder {
 
 func (d *yamlDecoder) Decode(reader io.Reader, v interface{}) error {
 	return yaml.NewDecoder(reader).Decode(v)
+}
+
+type contentDecoder struct{}
+
+func NewContentDecoder() Decoder {
+	return &contentDecoder{}
+}
+
+func (c *contentDecoder) Decode(reader io.Reader, v interface{}) error {
+	//return Decode(reader, v)
+	return nil
 }

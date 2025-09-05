@@ -48,6 +48,16 @@ type Request struct {
 	fileHandle            *os.File
 	isLargeFileUpload     bool
 	retryConfig           *RetryConfig
+	ua                    string
+}
+
+func (r *Request) SetUserAgent(ua string) *Request {
+	r.ua = ua
+	return r
+}
+
+func (r *Request) SetResult() *Request {
+	return r
 }
 
 func (r *Request) SetDecoder(decoder Decoder) *Request {
@@ -665,10 +675,13 @@ func (r *Request) UploadLargeFileByReader(reader io.Reader, size int, fieldName 
 }
 
 func (r *Request) Done() (*Response, error) {
+	if r.fr == nil {
+		r.fr = fasthttp.AcquireRequest()
+	}
 	// 获取重试配置
 	retryConfig := r.retryConfig
 	if retryConfig == nil {
-		retryConfig = &r.client.retryConfig
+		//retryConfig = &r.client.retryConfig
 	}
 
 	var lastErr error
@@ -761,8 +774,12 @@ func (r *Request) executeRequest() (*Response, error) {
 	resp.fResp = response
 	// 确保在函数结束时释放资源
 	defer func() {
-		fasthttp.ReleaseRequest(r.fr)
-		fasthttp.ReleaseResponse(resp.fResp)
+		if r.fr != nil {
+			fasthttp.ReleaseRequest(r.fr)
+		}
+		if response != nil {
+			fasthttp.ReleaseResponse(resp.fResp)
+		}
 		// 关闭大文件句柄
 		if r.fileHandle != nil {
 			r.fileHandle.Close()
