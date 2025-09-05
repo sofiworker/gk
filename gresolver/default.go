@@ -15,14 +15,15 @@ type DefaultResolver struct {
 }
 
 // NewDefaultResolver 创建一个纯Go实现的DNS解析器
-func NewDefaultResolver(config *DnsConfig) *DefaultResolver {
-	if config == nil {
-		config = &DnsConfig{
-			Nameservers: defaultNS,
-			Ndots:       1,
-			Timeout:     5,
-			Attempts:    2,
-		}
+func NewDefaultResolver(opts ...Option) *DefaultResolver {
+	config := &DnsConfig{
+		Nameservers: DefaultNS,
+		Ndots:       1,
+		Timeout:     5,
+		Attempts:    2,
+	}
+	for _, opt := range opts {
+		opt(config)
 	}
 	config.Validate()
 	return &DefaultResolver{

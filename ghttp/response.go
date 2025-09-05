@@ -251,3 +251,12 @@ func (r *Response) Close() {
 		fasthttp.ReleaseResponse(r.fResp)
 	}
 }
+
+func (r *Response) Dump() string {
+	var buf bytes.Buffer
+	r.DumpWriter(&buf)
+	return buf.String()
+}
+
+func (r *Response) DumpWriter(w io.Writer) {
+}
