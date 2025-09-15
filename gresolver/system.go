@@ -10,8 +10,10 @@ type SystemResolver struct {
 }
 
 func NewSystemResolver() *SystemResolver {
+	r := net.DefaultResolver
+	r.PreferGo = false
 	return &SystemResolver{
-		Resolver: net.DefaultResolver,
+		Resolver: r,
 	}
 }
 
@@ -28,5 +30,5 @@ func (r *SystemResolver) LookupCNAME(ctx context.Context, host string) (string, 
 }
 
 func (r *SystemResolver) Scheme() string {
-	return "default"
+	return "system"
 }

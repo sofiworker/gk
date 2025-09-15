@@ -29,3 +29,8 @@ func ConstructURL(baseurl, path string) (string, error) {
 
 	return mergedURL.String(), nil
 }
+
+func IsValidURL(u string) bool {
+	_, err := url.Parse(u)
+	return err == nil
+}
