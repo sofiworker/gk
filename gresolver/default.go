@@ -14,7 +14,6 @@ type DefaultResolver struct {
 	config *DnsConfig
 }
 
-// NewDefaultResolver 创建一个纯Go实现的DNS解析器
 func NewDefaultResolver(opts ...Option) *DefaultResolver {
 	config := &DnsConfig{
 		Nameservers: DefaultNS,

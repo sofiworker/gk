@@ -10,10 +10,10 @@ var (
 )
 
 type DNSError struct {
-	Op     string // 操作名称
-	Name   string // 域名
-	Server string // DNS服务器
-	Err    error  // 原始错误
+	Op     string
+	Name   string
+	Server string
+	Err    error
 }
 
 func (e *DNSError) Error() string {
