@@ -2,6 +2,12 @@ package ghttp
 
 import (
 	"crypto/tls"
+	"time"
+)
+
+const (
+	DefaultTimeout = 30 * time.Second
+	DefaultUA      = "gk/1.0"
 )
 
 type RedirectConfig struct {
@@ -22,10 +28,39 @@ type HTTP2Config struct {
 	DisableCompression   bool
 }
 
+type DumpConfig struct {
+	DumpRequest  bool
+	DumpResponse bool
+}
+
+type TLSConfig struct {
+	GoTLSConfig *tls.Config
+	KeyFile     string
+	CertFile    string
+}
+
 type Config struct {
-	TLSConfig      *tls.Config
+	UA             string
+	ReadTimeout    time.Duration
+	WriteTimeout   time.Duration
+	TLSConfig      *TLSConfig
 	RedirectConfig *RedirectConfig
 	UploadConfig   *UploadConfig
 	HTTP2Config    *HTTP2Config
 	RetryConfig    *RetryConfig
+	DumpConfig     *DumpConfig
+}
+
+func DefaultConfig() *Config {
+	return &Config{
+		UA:             DefaultUA,
+		ReadTimeout:    DefaultTimeout,
+		WriteTimeout:   DefaultTimeout,
+		TLSConfig:      &TLSConfig{},
+		RedirectConfig: &RedirectConfig{},
+		UploadConfig:   &UploadConfig{},
+		HTTP2Config:    &HTTP2Config{},
+		RetryConfig:    &RetryConfig{},
+		DumpConfig:     &DumpConfig{},
+	}
 }

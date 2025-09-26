@@ -24,3 +24,22 @@ func ExponentialBackoff(baseDelay time.Duration) BackoffStrategy {
 		return delay + jitter
 	}
 }
+
+func DefaultRetryCondition(resp *Response, err error) bool {
+
+	if err != nil {
+		return true
+	}
+
+	// 5xx 服务器错误重试
+	if resp.fResp.StatusCode() >= 500 {
+		return true
+	}
+
+	// 429 限流重试
+	if resp.fResp.StatusCode() == 429 {
+		return true
+	}
+
+	return false
+}

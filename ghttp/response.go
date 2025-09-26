@@ -42,12 +42,7 @@ func (s *StandardResponse) IsSuccess() bool {
 }
 
 type Response struct {
-	fResp      *fasthttp.Response
-	RemoteAddr string
-	BodyRaw    []byte
-	StreamBody bool
-	commonBody interface{}
-	decoder    Decoder
+	Request *Request
 }
 
 func (r *Response) SetCommonBody(body interface{}) *Response {
