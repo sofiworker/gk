@@ -13,7 +13,7 @@ func newTestRequest() *Request {
 	}
 	return &Request{
 		fr:     fasthttp.AcquireRequest(),
-		client: client,
+		Client: client,
 	}
 }
 

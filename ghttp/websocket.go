@@ -1,5 +1,3 @@
-// websocket.go - 修复 WebSocket 客户端支持
-
 package ghttp
 
 import (
@@ -103,9 +101,9 @@ func (w *WebSocketRequest) SetSubprotocols(subprotocols []string) *WebSocketRequ
 func (w *WebSocketRequest) Connect(ctx context.Context) error {
 	// 构建WebSocket URL
 	wsURL := w.url
-	if w.client.baseUrl != "" {
+	if w.Client.BaseUrl != "" {
 		var err error
-		wsURL, err = ConstructURL(w.client.baseUrl, w.url)
+		wsURL, err = ConstructURL(w.Client.BaseUrl, w.url)
 		if err != nil {
 			return err
 		}

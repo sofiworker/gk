@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"gk/gresolver"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -21,62 +20,54 @@ import (
 )
 
 type Request struct {
-	fr                    *fasthttp.Request
-	client                *Client
-	url                   string
-	requestBody           interface{}
-	returnData            interface{}
-	method                string
-	streamBody            io.Reader
-	streamBodySize        int
-	enableDumpBody        bool
-	startRequest          int64
-	endRequest            int64
-	costRequest           int64
-	startResponse         int64
-	endResponse           int64
-	costResponse          int64
-	tracer                Tracer
-	file                  string
-	fileReader            io.Reader
-	fileReaderSize        int
-	resolver              gresolver.Resolver
-	progressCallback      func(current, total int64)
-	ctx                   context.Context
-	timeout               time.Duration
-	enableUnifiedResponse bool
-	fileHandle            *os.File
-	isLargeFileUpload     bool
-	retryConfig           *RetryConfig
-	ua                    string
+	Client *Client
+
+	url    string
+	method string
+
+	Headers     http.Header
+	Cookies     []*http.Cookie
+	QueryParams url.Values
+	FormData    url.Values
+
+	time struct {
+		startRequest *time.Time
+		endRequest   *time.Time
+
+		startResponse *time.Time
+		endResponse   *time.Time
+	}
+
+	Redirects struct {
+		MaxTime int
+	}
+
+	Callback struct {
+	}
 }
 
-func (r *Request) SetUserAgent(ua string) *Request {
-	r.ua = ua
+func NewRequest() *Request {
+	return &Request{
+		Client: NewClient(),
+	}
+}
+
+func (r *Request) GetClient() *Client {
+	return r.Client
+}
+
+func (r *Request) SetHeader(key, value string) *Request {
+	if r.Headers == nil {
+		r.Headers = make(http.Header)
+	}
+	r.Headers.Set(key, value)
 	return r
 }
 
-func (r *Request) SetResult() *Request {
-	return r
-}
-
-func (r *Request) SetDecoder(decoder Decoder) *Request {
-
-	return r
-}
-
-func (r *Request) SetBearToken(token string) *Request {
-	r.fr.Header.Add("Authorization", "Bearer "+token)
-	return r
-}
-
-func (r *Request) SetJsonBody(data interface{}) *Request {
-	r.requestBody = data
-	return r
-}
-
-func (r *Request) SetUnmarshalData(data interface{}) *Request {
-	r.returnData = data
+func (r *Request) SetHeaders(hdrs map[string]string) *Request {
+	for k, v := range hdrs {
+		r.SetHeader(k, v)
+	}
 	return r
 }
 
@@ -90,102 +81,49 @@ func (r *Request) SetMethod(method string) *Request {
 	return r
 }
 
-func (r *Request) GetClient() *Client {
-	return r.client
+func (r *Request) Get() (*Response, error) {
+	return r.SetMethod(http.MethodGet).Done()
 }
 
-func (r *Request) GetFastHttpClient() *fasthttp.Client {
-	return r.client.fastClient
+func (r *Request) HEAD() (*Response, error) {
+	return r.SetMethod(http.MethodHead).Done()
 }
 
-func (r *Request) GetFastHttpRequest() *fasthttp.Request {
-	return r.fr
+func (r *Request) POST() (*Response, error) {
+	return r.SetMethod(http.MethodPost).Done()
 }
 
-func (r *Request) SetStreamBodyWithSize(bodyStream io.Reader, bodySize int) *Request {
-	r.streamBody = bodyStream
-	r.streamBodySize = bodySize
-	return r
+func (r *Request) PUT() (*Response, error) {
+	return r.SetMethod(http.MethodPut).Done()
 }
 
-func (r *Request) SetStreamBody(bodyStream io.Reader) *Request {
-	r.streamBody = bodyStream
-	return r
+func (r *Request) PATCH() (*Response, error) {
+	return r.SetMethod(http.MethodPatch).Done()
 }
 
-func (r *Request) SetTracer() *Request {
-	return r
+func (r *Request) DELETE() (*Response, error) {
+	return r.SetMethod(http.MethodDelete).Done()
 }
 
-func (r *Request) SetContentType(contentType string) *Request {
-	r.fr.Header.Set("Content-Type", contentType)
-	return r
+func (r *Request) CONNECT() (*Response, error) {
+	return r.SetMethod(http.MethodConnect).Done()
 }
 
-func (r *Request) SetEnableDumpBody(enable bool) *Request {
-	r.enableDumpBody = enable
-	return r
+func (r *Request) OPTIONS() (*Response, error) {
+	return r.SetMethod(http.MethodOptions).Done()
 }
 
-func (r *Request) UploadFile(path string) *Request {
-	r.file = path
-	return r
+func (r *Request) TRACE() (*Response, error) {
+	return r.SetMethod(http.MethodTrace).Done()
 }
 
-func (r *Request) UploadFileByReader(reader io.Reader) *Request {
-	r.fileReader = reader
-	return r
-}
+func (r *Request) DownloadCallback(filename string, data <-chan []byte) {
 
-func (r *Request) UploadFileByReaderWithSize(reader io.Reader, size int) *Request {
-	r.fileReader, r.fileReaderSize = reader, size
-	return r
-}
-
-func (r *Request) SetResolver(resolver gresolver.Resolver) *Request {
-	r.resolver = resolver
-	return r
-}
-
-func (r *Request) SetTimeout(timeout time.Duration) *Request {
-	r.timeout = timeout
-	return r
-}
-
-func (r *Request) SetContext(ctx context.Context) *Request {
-	r.ctx = ctx
-	return r
-}
-
-// SetRetryConfig 设置重试配置
-func (r *Request) SetRetryConfig(config RetryConfig) *Request {
-	r.retryConfig = &config
-	return r
 }
 
 func (r *Request) SetProgressCallback(callback func(current, total int64)) *Request {
 	r.progressCallback = callback
 	return r
-}
-
-func (r *Request) SetEnableUnifiedResponse(enable bool) *Request {
-	r.enableUnifiedResponse = enable
-	return r
-}
-
-func (r *Request) SetHeader(k, v string) *Request {
-	r.fr.Header.Set(k, v)
-	return r
-}
-
-func (r *Request) POST() (*Response, error) {
-	r.SetMethod(http.MethodPost)
-	return r.Done()
-}
-
-func (r *Request) Get() (*Response, error) {
-	r.SetMethod(http.MethodGet)
-	return r.Done()
 }
 
 // handleRequestBody 处理普通请求体
@@ -217,13 +155,6 @@ func (r *Request) handleRequestBody() error {
 
 // handleRedirects 处理重定向
 func (r *Request) handleRedirects(resp *Response) (*Response, error) {
-	// 获取重定向配置
-	redirectConfig := r.client.redirectConfig
-
-	// 如果没有启用重定向，则直接返回
-	if !redirectConfig.FollowRedirects {
-		return nil, nil
-	}
 
 	// 检查状态码是否为重定向
 	statusCode := resp.fResp.StatusCode()
@@ -237,45 +168,11 @@ func (r *Request) handleRedirects(resp *Response) (*Response, error) {
 		return nil, nil
 	}
 
-	// 执行自定义重定向处理器
-	for _, handler := range redirectConfig.RedirectHandlers {
-		if !handler(resp) {
-			// 如果处理器返回false，则不继续重定向
-			return nil, nil
-		}
-	}
-
 	// TODO: 实现重定向逻辑
 	// 这里应该创建新的请求并执行重定向
 	// 为简化示例，暂时返回nil表示不处理重定向
 
 	return nil, nil
-}
-
-func (r *Request) shouldProcessUnifiedResponse() bool {
-	if r.enableUnifiedResponse {
-		return true
-	}
-	if r.enableUnifiedResponse == false {
-		return false
-	}
-	return r.client.enableUnifiedResponse
-}
-
-func (r *Request) UploadFileWithFieldName(path, fieldName string) *Request {
-	r.file = path
-	if fieldName != "" {
-		r.fr.Header.Set("X-File-Field-Name", fieldName)
-	}
-	return r
-}
-
-func (r *Request) UploadFileByReaderWithFieldName(reader io.Reader, fieldName string) *Request {
-	r.fileReader = reader
-	if fieldName != "" {
-		r.fr.Header.Set("X-File-Field-Name", fieldName)
-	}
-	return r
 }
 
 func (r *Request) UploadFileByReaderWithSizeAndFieldName(reader io.Reader, size int, fieldName string) *Request {
@@ -445,7 +342,6 @@ func (r *Request) UploadFileByReaderWithProgress(reader io.Reader, size int, cal
 	return r
 }
 
-// 添加进度感知的Reader
 type ProgressReader struct {
 	reader   io.Reader
 	total    int64
@@ -674,14 +570,40 @@ func (r *Request) UploadLargeFileByReader(reader io.Reader, size int, fieldName 
 	return r
 }
 
+func (r *Request) SetIfModifiedSince(time time.Time) *Request {
+	r.fr.Header.Set("If-Modified-Since", time.Format(http.TimeFormat))
+	return r
+}
+
+func (r *Request) SetIfNoneMatch(etag string) *Request {
+	r.fr.Header.Set("If-None-Match", etag)
+	return r
+}
+
+func (r *Request) SetMaxRedirects(max int) *Request {
+	// 在请求级别设置重定向配置
+	return r
+}
+
+func (r *Request) SetFollowRedirects(follow bool) *Request {
+	// 在请求级别设置重定向配置
+	return r
+}
+
+func (r *Request) AddRedirectHandler(handler func(*Response) bool) *Request {
+	// 在请求级别添加重定向处理函数
+	return r
+}
+
 func (r *Request) Done() (*Response, error) {
-	if r.fr == nil {
-		r.fr = fasthttp.AcquireRequest()
+	if r.method == "" {
+		return nil, ErrNotFoundMethod
 	}
+
 	// 获取重试配置
 	retryConfig := r.retryConfig
 	if retryConfig == nil {
-		//retryConfig = &r.client.retryConfig
+		//retryConfig = &r.Client.retryConfig
 	}
 
 	var lastErr error
@@ -749,7 +671,7 @@ func (r *Request) executeRequest() (*Response, error) {
 		}
 	}
 
-	addr, err := ConstructURL(r.client.baseUrl, r.url)
+	addr, err := ConstructURL(r.Client.BaseUrl, r.url)
 	if err != nil {
 		return nil, err
 	}
@@ -787,19 +709,19 @@ func (r *Request) executeRequest() (*Response, error) {
 	}()
 
 	if r.tracer != nil {
-		_, end := r.client.tracer.StartSpan()
+		_, end := r.Client.tracer.StartSpan(context.TODO())
 		defer end()
 	}
 	startTime := time.Now().UnixMicro()
 	r.startRequest = startTime
 
 	if r.resolver != nil {
-		r.client.fastClient.Dial = (&fasthttp.TCPDialer{
+		r.Client.fastClient.Dial = (&fasthttp.TCPDialer{
 			Resolver: r.resolver,
 		}).Dial
 	}
 
-	err = r.client.fastClient.Do(r.fr, resp.fResp)
+	err = r.Client.fastClient.Do(r.fr, resp.fResp)
 	if err != nil {
 		return nil, err
 	}
@@ -826,19 +748,19 @@ func (r *Request) executeRequest() (*Response, error) {
 		mediaType, _, err := mime.ParseMediaType(string(resp.fResp.Header.ContentType()))
 		if err != nil {
 			// 如果无法解析Content-Type，使用默认解码器
-			resp.decoder = r.client.defaultDecoder
+			//resp.decoder = r.Client.defaultDecoder
 		} else {
 			if decoder, ok := decoders.Exist(mediaType); ok {
 				resp.decoder = decoder
 			} else {
 				// 使用默认解码器
-				resp.decoder = r.client.defaultDecoder
+				//resp.decoder = r.Client.defaultDecoder
 			}
 		}
 
 		if r.returnData != nil {
 			// 使用统一响应体解码
-			err = resp.UnifiedResponseDecode(r.client.unifiedResponseTemplate, r.returnData)
+			err = resp.UnifiedResponseDecode(nil, r.returnData)
 			if err != nil {
 				return nil, err
 			}
@@ -853,7 +775,7 @@ func (r *Request) executeRequest() (*Response, error) {
 			resp.decoder = decoder
 		} else {
 			// 使用默认解码器
-			resp.decoder = r.client.defaultDecoder
+			//resp.decoder = r.Client.defaultDecoder
 		}
 
 		if r.returnData != nil {
@@ -870,11 +792,6 @@ func (r *Request) executeRequest() (*Response, error) {
 				}
 			}
 		}
-	}
-
-	// 输出调试信息
-	if r.enableDumpBody || r.client.enableDumpResponse {
-		fmt.Println(string(resp.fResp.Body()))
 	}
 
 	return resp, nil
