@@ -26,20 +26,14 @@ func ExponentialBackoff(baseDelay time.Duration) BackoffStrategy {
 }
 
 func DefaultRetryCondition(resp *Response, err error) bool {
+	return true
+}
 
-	if err != nil {
-		return true
+func DefaultRetryConfig() *RetryConfig {
+	return &RetryConfig{
+		MaxRetries:      3,
+		RetryConditions: []RetryCondition{DefaultRetryCondition},
+		Backoff:         ExponentialBackoff(500 * time.Millisecond),
+		MaxRetryTime:    5 * time.Second,
 	}
-
-	// 5xx 服务器错误重试
-	if resp.fResp.StatusCode() >= 500 {
-		return true
-	}
-
-	// 429 限流重试
-	if resp.fResp.StatusCode() == 429 {
-		return true
-	}
-
-	return false
 }

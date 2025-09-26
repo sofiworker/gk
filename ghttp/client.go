@@ -5,7 +5,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
-	"os"
 	"time"
 
 	"github.com/valyala/fasthttp"
@@ -39,6 +38,8 @@ type Client struct {
 	middlewares []MiddlewareFunc
 
 	logger Log
+
+	Version HTTPVersion
 }
 
 func NewClient() *Client {
@@ -49,6 +50,7 @@ func NewClient() *Client {
 		resolver:    gresolver.NewPureGoResolver(),
 		CookieJar:   jar,
 		middlewares: make([]MiddlewareFunc, 0),
+		Version:     Version11,
 	}
 }
 
@@ -176,10 +178,6 @@ func Options(url string) (*Response, error) {
 
 func Trace(url string) (*Response, error) {
 	return defaultClient.R().SetMethod(http.MethodTrace).SetUrl(url).Done()
-}
-
-func SendFile(url string, file *os.File) (*Response, error) {
-	return defaultClient.R().SetMethod(http.MethodPut).SetUrl(url).Done()
 }
 
 func WebSocket(url string, handler WebSocketHandler) *WebSocketRequest {

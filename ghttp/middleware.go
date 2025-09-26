@@ -74,10 +74,6 @@ func RetryMiddleware(config RetryConfig) MiddlewareFunc {
 func TimeoutMiddleware(timeout time.Duration) MiddlewareFunc {
 	return func(next Handler) Handler {
 		return func(req *Request, resp *Response) error {
-			// 设置请求超时
-			if req.timeout == 0 {
-				req.timeout = timeout
-			}
 			return next(req, resp)
 		}
 	}
