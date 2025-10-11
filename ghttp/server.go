@@ -7,10 +7,13 @@ import (
 )
 
 type Server struct {
+	codecManager *CodecManager
 }
 
 func NewServer() *Server {
-	return &Server{}
+	return &Server{
+		codecManager: NewCodecManager(),
+	}
 }
 
 func (s *Server) ListenAndServe(addr string) error {
@@ -38,4 +41,24 @@ func (s *Server) Serve(ln net.Listener) error {
 
 func (s *Server) Router() *Router {
 	return &Router{}
+}
+
+// SetDefaultCodec 设置默认编解码器
+func (s *Server) SetDefaultCodec(codec Codec) {
+	s.codecManager.SetDefaultCodec(codec)
+}
+
+// RegisterCodec 注册编解码器
+func (s *Server) RegisterCodec(codec Codec) {
+	s.codecManager.RegisterCodec(codec)
+}
+
+// GetCodec 获取编解码器
+func (s *Server) GetCodec(contentType string) Codec {
+	return s.codecManager.GetCodec(contentType)
+}
+
+// ForceCodec 强制使用指定编解码器（用于特殊情况）
+func (s *Server) ForceCodec(codec Codec) Codec {
+	return codec
 }
