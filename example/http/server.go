@@ -2,12 +2,13 @@ package main
 
 import (
 	"gk/ghttp"
+	"gk/ghttp/gserver"
 	"log"
 	"net"
 )
 
 func main() {
-	server := ghttp.NewServer()
+	server := gserver.NewServer()
 	router := server.Router()
 	router.GET("/", func(c *ghttp.Context) {
 

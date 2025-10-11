@@ -1,6 +1,7 @@
 package ghttp
 
 import (
+	"gk/ghttp/gclient"
 	"gk/gresolver"
 	"io"
 	"mime/multipart"
@@ -19,7 +20,7 @@ type RequestTime struct {
 }
 
 type Request struct {
-	Client *Client
+	Client *gclient.Client
 
 	url    string
 	method string
@@ -39,11 +40,11 @@ type Request struct {
 
 func NewRequest() *Request {
 	return &Request{
-		Client: NewClient(),
+		Client: gclient.NewClient(),
 	}
 }
 
-func (r *Request) GetClient() *Client {
+func (r *Request) GetClient() *gclient.Client {
 	return r.Client
 }
 
