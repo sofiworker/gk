@@ -1,4 +1,4 @@
-package ghttp
+package gserver
 
 // // 定义数据结构
 // type User struct {

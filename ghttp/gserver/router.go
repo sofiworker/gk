@@ -1,8 +1,9 @@
-package ghttp
+package gserver
 
 import (
 	"encoding/json"
 	"fmt"
+	"gk/ghttp"
 	"io"
 	"mime/multipart"
 	"net"
@@ -10,37 +11,82 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/go-playground/validator/v10"
 	"github.com/valyala/fasthttp"
 )
 
+// Router defines all router handle interface, including app and group router.
+type Router interface {
+	Use(args ...any) Router
+
+	Get(path string, handler ghttp.Handler, handlers ...ghttp.Handler) Router
+	Head(path string, handler ghttp.Handler, handlers ...ghttp.Handler) Router
+	Post(path string, handler ghttp.Handler, handlers ...ghttp.Handler) Router
+	Put(path string, handler ghttp.Handler, handlers ...ghttp.Handler) Router
+	Delete(path string, handler ghttp.Handler, handlers ...ghttp.Handler) Router
+	Connect(path string, handler ghttp.Handler, handlers ...ghttp.Handler) Router
+	Options(path string, handler ghttp.Handler, handlers ...ghttp.Handler) Router
+	Trace(path string, handler ghttp.Handler, handlers ...ghttp.Handler) Router
+	Patch(path string, handler ghttp.Handler, handlers ...ghttp.Handler) Router
+
+	Add(methods []string, path string, handler ghttp.Handler, handlers ...ghttp.Handler) Router
+	All(path string, handler ghttp.Handler, handlers ...ghttp.Handler) Router
+
+	Group(prefix string, handlers ...ghttp.Handler) Router
+
+	RouteChain(path string) Register
+	Route(prefix string, fn func(router Router), name ...string) Router
+
+	Name(name string) Router
+}
+
+// Route is a struct that holds all metadata for each registered handler.
+type Route struct {
+	// ### important: always keep in sync with the copy method "app.copyRoute" and all creations of Route struct ###
+	group *Group // Group instance. used for routes in groups
+
+	path string // Prettified path
+
+	// Public fields
+	Method string `json:"method"` // HTTP method
+	Name   string `json:"name"`   // Route's name
+	//nolint:revive // Having both a Path (uppercase) and a path (lowercase) is fine
+	Path        string          `json:"path"`   // Original registered route path
+	Params      []string        `json:"params"` // Case-sensitive param keys
+	Handlers    []ghttp.Handler `json:"-"`      // Ctx handlers
+	routeParser routeParser     // Parameter parser
+	// Data for routing
+	use   bool // USE matches path prefixes
+	mount bool // Indicated a mounted app on a specific route
+	star  bool // Path equals '*'
+	root  bool // Path equals '/'
+}
+
 // NewContext 创建新的 Context 实例
-func NewContext(ctx *fasthttp.RequestCtx) *Context {
-	return &Context{ctx: ctx}
+func NewContext(ctx *fasthttp.RequestCtx) *ghttp.Context {
+	return &ghttp.Context{ctx: ctx}
 }
 
 // ---------- Request 相关方法 ----------
 
 // Method 返回请求方法
-func (c *Context) Method() string {
+func (c *ghttp.Context) Method() string {
 	return string(c.ctx.Method())
 }
 
 // Path 返回请求路径
-func (c *Context) Path() string {
+func (c *ghttp.Context) Path() string {
 	return string(c.ctx.Path())
 }
 
 // Query 获取查询参数
-func (c *Context) Query(key string) string {
+func (c *ghttp.Context) Query(key string) string {
 	return string(c.ctx.QueryArgs().Peek(key))
 }
 
 // QueryDefault 获取查询参数，如果不存在则返回默认值
-func (c *Context) QueryDefault(key, defaultValue string) string {
+func (c *ghttp.Context) QueryDefault(key, defaultValue string) string {
 	value := c.ctx.QueryArgs().Peek(key)
 	if value == nil {
 		return defaultValue
@@ -49,34 +95,34 @@ func (c *Context) QueryDefault(key, defaultValue string) string {
 }
 
 // Param 获取路径参数
-func (c *Context) Param(key string) string {
+func (c *ghttp.Context) Param(key string) string {
 	value, _ := c.ctx.UserValue(key).(string)
 	return value
 }
 
 // ParamInt 获取 int 类型的路径参数
-func (c *Context) ParamInt(key string) (int, error) {
+func (c *ghttp.Context) ParamInt(key string) (int, error) {
 	value := c.Param(key)
 	return strconv.Atoi(value)
 }
 
 // Header 获取请求头
-func (c *Context) Header(key string) string {
+func (c *ghttp.Context) Header(key string) string {
 	return string(c.ctx.Request.Header.Peek(key))
 }
 
 // ContentType 返回 Content-Type 头部
-func (c *Context) ContentType() string {
+func (c *ghttp.Context) ContentType() string {
 	return string(c.ctx.Request.Header.ContentType())
 }
 
 // Body 返回原始请求体
-func (c *Context) Body() []byte {
+func (c *ghttp.Context) Body() []byte {
 	return c.ctx.PostBody()
 }
 
 // Bind 根据 Content-Type 自动解析请求体到结构体
-func (c *Context) Bind(v interface{}) error {
+func (c *ghttp.Context) Bind(v interface{}) error {
 	contentType := c.ContentType()
 
 	// 获取 content type 主体部分 (去除 charset 等参数)
@@ -88,74 +134,74 @@ func (c *Context) Bind(v interface{}) error {
 	contentType = strings.TrimSpace(contentType)
 
 	// 查找对应的解码器
-	decoder, ok := decoders.Exist(contentType)
+	decoder, ok := ghttp.decoders.Exist(contentType)
 	if !ok {
 		// 默认使用 JSON 解解码器
-		decoder = NewJsonDecoder()
+		decoder = ghttp.NewJsonDecoder()
 	}
 
 	return decoder.Decode(strings.NewReader(string(c.Body())), v)
 }
 
 // FormValue 获取表单值
-func (c *Context) FormValue(key string) string {
+func (c *ghttp.Context) FormValue(key string) string {
 	return string(c.ctx.FormValue(key))
 }
 
 // FormFile 获取上传的文件
-func (c *Context) FormFile(key string) (*multipart.FileHeader, error) {
+func (c *ghttp.Context) FormFile(key string) (*multipart.FileHeader, error) {
 	return c.ctx.FormFile(key)
 }
 
 // MultipartForm 获取 multipart 表单
-func (c *Context) MultipartForm() (*multipart.Form, error) {
+func (c *ghttp.Context) MultipartForm() (*multipart.Form, error) {
 	return c.ctx.MultipartForm()
 }
 
 // RemoteIP 获取客户端 IP
-func (c *Context) RemoteIP() net.IP {
+func (c *ghttp.Context) RemoteIP() net.IP {
 	return c.ctx.RemoteIP()
 }
 
 // URI 返回完整的请求 URI
-func (c *Context) URI() string {
+func (c *ghttp.Context) URI() string {
 	return string(c.ctx.RequestURI())
 }
 
 // UserAgent 返回 User-Agent 头部
-func (c *Context) UserAgent() string {
+func (c *ghttp.Context) UserAgent() string {
 	return string(c.ctx.Request.Header.UserAgent())
 }
 
 // Referer 返回 Referer 头部
-func (c *Context) Referer() string {
+func (c *ghttp.Context) Referer() string {
 	return string(c.ctx.Request.Header.Referer())
 }
 
 // Request 返回原始请求
-func (c *Context) Request() *fasthttp.Request {
+func (c *ghttp.Context) Request() *fasthttp.Request {
 	return &c.ctx.Request
 }
 
 // Response 返回原始响应
-func (c *Context) Response() *fasthttp.Response {
+func (c *ghttp.Context) Response() *fasthttp.Response {
 	return &c.ctx.Response
 }
 
 // ---------- Response 相关方法 ----------
 
 // SetStatusCode 设置状态码
-func (c *Context) SetStatusCode(code int) {
+func (c *ghttp.Context) SetStatusCode(code int) {
 	c.ctx.SetStatusCode(code)
 }
 
 // SetHeader 设置响应头
-func (c *Context) SetHeader(key, value string) {
+func (c *ghttp.Context) SetHeader(key, value string) {
 	c.ctx.Response.Header.Set(key, value)
 }
 
 // String 返回文本响应
-func (c *Context) String(code int, format string, values ...interface{}) {
+func (c *ghttp.Context) String(code int, format string, values ...interface{}) {
 	c.ctx.SetStatusCode(code)
 	c.ctx.SetContentType("text/plain; charset=utf-8")
 	if len(values) > 0 {
@@ -166,7 +212,7 @@ func (c *Context) String(code int, format string, values ...interface{}) {
 }
 
 // JSON 返回 JSON 响应
-func (c *Context) JSON(code int, obj interface{}) {
+func (c *ghttp.Context) JSON(code int, obj interface{}) {
 	c.ctx.SetStatusCode(code)
 	c.ctx.SetContentType("application/json; charset=utf-8")
 	if obj == nil {
@@ -183,7 +229,7 @@ func (c *Context) JSON(code int, obj interface{}) {
 }
 
 // XML 返回 XML 响应
-func (c *Context) XML(code int, obj interface{}) {
+func (c *ghttp.Context) XML(code int, obj interface{}) {
 	c.ctx.SetStatusCode(code)
 	c.ctx.SetContentType("application/xml; charset=utf-8")
 	if obj == nil {
@@ -200,18 +246,18 @@ func (c *Context) XML(code int, obj interface{}) {
 }
 
 // File 发送文件内容
-func (c *Context) File(filepath string) {
+func (c *ghttp.Context) File(filepath string) {
 	c.ctx.SendFile(filepath)
 }
 
 // FileAttachment 发送文件下载响应
-func (c *Context) FileAttachment(filepath, filename string) {
+func (c *ghttp.Context) FileAttachment(filepath, filename string) {
 	c.ctx.SendFile(filepath)
 	c.ctx.Response.Header.Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 }
 
 // Stream 流式传输数据
-func (c *Context) Stream(code int, contentType string, r io.Reader) error {
+func (c *ghttp.Context) Stream(code int, contentType string, r io.Reader) error {
 	c.ctx.SetStatusCode(code)
 	c.ctx.SetContentType(contentType)
 	_, err := io.Copy(c.ctx, r)
@@ -219,12 +265,12 @@ func (c *Context) Stream(code int, contentType string, r io.Reader) error {
 }
 
 // Redirect 重定向
-func (c *Context) Redirect(code int, location string) {
+func (c *ghttp.Context) Redirect(code int, location string) {
 	c.ctx.Redirect(location, code)
 }
 
 // NoContent 返回无内容响应
-func (c *Context) NoContent(code int) {
+func (c *ghttp.Context) NoContent(code int) {
 	c.ctx.SetStatusCode(code)
 	c.ctx.SetBody([]byte{})
 }
@@ -232,7 +278,7 @@ func (c *Context) NoContent(code int) {
 // ---------- 原始上下文访问 ----------
 
 // RequestCtx 返回原始的 fasthttp.RequestCtx（谨慎使用）
-func (c *Context) RequestCtx() *fasthttp.RequestCtx {
+func (c *ghttp.Context) RequestCtx() *fasthttp.RequestCtx {
 	return c.ctx
 }
 
@@ -246,7 +292,7 @@ type APIResponse struct {
 }
 
 // Success 返回成功响应
-func (c *Context) Success(data interface{}) {
+func (c *ghttp.Context) Success(data interface{}) {
 	c.JSON(fasthttp.StatusOK, &APIResponse{
 		Code:    0,
 		Message: "success",
@@ -255,7 +301,7 @@ func (c *Context) Success(data interface{}) {
 }
 
 // Error 返回错误响应
-func (c *Context) Error(code int, message string) {
+func (c *ghttp.Context) Error(code int, message string) {
 	c.JSON(code, &APIResponse{
 		Code:    -1,
 		Message: message,
@@ -263,7 +309,7 @@ func (c *Context) Error(code int, message string) {
 }
 
 // CustomResponse 返回自定义响应
-func (c *Context) CustomResponse(code int, message string, data interface{}) {
+func (c *ghttp.Context) CustomResponse(code int, message string, data interface{}) {
 	c.JSON(fasthttp.StatusOK, &APIResponse{
 		Code:    code,
 		Message: message,
@@ -274,35 +320,35 @@ func (c *Context) CustomResponse(code int, message string, data interface{}) {
 // ---------- 工具方法 ----------
 
 // IsAjax 判断是否为 AJAX 请求
-func (c *Context) IsAjax() bool {
+func (c *ghttp.Context) IsAjax() bool {
 	return c.Header("X-Requested-With") == "XMLHttpRequest"
 }
 
 // IsJson 判断是否为 JSON 请求
-func (c *Context) IsJson() bool {
+func (c *ghttp.Context) IsJson() bool {
 	return strings.Contains(c.ContentType(), "application/json")
 }
 
 // Time 获取请求时间
-func (c *Context) Time() time.Time {
+func (c *ghttp.Context) Time() time.Time {
 	return c.ctx.Time()
 }
 
 // ---------- Context 相关方法 ----------
 
 // Set 在 context 中存储值
-func (c *Context) Set(key string, value interface{}) {
+func (c *ghttp.Context) Set(key string, value interface{}) {
 	c.ctx.SetUserValue(key, value)
 }
 
 // Get 从 context 中获取值
-func (c *Context) Get(key string) (interface{}, bool) {
+func (c *ghttp.Context) Get(key string) (interface{}, bool) {
 	value := c.ctx.UserValue(key)
 	return value, value != nil
 }
 
 // MustGet 从 context 中获取值，不存在则 panic
-func (c *Context) MustGet(key string) interface{} {
+func (c *ghttp.Context) MustGet(key string) interface{} {
 	value := c.ctx.UserValue(key)
 	if value == nil {
 		panic("key \"" + key + "\" does not exist")
@@ -313,71 +359,39 @@ func (c *Context) MustGet(key string) interface{} {
 // ---------- 扩展响应方法 ----------
 
 // Status 设置 HTTP 状态码并返回 Context 以支持链式调用
-func (c *Context) Status(code int) *Context {
+func (c *ghttp.Context) Status(code int) *ghttp.Context {
 	c.ctx.SetStatusCode(code)
 	return c
 }
 
 // SendString 发送字符串响应
-func (c *Context) SendString(s string) {
+func (c *ghttp.Context) SendString(s string) {
 	c.ctx.SetBodyString(s)
 }
 
 // Send 发送字节响应
-func (c *Context) Send(b []byte) {
+func (c *ghttp.Context) Send(b []byte) {
 	c.ctx.SetBody(b)
 }
 
 // SendJSON 发送 JSON 响应
-func (c *Context) SendJSON(data interface{}) {
+func (c *ghttp.Context) SendJSON(data interface{}) {
 	c.JSON(fasthttp.StatusOK, data)
 }
 
 // SendError 发送错误响应
-func (c *Context) SendError(code int, message string) {
+func (c *ghttp.Context) SendError(code int, message string) {
 	c.Error(code, message)
 }
 
 // ---------- 路由相关 ----------
 
 // HandlerFunc 定义处理函数类型
-type HandlerFunc func(*Context)
+type HandlerFunc func(*ghttp.Context)
 
 // Validator 定义验证器接口，兼容常见的验证器库
 type Validator interface {
 	Validate() error
-}
-
-// Router 路由器结构
-type Router struct {
-	// 路由树，按照 HTTP 方法分组
-	trees map[string]*node
-
-	// 全局中间件
-	middlewares []HandlerFunc
-
-	// 统一响应体模板
-	unifiedResponseTemplate interface{}
-
-	// 验证器缓存
-	validatorCache sync.Map // map[reflect.Type]Validator
-
-	// validator/v10 验证器实例
-	validate *validator.Validate
-}
-
-// New 创建新的路由器实例
-func New() *Router {
-	r := &Router{
-		trees:          make(map[string]*node),
-		validatorCache: sync.Map{},
-		validate:       validator.New(),
-	}
-
-	// 设置默认统一响应体模板
-	r.unifiedResponseTemplate = &APIResponse{}
-
-	return r
 }
 
 // Use 添加全局中间件
@@ -388,6 +402,9 @@ func (r *Router) Use(middleware ...HandlerFunc) {
 // SetUnifiedResponseTemplate 设置统一响应体模板
 func (r *Router) SetUnifiedResponseTemplate(template interface{}) {
 	r.unifiedResponseTemplate = template
+}
+
+func (r *Router) Group(path string, fn interface{}) {
 }
 
 // GET 注册 GET 路由
@@ -542,7 +559,7 @@ func (r *Router) validateHandlerSignature(typ reflect.Type) error {
 		supported := false
 
 		// 1. Context 类型
-		if argType == reflect.TypeOf(&Context{}) {
+		if argType == reflect.TypeOf(&ghttp.Context{}) {
 			supported = true
 		}
 
@@ -571,7 +588,7 @@ func (r *Router) validateHandlerSignature(typ reflect.Type) error {
 }
 
 // buildHandlerArgs 构造处理函数参数
-func (r *Router) buildHandlerArgs(info *handlerInfo, c *Context) ([]reflect.Value, error) {
+func (r *Router) buildHandlerArgs(info *handlerInfo, c *ghttp.Context) ([]reflect.Value, error) {
 	fnType := info.typ
 	numIn := fnType.NumIn()
 	args := make([]reflect.Value, numIn)
@@ -581,7 +598,7 @@ func (r *Router) buildHandlerArgs(info *handlerInfo, c *Context) ([]reflect.Valu
 		argT := fnType.In(i)
 
 		// 1) *Context 直接注入
-		if argT == reflect.TypeOf(&Context{}) {
+		if argT == reflect.TypeOf(&ghttp.Context{}) {
 			args[i] = reflect.ValueOf(c)
 			continue
 		}
@@ -698,7 +715,7 @@ func (r *Router) parseReturnValues(rets []reflect.Value) *handlerReturnValues {
 }
 
 // writeHandlerResponse 处理函数返回值并写入响应
-func (r *Router) writeHandlerResponse(c *Context, rets []reflect.Value) {
+func (r *Router) writeHandlerResponse(c *ghttp.Context, rets []reflect.Value) {
 	// 如果没有返回值，直接返回
 	if len(rets) == 0 {
 		return

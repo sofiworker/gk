@@ -1,7 +1,8 @@
-package ghttp
+package gclient
 
 import (
 	"fmt"
+	"gk/ghttp"
 	"net/http"
 	"testing"
 )
@@ -27,7 +28,7 @@ func TestUrl(t *testing.T) {
 
 	for _, baseURL := range baseURLs {
 		for _, path := range paths {
-			fullURL, err := ConstructURL(baseURL, path)
+			fullURL, err := ghttp.ConstructURL(baseURL, path)
 			if err != nil {
 				fmt.Printf("构建完整URL失败: %v\n", err)
 				continue
