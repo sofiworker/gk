@@ -2,6 +2,8 @@ package ghttp
 
 import (
 	"time"
+
+	"github.com/gorilla/csrf"
 )
 
 type Middleware func(next Handler) Handler
@@ -74,6 +76,19 @@ func RetryMiddleware(config RetryConfig) MiddlewareFunc {
 func TimeoutMiddleware(timeout time.Duration) MiddlewareFunc {
 	return func(next Handler) Handler {
 		return func(req *Request, resp *Response) error {
+			return next(req, resp)
+		}
+	}
+}
+
+func CSRF() MiddlewareFunc {
+	return func(next Handler) Handler {
+		return func(req *Request, resp *Response) error {
+			csrf.Protect(
+				[]byte("a-32-byte-long-key-goes-here"),
+				csrf.RequestHeader("Authenticity-Token"),
+				csrf.FieldName("authenticity_token"),
+			)
 			return next(req, resp)
 		}
 	}
