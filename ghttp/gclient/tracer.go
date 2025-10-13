@@ -1,4 +1,4 @@
-package ghttp
+package gclient
 
 import (
 	"context"

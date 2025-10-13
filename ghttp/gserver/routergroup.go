@@ -1,10 +1,8 @@
 package gserver
 
-type Group struct {
-	app         *App
-	parentGroup *Group
-	name        string
-
-	Prefix          string
-	anyRouteDefined bool
+type RouterGroup struct {
+	//Handlers HandlersChain
+	basePath string
+	engine   *Server
+	root     bool
 }

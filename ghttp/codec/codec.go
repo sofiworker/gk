@@ -1,4 +1,4 @@
-package ghttp
+package codec
 
 // Codec 编解码器接口
 type Codec interface {

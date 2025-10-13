@@ -1,6 +1,8 @@
-package ghttp
+package gclient
 
-import "fmt"
+import (
+	"fmt"
+)
 
 var (
 	ErrInvalidPath    = fmt.Errorf("invalid path")

@@ -1,9 +1,7 @@
-package ghttp
+package gclient
 
 import (
 	"context"
-	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -99,79 +97,6 @@ func (w *WebSocketRequest) SetSubprotocols(subprotocols []string) *WebSocketRequ
 
 // Connect 连接WebSocket服务器
 func (w *WebSocketRequest) Connect(ctx context.Context) error {
-	// 构建WebSocket URL
-	wsURL := w.url
-	if w.Client.BaseUrl != "" {
-		var err error
-		wsURL, err = ConstructURL(w.Client.BaseUrl, w.url)
-		if err != nil {
-			return err
-		}
-	}
-
-	// 将http/https转换为ws/wss
-	if string(w.fr.URI().Scheme()) == "https" {
-		wsURL = "wss" + wsURL[5:] // 替换 "https" 为 "wss"
-	} else if string(w.fr.URI().Scheme()) == "http" {
-		wsURL = "ws" + wsURL[4:] // 替换 "http" 为 "ws"
-	}
-
-	retries := 0
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		// 准备HTTP头
-		headers := make(http.Header)
-		w.fr.Header.VisitAll(func(key, value []byte) {
-			headers.Set(string(key), string(value))
-		})
-
-		// 连接WebSocket
-		conn, resp, err := w.dialer.DialContext(ctx, wsURL, headers)
-		if err != nil {
-			if w.shouldReconnect(retries, err) {
-				retries++
-				time.Sleep(w.retryDelay)
-				continue
-			}
-			if resp != nil {
-				return fmt.Errorf("websocket dial error: %v, status: %d", err, resp.StatusCode)
-			}
-			return fmt.Errorf("websocket dial error: %v", err)
-		}
-
-		// 处理WebSocket连接
-		err = w.handleWebSocketConnection(ctx, conn)
-		if err != nil {
-			conn.Close()
-			if w.shouldReconnect(retries, err) {
-				retries++
-				time.Sleep(w.retryDelay)
-				continue
-			}
-			return err
-		}
-
-		// 正常关闭
-		conn.Close()
-
-		// 如果不需要重连，退出循环
-		if !w.reconnect {
-			break
-		}
-
-		retries++
-		if w.maxRetries > 0 && retries >= w.maxRetries {
-			return fmt.Errorf("max retries exceeded")
-		}
-
-		time.Sleep(w.retryDelay)
-	}
 
 	return nil
 }
