@@ -1,4 +1,4 @@
-package ghttp
+package codec
 
 import (
 	"encoding/json"

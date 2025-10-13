@@ -1,7 +1,6 @@
 package main
 
 import (
-	"gk/ghttp"
 	"gk/ghttp/gserver"
 	"log"
 	"net"
@@ -10,7 +9,7 @@ import (
 func main() {
 	server := gserver.NewServer()
 	router := server.Router()
-	router.GET("/", func(c *ghttp.Context) {
+	router.GET("/", func(c *gserver.Context) {
 
 	})
 	listen, err := net.Listen("tcp", ":8080")

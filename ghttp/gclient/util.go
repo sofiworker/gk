@@ -1,6 +1,7 @@
-package ghttp
+package gclient
 
 import (
+	"net/http"
 	"net/url"
 	"strings"
 
@@ -27,7 +28,6 @@ func ValidMethod(method string) bool {
 func IsNotToken(r rune) bool {
 	return !httpguts.IsTokenRune(r)
 }
-
 
 func ConstructURL(baseurl, path string) (string, error) {
 	pathURL, err := url.Parse(path)
@@ -60,4 +60,11 @@ func ConstructURL(baseurl, path string) (string, error) {
 func IsValidURL(u string) bool {
 	_, err := url.Parse(u)
 	return err == nil
+}
+
+func CloneURLValues(v url.Values) url.Values {
+	if v == nil {
+		return nil
+	}
+	return url.Values(http.Header(v).Clone())
 }
