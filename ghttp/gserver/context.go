@@ -2,8 +2,6 @@ package gserver
 
 import (
 	"net/http"
-
-	"github.com/valyala/fasthttp"
 )
 
 type noCopy struct{}
@@ -12,7 +10,12 @@ func (*noCopy) Lock()   {}
 func (*noCopy) Unlock() {}
 
 type Context struct {
-	noCopy noCopy
-	ctx    *fasthttp.RequestCtx
-	req    *http.Request
+	noCopy   noCopy
+	Request  *http.Request
+	Response http.ResponseWriter
+	Params   map[string]string
+	Values   map[string]interface{}
+
+	statusCode int
+	responded  bool
 }
