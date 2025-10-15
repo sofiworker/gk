@@ -5,9 +5,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"unsafe"
-
-	"github.com/valyala/fasthttp"
 )
 
 // CompressedRadixTree 实现
@@ -17,7 +14,7 @@ type CompressedRadixNode struct {
 	isParam    bool
 	isWildcard bool
 	paramName  string
-	handler    unsafe.Pointer // *fasthttp.RequestHandler
+	handlers   []Handler
 	priority   uint8
 	flags      uint8
 }
@@ -32,7 +29,7 @@ func newCompressedRadixTree() *CompressedRadixTree {
 	return &CompressedRadixTree{}
 }
 
-func (crt *CompressedRadixTree) insert(path string, handler fasthttp.RequestHandler, middleware ...Middleware) error {
+func (crt *CompressedRadixTree) insert(path string, handler ...Handler) error {
 	crt.mu.Lock()
 	defer crt.mu.Unlock()
 	if crt.root == nil {
@@ -77,10 +74,8 @@ func (crt *CompressedRadixTree) insert(path string, handler fasthttp.RequestHand
 			break
 		}
 	}
-	// store handler pointer
-	p := new(fasthttp.RequestHandler)
-	*p = handler
-	currentNode.handler = unsafe.Pointer(p)
+
+	currentNode.handlers = handler
 	crt.size++
 	return nil
 }
@@ -121,13 +116,13 @@ func (crt *CompressedRadixTree) remove(path string) error {
 			remaining = remaining[1:]
 		}
 	}
-	if current.handler == nil {
-		return fmt.Errorf("not found")
-	}
-	current.handler = nil
+	//if current.handler == nil {
+	//	return fmt.Errorf("not found")
+	//}
+	//current.handler = nil
 	crt.size--
 	// 如果节点没有 handler 且没有子节点，从父节点移除
-	if parent != nil && len(current.children) == 0 && current.handler == nil {
+	if parent != nil && len(current.children) == 0 && current.handlers == nil {
 		parent.children = append(parent.children[:parentIndex], parent.children[parentIndex+1:]...)
 	}
 	return nil
@@ -141,7 +136,6 @@ func (crt *CompressedRadixTree) search(path string) *MatchResult {
 	}
 	currentNode := crt.root
 	remaining := path
-	params := make(map[string]string)
 
 	for currentNode != nil && remaining != "" {
 		var nextNode *CompressedRadixNode
@@ -164,12 +158,10 @@ func (crt *CompressedRadixTree) search(path string) *MatchResult {
 					if end == -1 {
 						end = len(remaining)
 					}
-					params[child.paramName] = remaining[:end]
 					nextNode = child
 					matchLen = end
 					break
 				} else if child.isWildcard {
-					params[child.paramName] = remaining
 					nextNode = child
 					matchLen = len(remaining)
 					break
@@ -192,13 +184,9 @@ func (crt *CompressedRadixTree) search(path string) *MatchResult {
 		}
 	}
 
-	if currentNode != nil && currentNode.handler != nil {
-		handler := *(*fasthttp.RequestHandler)(currentNode.handler)
-		return &MatchResult{
-			Handler: handler,
-			Params:  params,
-		}
-	}
+	//if currentNode != nil && currentNode.handler != nil {
+	//	return &MatchResult{}
+	//}
 	return nil
 }
 
@@ -249,11 +237,11 @@ func splitNode(node *CompressedRadixNode, splitPos int) {
 		isParam:    node.isParam,
 		isWildcard: node.isWildcard,
 		paramName:  node.paramName,
-		handler:    node.handler,
+		handlers:   node.handlers,
 	}
 	node.prefix = node.prefix[:splitPos]
 	node.children = []*CompressedRadixNode{newChild}
-	node.handler = nil
+	node.handlers = nil
 }
 
 func sortNodes(nodes []*CompressedRadixNode) {
