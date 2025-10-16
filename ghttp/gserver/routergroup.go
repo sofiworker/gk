@@ -2,6 +2,7 @@ package gserver
 
 import (
 	"net/http"
+	"net/url"
 	"regexp"
 )
 
@@ -17,18 +18,37 @@ var (
 	}
 )
 
+type Router interface {
+	Handle(method, path string, handlers ...HandlerFunc)
+	GET(path string, handlers ...HandlerFunc)
+	POST(path string, handlers ...HandlerFunc)
+	PUT(path string, handlers ...HandlerFunc)
+	DELETE(path string, handlers ...HandlerFunc)
+	PATCH(path string, handlers ...HandlerFunc)
+	HEAD(path string, handlers ...HandlerFunc)
+	OPTIONS(path string, handlers ...HandlerFunc)
+	ANY(path string, handlers ...HandlerFunc)
+}
+
+type Routers interface {
+	Router
+	Group(prefix string, handlers ...HandlerFunc) Routers
+}
+
 type RouterGroup struct {
-	Handlers []Handler
+	Handlers []HandlerFunc
 	basePath string
 	engine   *Server
 	root     bool
 }
 
-func (g *RouterGroup) Group(prefix string, handlers ...Handler) *RouterGroup {
+func (g *RouterGroup) Group(prefix string, handlers ...HandlerFunc) Routers {
+	path, _ := url.JoinPath(g.basePath, prefix)
 	return &RouterGroup{
-		basePath: prefix,
 		engine:   g.engine,
+		basePath: path,
 		root:     false,
+		Handlers: append(g.Handlers, handlers...),
 	}
 }
 
