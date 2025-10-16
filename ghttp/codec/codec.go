@@ -1,12 +1,20 @@
 package codec
 
+type Decode interface {
+	Decode(data []byte, v interface{}) error
+}
+
+type Encode interface {
+	Encode(v interface{}) ([]byte, error)
+}
+
 // Codec 编解码器接口
 type Codec interface {
 	// Encode 将数据编码为字节流
-	Encode(v interface{}) ([]byte, error)
+	Encode
 
 	// Decode 将字节流解码为数据
-	Decode(data []byte, v interface{}) error
+	Decode
 
 	// ContentType 返回该编解码器对应的content type
 	ContentType() string

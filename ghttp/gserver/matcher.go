@@ -7,7 +7,7 @@ import (
 )
 
 type MatchResult struct {
-	Handlers  []Handler
+	Handlers  []HandlerFunc
 	RoutePath string
 }
 
@@ -23,7 +23,7 @@ type MatcherStats struct {
 // Matcher 核心接口 - 负责路由匹配
 type Matcher interface {
 	Match(method, path string) *MatchResult
-	AddRoute(method, path string, handler ...Handler) error
+	AddRoute(method, path string, handler ...HandlerFunc) error
 	RemoveRoute(method, path string) error
 	Stats() *MatcherStats
 }
@@ -76,7 +76,7 @@ func (rg *routeGroup) routesCopy() []*routeEntry {
 
 type routeEntry struct {
 	path    string
-	handler []Handler
+	handler []HandlerFunc
 	node    *CompressedRadixNode
 	feature PathFeature
 }
@@ -106,7 +106,7 @@ func (mr *MethodMatcher) match(path string) *MatchResult {
 	return mr.radixTree.search(path)
 }
 
-func (s *serverMatcher) AddRoute(method, path string, handler ...Handler) error {
+func (s *serverMatcher) AddRoute(method, path string, handler ...HandlerFunc) error {
 	s.mu.Lock()
 	methodRouter := s.methodRouters[method]
 	if methodRouter == nil {

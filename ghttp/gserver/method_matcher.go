@@ -18,7 +18,7 @@ func newMethodMatcher() *MethodMatcher {
 	}
 }
 
-func (mr *MethodMatcher) addRoute(path string, handler ...Handler) error {
+func (mr *MethodMatcher) addRoute(path string, handler ...HandlerFunc) error {
 	feature := extractPathFeatures(path)
 	entry := &routeEntry{
 		path:    path,

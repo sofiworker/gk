@@ -14,7 +14,7 @@ type CompressedRadixNode struct {
 	isParam    bool
 	isWildcard bool
 	paramName  string
-	handlers   []Handler
+	handlers   []HandlerFunc
 	priority   uint8
 	flags      uint8
 }
@@ -29,7 +29,7 @@ func newCompressedRadixTree() *CompressedRadixTree {
 	return &CompressedRadixTree{}
 }
 
-func (crt *CompressedRadixTree) insert(path string, handler ...Handler) error {
+func (crt *CompressedRadixTree) insert(path string, handler ...HandlerFunc) error {
 	crt.mu.Lock()
 	defer crt.mu.Unlock()
 	if crt.root == nil {
