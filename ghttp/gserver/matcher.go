@@ -2,13 +2,13 @@ package gserver
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 )
 
 type MatchResult struct {
 	Path     string
 	Handlers []HandlerFunc
+	Params   map[string]string
 }
 
 type MatcherStats struct {
@@ -90,34 +90,6 @@ func (s *serverMatcher) Match(method, path string) *MatchResult {
 	}
 	result := methodRouter.match(path)
 	return result
-}
-
-// MethodMatcher 方法
-func (mr *MethodMatcher) match(path string) *MatchResult {
-	if group := mr.lengthIndex[len(path)]; group != nil {
-		for _, route := range group.routes {
-			if path == route.path {
-				return &MatchResult{
-					Path:     route.path,
-					Handlers: route.handler,
-				}
-			}
-		}
-	}
-
-	segments := strings.Split(path, "/")
-	if group := mr.segmentIndex[len(segments)]; group != nil {
-		for _, route := range group.routes {
-			if path == route.path {
-				return &MatchResult{
-					Path:     route.path,
-					Handlers: route.handler,
-				}
-			}
-		}
-	}
-
-	return mr.radixTree.search(path)
 }
 
 func (s *serverMatcher) AddRoute(method, path string, handler ...HandlerFunc) error {
