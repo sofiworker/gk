@@ -7,8 +7,8 @@ import (
 )
 
 type MatchResult struct {
-	Handlers  []HandlerFunc
-	RoutePath string
+	Path     string
+	Handlers []HandlerFunc
 }
 
 type MatcherStats struct {
@@ -30,7 +30,7 @@ type Matcher interface {
 
 func newServerMatcher() Matcher {
 	s := &serverMatcher{
-		methodRouters: make(map[string]*MethodMatcher),
+		methodMatcher: make(map[string]*MethodMatcher),
 		stats:         &MatcherStats{},
 	}
 	s.matchPool.New = func() interface{} {
@@ -40,7 +40,7 @@ func newServerMatcher() Matcher {
 }
 
 type serverMatcher struct {
-	methodRouters map[string]*MethodMatcher
+	methodMatcher map[string]*MethodMatcher
 	matchPool     sync.Pool
 	mu            sync.RWMutex
 	stats         *MatcherStats
@@ -78,12 +78,12 @@ type routeEntry struct {
 	path    string
 	handler []HandlerFunc
 	node    *CompressedRadixNode
-	feature PathFeature
+	feature *PathFeature
 }
 
 func (s *serverMatcher) Match(method, path string) *MatchResult {
 	s.mu.RLock()
-	methodRouter := s.methodRouters[method]
+	methodRouter := s.methodMatcher[method]
 	s.mu.RUnlock()
 	if methodRouter == nil {
 		return nil
@@ -94,13 +94,27 @@ func (s *serverMatcher) Match(method, path string) *MatchResult {
 
 // MethodMatcher 方法
 func (mr *MethodMatcher) match(path string) *MatchResult {
-	if group := mr.lengthIndex[len(path)]; group == nil || group.empty() {
-		return nil
+	if group := mr.lengthIndex[len(path)]; group != nil {
+		for _, route := range group.routes {
+			if path == route.path {
+				return &MatchResult{
+					Path:     route.path,
+					Handlers: route.handler,
+				}
+			}
+		}
 	}
 
 	segments := strings.Split(path, "/")
-	if group := mr.segmentIndex[len(segments)]; group == nil || group.empty() {
-		return nil
+	if group := mr.segmentIndex[len(segments)]; group != nil {
+		for _, route := range group.routes {
+			if path == route.path {
+				return &MatchResult{
+					Path:     route.path,
+					Handlers: route.handler,
+				}
+			}
+		}
 	}
 
 	return mr.radixTree.search(path)
@@ -108,18 +122,18 @@ func (mr *MethodMatcher) match(path string) *MatchResult {
 
 func (s *serverMatcher) AddRoute(method, path string, handler ...HandlerFunc) error {
 	s.mu.Lock()
-	methodRouter := s.methodRouters[method]
-	if methodRouter == nil {
-		methodRouter = newMethodMatcher()
-		s.methodRouters[method] = methodRouter
+	methodMatcher := s.methodMatcher[method]
+	if methodMatcher == nil {
+		methodMatcher = newMethodMatcher()
+		s.methodMatcher[method] = methodMatcher
 	}
 	s.mu.Unlock()
-	return methodRouter.addRoute(path, handler...)
+	return methodMatcher.addRoute(path, handler...)
 }
 
 func (s *serverMatcher) RemoveRoute(method, path string) error {
 	s.mu.RLock()
-	methodRouter := s.methodRouters[method]
+	methodRouter := s.methodMatcher[method]
 	s.mu.RUnlock()
 	if methodRouter == nil {
 		return fmt.Errorf("no routes for %s", method)

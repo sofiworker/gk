@@ -1,8 +1,20 @@
 package gserver
 
-import "sync"
+import (
+	"strings"
+	"sync"
+)
+
+type PathFeature struct {
+	length     int
+	segmentCnt int
+	staticBits uint64
+	paramBits  uint64
+	hash       uint32
+}
 
 type MethodMatcher struct {
+	staticGroup  map[string]*routeGroup
 	lengthIndex  map[int]*routeGroup
 	segmentIndex map[int]*routeGroup
 	radixTree    *CompressedRadixTree
@@ -12,6 +24,7 @@ type MethodMatcher struct {
 
 func newMethodMatcher() *MethodMatcher {
 	return &MethodMatcher{
+		staticGroup:  make(map[string]*routeGroup),
 		lengthIndex:  make(map[int]*routeGroup),
 		segmentIndex: make(map[int]*routeGroup),
 		radixTree:    newCompressedRadixTree(),
@@ -19,7 +32,7 @@ func newMethodMatcher() *MethodMatcher {
 }
 
 func (mr *MethodMatcher) addRoute(path string, handler ...HandlerFunc) error {
-	feature := extractPathFeatures(path)
+	feature := mr.extractPathFeatures(path)
 	entry := &routeEntry{
 		path:    path,
 		handler: handler,
@@ -31,6 +44,33 @@ func (mr *MethodMatcher) addRoute(path string, handler ...HandlerFunc) error {
 		mr.radixTree = newCompressedRadixTree()
 	}
 	return mr.radixTree.insert(path, handler...)
+}
+
+func (mr *MethodMatcher) extractPathFeatures(path string) *PathFeature {
+	segments := strings.Split(path, "/")
+	var feature PathFeature
+	feature.length = len(path)
+	feature.segmentCnt = len(segments)
+
+	for i, seg := range segments {
+		if len(seg) == 0 {
+			continue
+		}
+		if seg[0] == ':' || seg[0] == '*' {
+			feature.paramBits |= 1 << uint(i)
+		} else {
+			feature.staticBits |= 1 << uint(i)
+		}
+	}
+
+	// FNV-1a
+	hash := uint32(2166136261)
+	for _, b := range []byte(path) {
+		hash ^= uint32(b)
+		hash *= 16777619
+	}
+	feature.hash = hash
+	return &feature
 }
 
 func (mr *MethodMatcher) addToLengthIndex(length int, entry *routeEntry) {
@@ -52,7 +92,7 @@ func (mr *MethodMatcher) addToSegmentIndex(segCnt int, entry *routeEntry) {
 }
 
 func (mr *MethodMatcher) removeRoute(path string) error {
-	feature := extractPathFeatures(path)
+	feature := mr.extractPathFeatures(path)
 	mr.removeFromLengthIndex(feature.length, path)
 	mr.removeFromSegmentIndex(feature.segmentCnt, path)
 

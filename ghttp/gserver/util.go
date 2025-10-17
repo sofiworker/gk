@@ -1,42 +1,6 @@
 package gserver
 
-import "strings"
-
-type PathFeature struct {
-	length     int
-	segmentCnt int
-	staticBits uint64
-	paramBits  uint64
-	hash       uint32
-}
-
-// 提取路径特征
-func extractPathFeatures(path string) PathFeature {
-	segments := strings.Split(path, "/")
-	var feature PathFeature
-	feature.length = len(path)
-	feature.segmentCnt = len(segments)
-
-	for i, seg := range segments {
-		if len(seg) == 0 {
-			continue
-		}
-		if seg[0] == ':' || seg[0] == '*' {
-			feature.paramBits |= 1 << uint(i)
-		} else {
-			feature.staticBits |= 1 << uint(i)
-		}
-	}
-
-	// FNV-1a
-	hash := uint32(2166136261)
-	for _, b := range []byte(path) {
-		hash ^= uint32(b)
-		hash *= 16777619
-	}
-	feature.hash = hash
-	return feature
-}
+import "path"
 
 func longestCommonPrefix(a, b string) int {
 	i := 0
@@ -46,4 +10,58 @@ func longestCommonPrefix(a, b string) int {
 		}
 	}
 	return i
+}
+
+func JoinPaths(absolutePath, relativePath string) string {
+	if relativePath == "" {
+		return absolutePath
+	}
+
+	finalPath := path.Join(absolutePath, relativePath)
+	if lastChar(relativePath) == '/' && lastChar(finalPath) != '/' {
+		return finalPath + "/"
+	}
+	return finalPath
+}
+
+func lastChar(str string) uint8 {
+	if str == "" {
+		panic("The length of the string can't be 0")
+	}
+	return str[len(str)-1]
+}
+
+func checkPathValid(path string) {
+	if path == "" {
+		panic("empty path")
+	}
+	if path[0] != '/' {
+		panic("path must begin with '/'")
+	}
+	for i, c := range []byte(path) {
+		switch c {
+		case ':':
+			if (i < len(path)-1 && path[i+1] == '/') || i == (len(path)-1) {
+				panic("wildcards must be named with a non-empty name in path '" + path + "'")
+			}
+			i++
+			for ; i < len(path) && path[i] != '/'; i++ {
+				if path[i] == ':' || path[i] == '*' {
+					panic("only one wildcard per path segment is allowed, find multi in path '" + path + "'")
+				}
+			}
+		case '*':
+			if i == len(path)-1 {
+				panic("wildcards must be named with a non-empty name in path '" + path + "'")
+			}
+			if i > 0 && path[i-1] != '/' {
+				panic(" no / before wildcards in path " + path)
+			}
+			for ; i < len(path); i++ {
+				if path[i] == '/' {
+					panic("catch-all routes are only allowed at the end of the path in path '" + path + "'")
+				}
+			}
+		}
+	}
 }

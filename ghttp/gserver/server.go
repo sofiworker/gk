@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"sync"
 
+	"github.com/sofiworker/gk/ghttp/codec"
 	"github.com/valyala/fasthttp"
 )
 
@@ -27,6 +28,8 @@ type Server struct {
 	convertFastRequestCtxFunc func(ctx *fasthttp.RequestCtx) *http.Request
 
 	w http.ResponseWriter
+
+	codec codec.Codec
 }
 
 func NewServer() *Server {
@@ -57,7 +60,22 @@ func NewServer() *Server {
 }
 
 func (s *Server) addRoute(method, path string, handlers ...HandlerFunc) {
-
+	if len(path) == 0 {
+		panic("path should not be ''")
+	}
+	if path[0] != '/' {
+		panic("path must begin with '/'")
+	}
+	if method == "" {
+		panic("HTTP method can not be empty")
+	}
+	if len(handlers) == 0 {
+		panic("there must be at least one handler")
+	}
+	err := s.matcher.AddRoute(method, path, handlers...)
+	if err != nil {
+		panic(err)
+	}
 }
 
 func (s *Server) Start() error {
@@ -71,6 +89,8 @@ func (s *Server) FastHandler(ctx *fasthttp.RequestCtx) {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c := s.ctxPool.Get().(*Context)
+	c.Reset()
+	c.Writer = w
 
 	httpMethod := c.Request.Method
 	rPath := c.Request.URL.Path
@@ -79,10 +99,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-
-	for _, h := range matchResult.Handlers {
-		h(c)
+	if len(matchResult.Handlers) > 0 {
+		c.handlers = matchResult.Handlers
 	}
+	c.Next()
 
 	s.ctxPool.Put(c)
 }
