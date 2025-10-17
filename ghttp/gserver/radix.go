@@ -7,7 +7,6 @@ import (
 	"sync"
 )
 
-// CompressedRadixTree 实现
 type CompressedRadixNode struct {
 	prefix     string
 	children   []*CompressedRadixNode

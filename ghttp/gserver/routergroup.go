@@ -2,7 +2,6 @@ package gserver
 
 import (
 	"net/http"
-	"net/url"
 	"regexp"
 )
 
@@ -42,13 +41,11 @@ type RouterGroup struct {
 	root     bool
 }
 
-func (g *RouterGroup) Group(prefix string, handlers ...HandlerFunc) Routers {
-	path, _ := url.JoinPath(g.basePath, prefix)
+func (g *RouterGroup) Group(relativePath string, handlers ...HandlerFunc) Routers {
 	return &RouterGroup{
 		engine:   g.engine,
-		basePath: path,
-		root:     false,
-		Handlers: append(g.Handlers, handlers...),
+		basePath: g.calculateAbsolutePath(relativePath),
+		Handlers: g.copyHandler(handlers...),
 	}
 }
 
@@ -91,4 +88,17 @@ func (g *RouterGroup) ANY(path string, handlers ...HandlerFunc) {
 	for _, method := range anyMethods {
 		g.Handle(method, path, handlers...)
 	}
+}
+
+func (g *RouterGroup) calculateAbsolutePath(relativePath string) string {
+	return JoinPaths(g.basePath, relativePath)
+}
+
+func (g *RouterGroup) copyHandler(handlers ...HandlerFunc) []HandlerFunc {
+	copyHandlers := make([]HandlerFunc, len(g.Handlers))
+	copy(copyHandlers, g.Handlers)
+	if len(handlers) == 0 {
+		return copyHandlers
+	}
+	return append(copyHandlers, handlers...)
 }
