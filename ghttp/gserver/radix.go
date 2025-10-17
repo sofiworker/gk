@@ -37,31 +37,21 @@ func (crt *CompressedRadixTree) insert(path string, handler ...HandlerFunc) erro
 	currentNode := crt.root
 	remaining := path
 
-	for remaining != "" {
+	for len(remaining) > 0 {
 		var found bool
 		for _, child := range currentNode.children {
 			common := longestCommonPrefix(remaining, child.prefix)
 			if common > 0 {
-				if common == len(child.prefix) {
-					currentNode = child
-					if common <= len(remaining) {
-						remaining = remaining[common:]
-					} else {
-						remaining = ""
-					}
-					found = true
-					break
-				} else {
+				if common < len(child.prefix) {
 					splitNode(child, common)
-					currentNode = child
-					if common <= len(remaining) {
-						remaining = remaining[common:]
-					} else {
-						remaining = ""
-					}
-					found = true
-					break
 				}
+				currentNode = child
+				remaining = strings.TrimPrefix(remaining, child.prefix)
+				if strings.HasPrefix(remaining, "/") {
+					remaining = remaining[1:]
+				}
+				found = true
+				break
 			}
 		}
 		if !found {
@@ -69,9 +59,13 @@ func (crt *CompressedRadixTree) insert(path string, handler ...HandlerFunc) erro
 			currentNode.children = append(currentNode.children, newNode)
 			sortNodes(currentNode.children)
 			currentNode = newNode
-			remaining = ""
 			break
 		}
+	}
+
+	// 如果该节点已有 handler，说明重复添加
+	if len(currentNode.handlers) > 0 {
+		return fmt.Errorf("duplicate route: %s", path)
 	}
 
 	currentNode.handlers = handler
@@ -85,113 +79,124 @@ func (crt *CompressedRadixTree) remove(path string) error {
 	if crt.root == nil {
 		return fmt.Errorf("empty tree")
 	}
-	// 简单查找并删除 handler
+
+	var parents []*CompressedRadixNode
 	current := crt.root
 	remaining := path
-	var parent *CompressedRadixNode
-	var parentIndex int
-	for remaining != "" {
+
+	for len(remaining) > 0 && current != nil {
 		var next *CompressedRadixNode
-		var idx int
-		for i, child := range current.children {
-			if strings.HasPrefix(remaining, child.prefix) || strings.HasPrefix(child.prefix, remaining) {
+		for _, child := range current.children {
+			if strings.HasPrefix(remaining, child.prefix) {
+				remaining = strings.TrimPrefix(remaining, child.prefix)
+				if strings.HasPrefix(remaining, "/") {
+					remaining = remaining[1:]
+				}
+				parents = append(parents, current)
 				next = child
-				idx = i
+				current = child
 				break
 			}
 		}
 		if next == nil {
-			return fmt.Errorf("not found")
-		}
-		parent = current
-		parentIndex = idx
-		current = next
-		if len(remaining) >= len(current.prefix) {
-			remaining = remaining[len(current.prefix):]
-		} else {
-			remaining = ""
-		}
-		if len(remaining) > 0 && remaining[0] == '/' {
-			remaining = remaining[1:]
+			return fmt.Errorf("path not found: %s", path)
 		}
 	}
-	//if current.handler == nil {
-	//	return fmt.Errorf("not found")
-	//}
-	//current.handler = nil
+
+	if current == nil || len(current.handlers) == 0 {
+		return fmt.Errorf("not found")
+	}
+
+	current.handlers = nil
 	crt.size--
-	// 如果节点没有 handler 且没有子节点，从父节点移除
-	if parent != nil && len(current.children) == 0 && current.handlers == nil {
-		parent.children = append(parent.children[:parentIndex], parent.children[parentIndex+1:]...)
+
+	// 清理无用节点
+	for i := len(parents) - 1; i >= 0; i-- {
+		p := parents[i]
+		for idx, c := range p.children {
+			if c == current && len(c.children) == 0 && len(c.handlers) == 0 {
+				p.children = append(p.children[:idx], p.children[idx+1:]...)
+				current = p
+				break
+			}
+		}
 	}
+
 	return nil
 }
 
 func (crt *CompressedRadixTree) search(path string) *MatchResult {
 	crt.mu.RLock()
 	defer crt.mu.RUnlock()
+
 	if crt.root == nil {
 		return nil
 	}
-	currentNode := crt.root
+
+	current := crt.root
 	remaining := path
+	params := make(map[string]string)
 
-	for currentNode != nil && remaining != "" {
-		var nextNode *CompressedRadixNode
-		var matchLen int
+	for len(remaining) > 0 && current != nil {
+		var next *CompressedRadixNode
+		var consumed string
 
-		for _, child := range currentNode.children {
-			if child.isParam || child.isWildcard {
-				continue
+		for _, child := range current.children {
+			// 通配符：直接吸收剩余路径
+			if child.isWildcard {
+				params[child.paramName] = remaining
+				next = child
+				remaining = ""
+				break
 			}
-			if len(remaining) >= len(child.prefix) && remaining[:len(child.prefix)] == child.prefix {
-				nextNode = child
-				matchLen = len(child.prefix)
+
+			// 参数匹配：匹配一段直到 '/'
+			if child.isParam {
+				end := strings.IndexByte(remaining, '/')
+				if end == -1 {
+					end = len(remaining)
+				}
+				params[child.paramName] = remaining[:end]
+				next = child
+				consumed = remaining[:end]
+				remaining = remaining[end:]
+				if strings.HasPrefix(remaining, "/") {
+					remaining = remaining[1:]
+				}
+				break
+			}
+
+			// 静态匹配
+			if strings.HasPrefix(remaining, child.prefix) {
+				next = child
+				consumed = child.prefix
+				remaining = strings.TrimPrefix(remaining, child.prefix)
+				if strings.HasPrefix(remaining, "/") {
+					remaining = remaining[1:]
+				}
 				break
 			}
 		}
-		if nextNode == nil {
-			for _, child := range currentNode.children {
-				if child.isParam {
-					end := strings.IndexByte(remaining, '/')
-					if end == -1 {
-						end = len(remaining)
-					}
-					nextNode = child
-					matchLen = end
-					break
-				} else if child.isWildcard {
-					nextNode = child
-					matchLen = len(remaining)
-					break
-				}
-			}
-		}
 
-		if nextNode == nil {
+		if next == nil {
 			return nil
 		}
 
-		currentNode = nextNode
-		if matchLen <= len(remaining) {
-			remaining = remaining[matchLen:]
-		} else {
-			remaining = ""
-		}
-		if len(remaining) > 0 && remaining[0] == '/' {
-			remaining = remaining[1:]
+		current = next
+		if consumed == "" && !next.isWildcard && !next.isParam {
+			break
 		}
 	}
 
-	//if currentNode != nil && currentNode.handler != nil {
-	//	return &MatchResult{}
-	//}
-	return nil
-}
+	if current != nil && len(current.handlers) > 0 {
+		return &MatchResult{
+			Path:     path,
+			Handlers: current.handlers,
+			Params:   params,
+		}
+	}
 
-func (crt *CompressedRadixTree) estimateMemory() uint64 {
-	// 简单估算
-	return uint64(crt.size) * 64
+	return nil
 }
 
 func (crt *CompressedRadixTree) createNode(path string) *CompressedRadixNode {
