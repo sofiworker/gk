@@ -2,20 +2,16 @@ package gserver
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 )
 
 type CompressedRadixNode struct {
-	prefix     string
-	children   []*CompressedRadixNode
-	isParam    bool
-	isWildcard bool
-	paramName  string
-	handlers   []HandlerFunc
-	priority   uint8
-	flags      uint8
+	children      map[string]*CompressedRadixNode
+	paramChild    *CompressedRadixNode
+	wildcardChild *CompressedRadixNode
+	paramName     string
+	entry         *routeEntry
 }
 
 type CompressedRadixTree struct {
@@ -25,50 +21,83 @@ type CompressedRadixTree struct {
 }
 
 func newCompressedRadixTree() *CompressedRadixTree {
-	return &CompressedRadixTree{}
+	return &CompressedRadixTree{
+		root: newRadixNode(),
+	}
 }
 
-func (crt *CompressedRadixTree) insert(path string, handler ...HandlerFunc) error {
+func newRadixNode() *CompressedRadixNode {
+	return &CompressedRadixNode{
+		children: make(map[string]*CompressedRadixNode),
+	}
+}
+
+func (crt *CompressedRadixTree) insert(entry *routeEntry) error {
+	if entry == nil {
+		return fmt.Errorf("nil route entry")
+	}
+
 	crt.mu.Lock()
 	defer crt.mu.Unlock()
+
 	if crt.root == nil {
-		crt.root = &CompressedRadixNode{}
+		crt.root = newRadixNode()
 	}
-	currentNode := crt.root
-	remaining := path
 
-	for len(remaining) > 0 {
-		var found bool
-		for _, child := range currentNode.children {
-			common := longestCommonPrefix(remaining, child.prefix)
-			if common > 0 {
-				if common < len(child.prefix) {
-					splitNode(child, common)
-				}
-				currentNode = child
-				remaining = strings.TrimPrefix(remaining, child.prefix)
-				if strings.HasPrefix(remaining, "/") {
-					remaining = remaining[1:]
-				}
-				found = true
-				break
+	segments := splitPathSegments(entry.path)
+	current := crt.root
+
+	if len(segments) == 0 {
+		if current.entry != nil {
+			return fmt.Errorf("duplicate route: %s", entry.path)
+		}
+		current.entry = entry
+		crt.size++
+		return nil
+	}
+
+	for i, segment := range segments {
+		isLast := i == len(segments)-1
+		if len(segment) == 0 {
+			continue
+		}
+
+		switch segment[0] {
+		case ':':
+			if current.paramChild == nil {
+				current.paramChild = newRadixNode()
+				current.paramChild.paramName = segment[1:]
 			}
-		}
-		if !found {
-			newNode := crt.createNode(remaining)
-			currentNode.children = append(currentNode.children, newNode)
-			sortNodes(currentNode.children)
-			currentNode = newNode
-			break
+			current = current.paramChild
+		case '*':
+			if !isLast {
+				return fmt.Errorf("catch-all must be the last segment in route %s", entry.path)
+			}
+			if current.wildcardChild == nil {
+				current.wildcardChild = newRadixNode()
+				current.wildcardChild.paramName = segment[1:]
+			}
+			if current.wildcardChild.entry != nil {
+				return fmt.Errorf("duplicate route: %s", entry.path)
+			}
+			current.wildcardChild.entry = entry
+			crt.size++
+			return nil
+		default:
+			child, ok := current.children[segment]
+			if !ok {
+				child = newRadixNode()
+				current.children[segment] = child
+			}
+			current = child
 		}
 	}
 
-	// 如果该节点已有 handler，说明重复添加
-	if len(currentNode.handlers) > 0 {
-		return fmt.Errorf("duplicate route: %s", path)
+	if current.entry != nil {
+		return fmt.Errorf("duplicate route: %s", entry.path)
 	}
 
-	currentNode.handlers = handler
+	current.entry = entry
 	crt.size++
 	return nil
 }
@@ -76,53 +105,74 @@ func (crt *CompressedRadixTree) insert(path string, handler ...HandlerFunc) erro
 func (crt *CompressedRadixTree) remove(path string) error {
 	crt.mu.Lock()
 	defer crt.mu.Unlock()
+
 	if crt.root == nil {
 		return fmt.Errorf("empty tree")
 	}
 
-	var parents []*CompressedRadixNode
-	current := crt.root
-	remaining := path
-
-	for len(remaining) > 0 && current != nil {
-		var next *CompressedRadixNode
-		for _, child := range current.children {
-			if strings.HasPrefix(remaining, child.prefix) {
-				remaining = strings.TrimPrefix(remaining, child.prefix)
-				if strings.HasPrefix(remaining, "/") {
-					remaining = remaining[1:]
-				}
-				parents = append(parents, current)
-				next = child
-				current = child
-				break
-			}
-		}
-		if next == nil {
-			return fmt.Errorf("path not found: %s", path)
-		}
+	removed, _, err := removeRadixNode(crt.root, splitPathSegments(path))
+	if err != nil {
+		return err
 	}
-
-	if current == nil || len(current.handlers) == 0 {
+	if !removed {
 		return fmt.Errorf("not found")
 	}
 
-	current.handlers = nil
 	crt.size--
+	return nil
+}
 
-	// 清理无用节点
-	for i := len(parents) - 1; i >= 0; i-- {
-		p := parents[i]
-		for idx, c := range p.children {
-			if c == current && len(c.children) == 0 && len(c.handlers) == 0 {
-				p.children = append(p.children[:idx], p.children[idx+1:]...)
-				current = p
-				break
+func removeRadixNode(current *CompressedRadixNode, segments []string) (bool, bool, error) {
+	if len(segments) == 0 {
+		if current.entry == nil {
+			return false, false, nil
+		}
+		current.entry = nil
+		return true, current.isEmpty(), nil
+	}
+
+	segment := segments[0]
+	rest := segments[1:]
+
+	if len(segment) > 0 && segment[0] != ':' && segment[0] != '*' {
+		if child, ok := current.children[segment]; ok {
+			removed, prune, err := removeRadixNode(child, rest)
+			if err != nil {
+				return false, false, err
+			}
+			if removed {
+				if prune {
+					delete(current.children, segment)
+				}
+				return true, current.isEmpty(), nil
 			}
 		}
 	}
 
-	return nil
+	if len(segment) > 0 && segment[0] == ':' && current.paramChild != nil {
+		removed, prune, err := removeRadixNode(current.paramChild, rest)
+		if err != nil {
+			return false, false, err
+		}
+		if removed {
+			if prune {
+				current.paramChild = nil
+			}
+			return true, current.isEmpty(), nil
+		}
+	}
+
+	if len(segment) > 0 && segment[0] == '*' && current.wildcardChild != nil {
+		if len(rest) == 0 && current.wildcardChild.paramName == segment[1:] && current.wildcardChild.entry != nil {
+			current.wildcardChild.entry = nil
+			if current.wildcardChild.isEmpty() {
+				current.wildcardChild = nil
+			}
+			return true, current.isEmpty(), nil
+		}
+	}
+
+	return false, false, nil
 }
 
 func (crt *CompressedRadixTree) search(path string) *MatchResult {
@@ -133,130 +183,69 @@ func (crt *CompressedRadixTree) search(path string) *MatchResult {
 		return nil
 	}
 
-	current := crt.root
-	remaining := path
-	params := make(map[string]string)
+	segments := splitPathSegments(path)
+	var params map[string]string
 
-	for len(remaining) > 0 && current != nil {
-		var next *CompressedRadixNode
-		var consumed string
+	entry := crt.root.find(segments, &params)
+	if entry == nil {
+		return nil
+	}
 
-		for _, child := range current.children {
-			// 通配符：直接吸收剩余路径
-			if child.isWildcard {
-				params[child.paramName] = remaining
-				next = child
-				remaining = ""
-				break
-			}
+	return entry.toResult(params)
+}
 
-			// 参数匹配：匹配一段直到 '/'
-			if child.isParam {
-				end := strings.IndexByte(remaining, '/')
-				if end == -1 {
-					end = len(remaining)
-				}
-				params[child.paramName] = remaining[:end]
-				next = child
-				consumed = remaining[:end]
-				remaining = remaining[end:]
-				if strings.HasPrefix(remaining, "/") {
-					remaining = remaining[1:]
-				}
-				break
-			}
-
-			// 静态匹配
-			if strings.HasPrefix(remaining, child.prefix) {
-				next = child
-				consumed = child.prefix
-				remaining = strings.TrimPrefix(remaining, child.prefix)
-				if strings.HasPrefix(remaining, "/") {
-					remaining = remaining[1:]
-				}
-				break
-			}
+func (n *CompressedRadixNode) find(segments []string, params *map[string]string) *routeEntry {
+	if len(segments) == 0 {
+		if n.entry != nil {
+			return n.entry
 		}
-
-		if next == nil {
-			return nil
+		if n.wildcardChild != nil && n.wildcardChild.entry != nil {
+			values := ensureParams(params)
+			values[n.wildcardChild.paramName] = ""
+			return n.wildcardChild.entry
 		}
+		return nil
+	}
 
-		current = next
-		if consumed == "" && !next.isWildcard && !next.isParam {
-			break
+	segment := segments[0]
+	rest := segments[1:]
+
+	if len(segment) > 0 {
+		if child, ok := n.children[segment]; ok {
+			if entry := child.find(rest, params); entry != nil {
+				return entry
+			}
 		}
 	}
 
-	if current != nil && len(current.handlers) > 0 {
-		return &MatchResult{
-			Path:     path,
-			Handlers: current.handlers,
-			Params:   params,
+	if n.paramChild != nil && len(segment) > 0 {
+		values := ensureParams(params)
+		values[n.paramChild.paramName] = segment
+		if entry := n.paramChild.find(rest, params); entry != nil {
+			return entry
 		}
+		delete(values, n.paramChild.paramName)
+	}
+
+	if n.wildcardChild != nil && n.wildcardChild.entry != nil {
+		values := ensureParams(params)
+		values[n.wildcardChild.paramName] = strings.Join(segments, "/")
+		return n.wildcardChild.entry
 	}
 
 	return nil
 }
 
-func (crt *CompressedRadixTree) createNode(path string) *CompressedRadixNode {
-	node := &CompressedRadixNode{}
-	if len(path) > 0 {
-		switch path[0] {
-		case ':':
-			node.isParam = true
-			end := strings.IndexByte(path, '/')
-			if end == -1 {
-				end = len(path)
-			}
-			node.paramName = path[1:end]
-			node.prefix = path[:end]
-		case '*':
-			node.isWildcard = true
-			node.paramName = path[1:]
-			node.prefix = path
-		default:
-			end := strings.IndexByte(path, '/')
-			if end == -1 {
-				end = len(path)
-			}
-			paramStart := strings.IndexByte(path, ':')
-			wildStart := strings.IndexByte(path, '*')
-			if paramStart != -1 && (paramStart < end) {
-				end = paramStart
-			} else if wildStart != -1 && (wildStart < end) {
-				end = wildStart
-			}
-			node.prefix = path[:end]
-		}
-	}
-	return node
+func (n *CompressedRadixNode) isEmpty() bool {
+	return n.entry == nil &&
+		len(n.children) == 0 &&
+		n.paramChild == nil &&
+		n.wildcardChild == nil
 }
 
-// 一些工具函数
-func splitNode(node *CompressedRadixNode, splitPos int) {
-	newChild := &CompressedRadixNode{
-		prefix:     node.prefix[splitPos:],
-		children:   node.children,
-		isParam:    node.isParam,
-		isWildcard: node.isWildcard,
-		paramName:  node.paramName,
-		handlers:   node.handlers,
+func ensureParams(params *map[string]string) map[string]string {
+	if *params == nil {
+		*params = make(map[string]string)
 	}
-	node.prefix = node.prefix[:splitPos]
-	node.children = []*CompressedRadixNode{newChild}
-	node.handlers = nil
-}
-
-func sortNodes(nodes []*CompressedRadixNode) {
-	sort.Slice(nodes, func(i, j int) bool {
-		if !nodes[i].isParam && !nodes[i].isWildcard {
-			if nodes[j].isParam || nodes[j].isWildcard {
-				return true
-			}
-		} else if !nodes[j].isParam && !nodes[j].isWildcard {
-			return false
-		}
-		return len(nodes[i].prefix) > len(nodes[j].prefix)
-	})
+	return *params
 }
