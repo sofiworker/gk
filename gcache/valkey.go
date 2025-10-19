@@ -30,7 +30,11 @@ func NewValkeyCache(opts *Options) (*ValkeyCache, error) {
 }
 
 func (v *ValkeyCache) Get(ctx context.Context, key string) ([]byte, error) {
-	return v.client.Do(ctx, v.client.B().Get().Key(key).Build()).AsBytes()
+	data, err := v.client.Do(ctx, v.client.B().Get().Key(key).Build()).AsBytes()
+	if err != nil {
+		return nil, translateValkeyError(err)
+	}
+	return data, nil
 }
 
 func (v *ValkeyCache) Set(ctx context.Context, key string, value []byte, expiration time.Duration) error {
@@ -56,11 +60,13 @@ func (v *ValkeyCache) TTL(ctx context.Context, key string) (time.Duration, error
 }
 
 func (v *ValkeyCache) Increment(ctx context.Context, key string, value int64) (int64, error) {
-	return v.client.Do(ctx, v.client.B().Incrby().Key(key).Increment(value).Build()).AsInt64()
+	result, err := v.client.Do(ctx, v.client.B().Incrby().Key(key).Increment(value).Build()).AsInt64()
+	return result, translateValkeyError(err)
 }
 
 func (v *ValkeyCache) Decrement(ctx context.Context, key string, value int64) (int64, error) {
-	return v.client.Do(ctx, v.client.B().Decrby().Key(key).Decrement(value).Build()).AsInt64()
+	result, err := v.client.Do(ctx, v.client.B().Decrby().Key(key).Decrement(value).Build()).AsInt64()
+	return result, translateValkeyError(err)
 }
 
 func (v *ValkeyCache) HashSet(ctx context.Context, key string, field string, value []byte) error {
@@ -68,13 +74,17 @@ func (v *ValkeyCache) HashSet(ctx context.Context, key string, field string, val
 }
 
 func (v *ValkeyCache) HashGet(ctx context.Context, key string, field string) ([]byte, error) {
-	return v.client.Do(ctx, v.client.B().Hget().Key(key).Field(field).Build()).AsBytes()
+	result, err := v.client.Do(ctx, v.client.B().Hget().Key(key).Field(field).Build()).AsBytes()
+	if err != nil {
+		return nil, translateValkeyError(err)
+	}
+	return result, nil
 }
 
 func (v *ValkeyCache) HashGetAll(ctx context.Context, key string) (map[string][]byte, error) {
 	result, err := v.client.Do(ctx, v.client.B().Hgetall().Key(key).Build()).AsStrMap()
 	if err != nil {
-		return nil, err
+		return nil, translateValkeyError(err)
 	}
 
 	data := make(map[string][]byte)
@@ -97,13 +107,17 @@ func (v *ValkeyCache) ListPush(ctx context.Context, key string, values ...[]byte
 }
 
 func (v *ValkeyCache) ListPop(ctx context.Context, key string) ([]byte, error) {
-	return v.client.Do(ctx, v.client.B().Lpop().Key(key).Build()).AsBytes()
+	result, err := v.client.Do(ctx, v.client.B().Lpop().Key(key).Build()).AsBytes()
+	if err != nil {
+		return nil, translateValkeyError(err)
+	}
+	return result, nil
 }
 
 func (v *ValkeyCache) ListRange(ctx context.Context, key string, start, stop int64) ([][]byte, error) {
 	result, err := v.client.Do(ctx, v.client.B().Lrange().Key(key).Start(start).Stop(stop).Build()).AsStrSlice()
 	if err != nil {
-		return nil, err
+		return nil, translateValkeyError(err)
 	}
 
 	data := make([][]byte, len(result))
@@ -124,7 +138,7 @@ func (v *ValkeyCache) SetAdd(ctx context.Context, key string, members ...[]byte)
 func (v *ValkeyCache) SetMembers(ctx context.Context, key string) ([][]byte, error) {
 	result, err := v.client.Do(ctx, v.client.B().Smembers().Key(key).Build()).AsStrSlice()
 	if err != nil {
-		return nil, err
+		return nil, translateValkeyError(err)
 	}
 
 	data := make([][]byte, len(result))
@@ -136,7 +150,10 @@ func (v *ValkeyCache) SetMembers(ctx context.Context, key string) ([][]byte, err
 
 func (v *ValkeyCache) SetIsMember(ctx context.Context, key string, member []byte) (bool, error) {
 	result, err := v.client.Do(ctx, v.client.B().Sismember().Key(key).Member(string(member)).Build()).AsInt64()
-	return result == 1, err
+	if err != nil {
+		return false, translateValkeyError(err)
+	}
+	return result == 1, nil
 }
 
 func (v *ValkeyCache) Close() error {
@@ -147,3 +164,17 @@ func (v *ValkeyCache) Close() error {
 func (v *ValkeyCache) Ping(ctx context.Context) error {
 	return v.client.Do(ctx, v.client.B().Ping().Build()).Error()
 }
+
+func translateValkeyError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if valkey.IsValkeyNil(err) {
+		return ErrCacheMiss
+	}
+	return err
+}
+
+var (
+	_ Cache = (*ValkeyCache)(nil)
+)

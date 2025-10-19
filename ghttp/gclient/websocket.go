@@ -2,6 +2,10 @@ package gclient
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/url"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -27,6 +31,9 @@ type WebSocketRequest struct {
 	readBufferSize  int
 	writeBufferSize int
 	subprotocols    []string
+
+	conn   *websocket.Conn
+	connMu sync.Mutex
 }
 
 func NewWebSocketRequest(r *Request) *WebSocketRequest {
@@ -97,8 +104,84 @@ func (w *WebSocketRequest) SetSubprotocols(subprotocols []string) *WebSocketRequ
 
 // Connect 连接WebSocket服务器
 func (w *WebSocketRequest) Connect(ctx context.Context) error {
+	if w.handler == nil {
+		return fmt.Errorf("websocket handler is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
-	return nil
+	if w.dialer == nil {
+		w.dialer = &websocket.Dialer{HandshakeTimeout: 45 * time.Second}
+	}
+	w.dialer.ReadBufferSize = w.readBufferSize
+	w.dialer.WriteBufferSize = w.writeBufferSize
+	if len(w.subprotocols) > 0 {
+		w.dialer.Subprotocols = append([]string(nil), w.subprotocols...)
+	}
+
+	retries := 0
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		req := w.Request.Clone()
+		req.SetContext(ctx)
+		fullURL, err := req.prepareURL()
+		if err != nil {
+			return err
+		}
+
+		wsURL, err := toWebSocketURL(fullURL)
+		if err != nil {
+			return err
+		}
+
+		header := http.Header{}
+		for k, v := range req.Header {
+			header[k] = append([]string(nil), v...)
+		}
+		for _, ck := range req.Cookies {
+			if ck != nil {
+				header.Add("Cookie", ck.String())
+			}
+		}
+
+		conn, resp, err := w.dialer.DialContext(ctx, wsURL, header)
+		if err != nil {
+			if resp != nil {
+				_ = resp.Body.Close()
+			}
+			if !w.shouldReconnect(retries, err) {
+				return err
+			}
+			retries++
+			if err := sleepWithContext(ctx, w.retryDelay); err != nil {
+				return err
+			}
+			continue
+		}
+
+		w.setConn(conn)
+		err = w.handleWebSocketConnection(ctx, conn)
+		w.setConn(nil)
+		_ = conn.Close()
+
+		if err == nil {
+			return nil
+		}
+		if !w.shouldReconnect(retries, err) {
+			return err
+		}
+		retries++
+		if err := sleepWithContext(ctx, w.retryDelay); err != nil {
+			return err
+		}
+	}
 }
 
 // shouldReconnect 判断是否应该重连
@@ -142,7 +225,34 @@ func (w *WebSocketRequest) handleWebSocketConnection(ctx context.Context, conn *
 
 // SendMessage 发送消息
 func (w *WebSocketRequest) SendMessage(messageType int, data []byte) error {
-	// 这个方法需要在连接建立后才能使用
-	// 可以考虑添加连接状态管理
-	return nil
+	w.connMu.Lock()
+	defer w.connMu.Unlock()
+	if w.conn == nil {
+		return fmt.Errorf("websocket connection not established")
+	}
+	w.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	return w.conn.WriteMessage(messageType, data)
+}
+
+func (w *WebSocketRequest) setConn(conn *websocket.Conn) {
+	w.connMu.Lock()
+	defer w.connMu.Unlock()
+	w.conn = conn
+}
+
+func toWebSocketURL(raw string) (string, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	switch parsed.Scheme {
+	case "http":
+		parsed.Scheme = "ws"
+	case "https":
+		parsed.Scheme = "wss"
+	case "ws", "wss":
+	default:
+		return "", fmt.Errorf("unsupported scheme %s", parsed.Scheme)
+	}
+	return parsed.String(), nil
 }

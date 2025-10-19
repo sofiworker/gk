@@ -1,5 +1,10 @@
 package gserver
 
+import (
+	"fmt"
+	"net/http"
+)
+
 type JsonResult struct {
 	Data interface{}
 	Code int
@@ -28,43 +33,100 @@ type RedirectResult struct {
 	Code int
 }
 
-type EmptyResult struct{}
+type EmptyResult struct {
+	Code int
+}
 
 func (r *JsonResult) Execute(c *Context) {
-	// 这里简化实现，实际需要完整的JSON序列化
-	//c.Writer.Header().Set("Content-Type", "application/json")
-	//c.Writer.WriteHeader(r.Code)
-	// 序列化r.Data并写入...
+	if c == nil {
+		return
+	}
+	code := r.Code
+	if code == 0 {
+		code = http.StatusOK
+	}
+	c.JSON(code, r.Data)
 }
 
 func (r *StringResult) Execute(c *Context) {
-	//c.Writer.Header().Set("Content-Type", "text/plain")
-	//c.Writer.WriteHeader(r.Code)
-	// 格式化字符串并写入...
+	if c == nil {
+		return
+	}
+	code := r.Code
+	if code == 0 {
+		code = http.StatusOK
+	}
+	c.String(code, r.Format, r.Data...)
 }
 
 func (r *HtmlResult) Execute(c *Context) {
-	//c.Writer.Header().Set("Content-Type", "text/html")
-	//c.Writer.WriteHeader(r.Code)
-	// 渲染模板...
+	if c == nil {
+		return
+	}
+	code := r.Code
+	if code == 0 {
+		code = http.StatusOK
+	}
+	switch v := r.Data.(type) {
+	case string:
+		c.HTML(code, v)
+	case []byte:
+		c.Data(code, MIMEHTML+"; charset=utf-8", v)
+	default:
+		content := r.Template
+		if content == "" && v != nil {
+			content = fmt.Sprint(v)
+		}
+		c.HTML(code, content)
+	}
 }
 
 func (r *ErrorResult) Execute(c *Context) {
-	//c.Writer.Header().Set("Content-Type", "application/json")
-	//c.Writer.WriteHeader(r.Code)
-	// 错误信息序列化...
+	if c == nil {
+		return
+	}
+	code := r.Code
+	if code == 0 {
+		code = http.StatusInternalServerError
+	}
+	msg := r.Msg
+	if msg == "" && r.Err != nil {
+		msg = r.Err.Error()
+	}
+	if msg == "" {
+		msg = http.StatusText(code)
+	}
+	c.AbortWithStatusJSON(code, map[string]interface{}{
+		"error": msg,
+	})
 }
 
 func (r *RedirectResult) Execute(c *Context) {
-	//http.Redirect(c.Writer, c.Request, r.URL, r.Code)
+	if c == nil {
+		return
+	}
+	code := r.Code
+	if code == 0 {
+		code = http.StatusFound
+	}
+	c.Redirect(code, r.URL)
 }
 
 func (r *EmptyResult) Execute(c *Context) {
-	// 无操作
+	if c == nil {
+		return
+	}
+	code := r.Code
+	if code == 0 {
+		code = http.StatusNoContent
+	}
+	if c.Writer != nil && !c.Writer.Written() {
+		c.Status(code)
+	}
 }
 
 func JSON(data interface{}) Result {
-	return &JsonResult{Data: data, Code: 200}
+	return &JsonResult{Data: data, Code: http.StatusOK}
 }
 
 func JSONCode(data interface{}, code int) Result {
@@ -72,25 +134,33 @@ func JSONCode(data interface{}, code int) Result {
 }
 
 func String(format string, data ...interface{}) Result {
-	return &StringResult{Format: format, Data: data, Code: 200}
+	return &StringResult{Format: format, Data: data, Code: http.StatusOK}
 }
 
 func HTML(template string, data interface{}) Result {
-	return &HtmlResult{Template: template, Data: data, Code: 200}
+	return &HtmlResult{Template: template, Data: data, Code: http.StatusOK}
 }
 
 func Error(err error) Result {
-	return &ErrorResult{Err: err, Code: 500, Msg: err.Error()}
+	msg := ""
+	if err != nil {
+		msg = err.Error()
+	}
+	return &ErrorResult{Err: err, Code: http.StatusInternalServerError, Msg: msg}
 }
 
 func ErrorMsg(msg string) Result {
-	return &ErrorResult{Msg: msg, Code: 500}
+	return &ErrorResult{Msg: msg, Code: http.StatusInternalServerError}
 }
 
 func ErrorCode(err error, code int) Result {
-	return &ErrorResult{Err: err, Code: code, Msg: err.Error()}
+	msg := ""
+	if err != nil {
+		msg = err.Error()
+	}
+	return &ErrorResult{Err: err, Code: code, Msg: msg}
 }
 
 func Redirect(url string) Result {
-	return &RedirectResult{URL: url, Code: 302}
+	return &RedirectResult{URL: url, Code: http.StatusFound}
 }

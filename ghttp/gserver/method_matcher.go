@@ -99,7 +99,32 @@ func (mr *MethodMatcher) match(path string) *MatchResult {
 }
 
 func (mr *MethodMatcher) removeRoute(path string) error {
-	return nil
+	mr.mu.Lock()
+	defer mr.mu.Unlock()
+
+	feature := mr.extractPathFeature(path)
+
+	if !feature.hasParam && !feature.hasWild {
+		if _, ok := mr.staticGroup[path]; ok {
+			delete(mr.staticGroup, path)
+			return nil
+		}
+		return fmt.Errorf("route not found: %s", path)
+	}
+
+	if feature.hasWild {
+		return mr.radixTree.remove(path)
+	}
+
+	entries := mr.segmentIndex[feature.segmentCnt]
+	for i, entry := range entries {
+		if entry.path == path {
+			mr.segmentIndex[feature.segmentCnt] = append(entries[:i], entries[i+1:]...)
+			return nil
+		}
+	}
+
+	return fmt.Errorf("route not found: %s", path)
 }
 
 // 匹配分段路径并提取参数

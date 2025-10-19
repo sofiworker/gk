@@ -2,6 +2,7 @@ package gcache
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -37,7 +38,11 @@ func NewRedisCache(opts *Options) (*RedisCache, error) {
 }
 
 func (r *RedisCache) Get(ctx context.Context, key string) ([]byte, error) {
-	return r.client.Get(ctx, key).Bytes()
+	result, err := r.client.Get(ctx, key).Bytes()
+	if err != nil {
+		return nil, translateRedisError(err)
+	}
+	return result, nil
 }
 
 func (r *RedisCache) Set(ctx context.Context, key string, value []byte, expiration time.Duration) error {
@@ -62,11 +67,13 @@ func (r *RedisCache) TTL(ctx context.Context, key string) (time.Duration, error)
 }
 
 func (r *RedisCache) Increment(ctx context.Context, key string, value int64) (int64, error) {
-	return r.client.IncrBy(ctx, key, value).Result()
+	result, err := r.client.IncrBy(ctx, key, value).Result()
+	return result, translateRedisError(err)
 }
 
 func (r *RedisCache) Decrement(ctx context.Context, key string, value int64) (int64, error) {
-	return r.client.DecrBy(ctx, key, value).Result()
+	result, err := r.client.DecrBy(ctx, key, value).Result()
+	return result, translateRedisError(err)
 }
 
 func (r *RedisCache) HashSet(ctx context.Context, key string, field string, value []byte) error {
@@ -74,13 +81,17 @@ func (r *RedisCache) HashSet(ctx context.Context, key string, field string, valu
 }
 
 func (r *RedisCache) HashGet(ctx context.Context, key string, field string) ([]byte, error) {
-	return r.client.HGet(ctx, key, field).Bytes()
+	result, err := r.client.HGet(ctx, key, field).Bytes()
+	if err != nil {
+		return nil, translateRedisError(err)
+	}
+	return result, nil
 }
 
 func (r *RedisCache) HashGetAll(ctx context.Context, key string) (map[string][]byte, error) {
 	result, err := r.client.HGetAll(ctx, key).Result()
 	if err != nil {
-		return nil, err
+		return nil, translateRedisError(err)
 	}
 
 	data := make(map[string][]byte)
@@ -103,13 +114,17 @@ func (r *RedisCache) ListPush(ctx context.Context, key string, values ...[]byte)
 }
 
 func (r *RedisCache) ListPop(ctx context.Context, key string) ([]byte, error) {
-	return r.client.LPop(ctx, key).Bytes()
+	result, err := r.client.LPop(ctx, key).Bytes()
+	if err != nil {
+		return nil, translateRedisError(err)
+	}
+	return result, nil
 }
 
 func (r *RedisCache) ListRange(ctx context.Context, key string, start, stop int64) ([][]byte, error) {
 	result, err := r.client.LRange(ctx, key, start, stop).Result()
 	if err != nil {
-		return nil, err
+		return nil, translateRedisError(err)
 	}
 
 	data := make([][]byte, len(result))
@@ -130,7 +145,7 @@ func (r *RedisCache) SetAdd(ctx context.Context, key string, members ...[]byte) 
 func (r *RedisCache) SetMembers(ctx context.Context, key string) ([][]byte, error) {
 	result, err := r.client.SMembers(ctx, key).Result()
 	if err != nil {
-		return nil, err
+		return nil, translateRedisError(err)
 	}
 
 	data := make([][]byte, len(result))
@@ -141,7 +156,8 @@ func (r *RedisCache) SetMembers(ctx context.Context, key string) ([][]byte, erro
 }
 
 func (r *RedisCache) SetIsMember(ctx context.Context, key string, member []byte) (bool, error) {
-	return r.client.SIsMember(ctx, key, member).Result()
+	result, err := r.client.SIsMember(ctx, key, member).Result()
+	return result, translateRedisError(err)
 }
 
 func (r *RedisCache) Close() error {
@@ -151,3 +167,17 @@ func (r *RedisCache) Close() error {
 func (r *RedisCache) Ping(ctx context.Context) error {
 	return r.client.Ping(ctx).Err()
 }
+
+func translateRedisError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, redis.Nil) {
+		return ErrCacheMiss
+	}
+	return err
+}
+
+var (
+	_ Cache = (*RedisCache)(nil)
+)
