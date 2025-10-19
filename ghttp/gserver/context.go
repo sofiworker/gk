@@ -45,6 +45,7 @@ func (c *Context) Reset() {
 	}
 	c.handlers = nil
 	c.index = -1
+	c.queryCache = nil
 }
 
 func (c *Context) Next() {
@@ -66,12 +67,17 @@ func (c *Context) IsAborted() bool {
 }
 
 func (c *Context) Param(key string) string {
-	//return c.Params.ByName(key)
-	return ""
+	if c.Params == nil {
+		return ""
+	}
+	return c.Params[key]
 }
 
 func (c *Context) AddParam(key, value string) {
-	//c.Params = append(c.Params, Param{Key: key, Value: value})
+	if c.Params == nil {
+		c.Params = make(map[string]string)
+	}
+	c.Params[key] = value
 }
 
 func (c *Context) Query(key string) (value string) {

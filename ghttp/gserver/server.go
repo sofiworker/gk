@@ -3,8 +3,10 @@ package gserver
 import (
 	"bytes"
 	"crypto/tls"
+	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"sync"
 
 	"github.com/sofiworker/gk/ghttp/codec"
@@ -33,19 +35,23 @@ type Server struct {
 }
 
 func NewServer() *Server {
+	rootGroup := &RouterGroup{
+		Handlers: nil,
+		basePath: "/",
+		root:     true,
+	}
+
 	s := &Server{
-		Addr:      "0.0.0.0",
-		Port:      8080,
-		TLSConfig: nil,
-		Routers: &RouterGroup{
-			Handlers: nil,
-			basePath: "/",
-			root:     true,
-		},
+		Addr:                      "0.0.0.0",
+		Port:                      8080,
+		TLSConfig:                 nil,
+		Routers:                   rootGroup,
 		matcher:                   newServerMatcher(),
 		convertFastRequestCtxFunc: convertToHTTPRequest,
 		w:                         nil,
 	}
+
+	rootGroup.engine = s
 
 	s.ctxPool.New = func() interface{} {
 		return &Context{}
@@ -79,29 +85,62 @@ func (s *Server) addRoute(method, path string, handlers ...HandlerFunc) {
 }
 
 func (s *Server) Start() error {
-	return nil
+	if s.server == nil {
+		s.server = &fasthttp.Server{
+			Handler:   s.FastHandler,
+			TLSConfig: s.TLSConfig,
+		}
+	} else {
+		s.server.Handler = s.FastHandler
+		s.server.TLSConfig = s.TLSConfig
+	}
+
+	addr := net.JoinHostPort(s.Addr, strconv.Itoa(s.Port))
+
+	if s.TLSConfig != nil {
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			return err
+		}
+		return s.server.Serve(tls.NewListener(ln, s.TLSConfig))
+	}
+
+	return s.server.ListenAndServe(addr)
 }
 
 func (s *Server) FastHandler(ctx *fasthttp.RequestCtx) {
 	r := s.convertFastRequestCtxFunc(ctx)
-	s.ServeHTTP(s.w, r)
+	if r == nil {
+		ctx.Error("failed to convert request", fasthttp.StatusInternalServerError)
+		return
+	}
+	respWriter := &respWriter{ctx: ctx}
+	s.ServeHTTP(respWriter, r)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c := s.ctxPool.Get().(*Context)
 	c.Reset()
 	c.Writer = w
+	c.Request = r
 
-	httpMethod := c.Request.Method
-	rPath := c.Request.URL.Path
+	httpMethod := r.Method
+	rPath := r.URL.Path
 	matchResult := s.matcher.Match(httpMethod, rPath)
 	if matchResult == nil {
 		http.NotFound(w, r)
+		s.ctxPool.Put(c)
 		return
 	}
 	if len(matchResult.Handlers) > 0 {
 		c.handlers = matchResult.Handlers
 	}
+	if len(matchResult.Params) > 0 {
+		for k, v := range matchResult.Params {
+			c.AddParam(k, v)
+		}
+	}
+	c.queryCache = nil
 	c.Next()
 
 	s.ctxPool.Put(c)

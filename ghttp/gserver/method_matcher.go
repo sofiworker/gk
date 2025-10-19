@@ -15,15 +15,15 @@ type PathFeature struct {
 }
 
 type MethodMatcher struct {
-	staticGroup  map[string][]HandlerFunc // 静态路径表（O(1)）
-	segmentIndex map[int][]*routeEntry    // 按段数分组的参数路由
-	radixTree    *CompressedRadixTree     // 通配符路由树
+	staticGroup  map[string]*routeEntry // 静态路径表（O(1)）
+	segmentIndex map[int][]*routeEntry  // 按段数分组的参数路由
+	radixTree    *CompressedRadixTree   // 通配符路由树
 	mu           sync.RWMutex
 }
 
 func newMethodMatcher() *MethodMatcher {
 	return &MethodMatcher{
-		staticGroup:  make(map[string][]HandlerFunc),
+		staticGroup:  make(map[string]*routeEntry),
 		segmentIndex: make(map[int][]*routeEntry),
 		radixTree:    newCompressedRadixTree(),
 	}
@@ -31,7 +31,7 @@ func newMethodMatcher() *MethodMatcher {
 
 // 提取路径特征
 func (mr *MethodMatcher) extractPathFeature(path string) *PathFeature {
-	segments := strings.Split(strings.Trim(path, "/"), "/")
+	segments := splitPathSegments(path)
 	f := &PathFeature{
 		length:     len(path),
 		segmentCnt: len(segments),
@@ -52,6 +52,7 @@ func (mr *MethodMatcher) addRoute(path string, handler ...HandlerFunc) error {
 	mr.mu.Lock()
 	defer mr.mu.Unlock()
 
+	entry := newRouteEntry(path, handler)
 	feature := mr.extractPathFeature(path)
 
 	// 优先静态路由
@@ -59,17 +60,16 @@ func (mr *MethodMatcher) addRoute(path string, handler ...HandlerFunc) error {
 		if _, ok := mr.staticGroup[path]; ok {
 			return fmt.Errorf("duplicate static route: %s", path)
 		}
-		mr.staticGroup[path] = handler
+		mr.staticGroup[path] = entry
 		return nil
 	}
 
 	// 通配符走 radix 树
 	if feature.hasWild {
-		return mr.radixTree.insert(path, handler...)
+		return mr.radixTree.insert(entry)
 	}
 
 	// 普通参数路由 -> segment 索引
-	entry := &routeEntry{path: path, handler: handler}
 	mr.segmentIndex[feature.segmentCnt] = append(mr.segmentIndex[feature.segmentCnt], entry)
 	return nil
 }
@@ -80,20 +80,16 @@ func (mr *MethodMatcher) match(path string) *MatchResult {
 	defer mr.mu.RUnlock()
 
 	// 静态匹配（最快）
-	if h, ok := mr.staticGroup[path]; ok {
-		return &MatchResult{Path: path, Handlers: h}
+	if entry, ok := mr.staticGroup[path]; ok {
+		return entry.toResult(nil)
 	}
 
 	// 段数匹配（例如 /user/:id）
-	segments := strings.Split(strings.Trim(path, "/"), "/")
+	segments := splitPathSegments(path)
 	if entries, ok := mr.segmentIndex[len(segments)]; ok {
 		for _, e := range entries {
-			if params := matchSegments(e.path, path); params != nil {
-				return &MatchResult{
-					Path:     e.path,
-					Handlers: e.handler,
-					Params:   params,
-				}
+			if params := matchSegments(e, path); params != nil {
+				return e.toResult(params)
 			}
 		}
 	}
@@ -107,31 +103,35 @@ func (mr *MethodMatcher) removeRoute(path string) error {
 }
 
 // 匹配分段路径并提取参数
-func matchSegments(pattern, path string) map[string]string {
-	pSegs := strings.Split(strings.Trim(pattern, "/"), "/")
-	tSegs := strings.Split(strings.Trim(path, "/"), "/")
+func matchSegments(entry *routeEntry, path string) map[string]string {
+	patternSegs := splitPathSegments(entry.path)
+	targetSegs := splitPathSegments(path)
 
-	if len(pSegs) != len(tSegs) {
+	if len(patternSegs) != len(targetSegs) {
 		return nil
 	}
-	params := make(map[string]string)
-	for i := range pSegs {
-		p := pSegs[i]
-		t := tSegs[i]
-		if len(p) == 0 {
-			continue
-		}
-		switch p[0] {
-		case ':':
-			params[p[1:]] = t
-		case '*':
-			params[p[1:]] = strings.Join(tSegs[i:], "/")
-			return params
-		default:
-			if p != t {
+
+	var params map[string]string
+	for i, segment := range patternSegs {
+		if len(segment) == 0 {
+			if targetSegs[i] != "" {
 				return nil
 			}
+			continue
+		}
+
+		if segment[0] == ':' {
+			if params == nil {
+				params = make(map[string]string)
+			}
+			params[segment[1:]] = targetSegs[i]
+			continue
+		}
+
+		if segment != targetSegs[i] {
+			return nil
 		}
 	}
+
 	return params
 }

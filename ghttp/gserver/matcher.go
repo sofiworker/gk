@@ -2,13 +2,14 @@ package gserver
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 )
 
 type MatchResult struct {
-	Path     string
-	Handlers []HandlerFunc
-	Params   map[string]string
+	Path     string            `json:"path"`
+	Handlers []HandlerFunc     `json:"-"`
+	Params   map[string]string `json:"params"`
 }
 
 type MatcherStats struct {
@@ -75,10 +76,60 @@ func (rg *routeGroup) routesCopy() []*routeEntry {
 }
 
 type routeEntry struct {
-	path    string
-	handler []HandlerFunc
-	node    *CompressedRadixNode
-	feature *PathFeature
+	path       string
+	handlers   []HandlerFunc
+	paramNames []string
+}
+
+func newRouteEntry(path string, handlers []HandlerFunc) *routeEntry {
+	checkPathValid(path)
+	return &routeEntry{
+		path:       path,
+		handlers:   handlers,
+		paramNames: extractParamNames(path),
+	}
+}
+
+func (r *routeEntry) toResult(params map[string]string) *MatchResult {
+	var paramCopy map[string]string
+	if len(params) > 0 {
+		paramCopy = make(map[string]string, len(params))
+		for k, v := range params {
+			paramCopy[k] = v
+		}
+	}
+	return &MatchResult{
+		Path:     r.path,
+		Handlers: r.handlers,
+		Params:   paramCopy,
+	}
+}
+
+func extractParamNames(path string) []string {
+	trimmed := strings.Trim(path, "/")
+	if trimmed == "" {
+		return nil
+	}
+	segments := strings.Split(trimmed, "/")
+	var names []string
+	for _, segment := range segments {
+		if len(segment) == 0 {
+			continue
+		}
+		switch segment[0] {
+		case ':', '*':
+			names = append(names, segment[1:])
+		}
+	}
+	return names
+}
+
+func splitPathSegments(path string) []string {
+	trimmed := strings.Trim(path, "/")
+	if trimmed == "" {
+		return nil
+	}
+	return strings.Split(trimmed, "/")
 }
 
 func (s *serverMatcher) Match(method, path string) *MatchResult {

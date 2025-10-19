@@ -53,7 +53,9 @@ func (g *RouterGroup) Handle(method, path string, handlers ...HandlerFunc) {
 	if matched := regEnLetter.MatchString(method); !matched {
 		panic("http method " + method + " is not valid")
 	}
-	g.engine.addRoute(method, path, handlers...)
+	absolutePath := g.calculateAbsolutePath(path)
+	finalHandlers := g.combineHandlers(handlers...)
+	g.engine.addRoute(method, absolutePath, finalHandlers...)
 }
 
 func (g *RouterGroup) GET(path string, handlers ...HandlerFunc) {
@@ -91,6 +93,12 @@ func (g *RouterGroup) ANY(path string, handlers ...HandlerFunc) {
 }
 
 func (g *RouterGroup) calculateAbsolutePath(relativePath string) string {
+	if relativePath == "" {
+		return g.basePath
+	}
+	if relativePath[0] == '/' {
+		return JoinPaths("", relativePath)
+	}
 	return JoinPaths(g.basePath, relativePath)
 }
 
@@ -101,4 +109,19 @@ func (g *RouterGroup) copyHandler(handlers ...HandlerFunc) []HandlerFunc {
 		return copyHandlers
 	}
 	return append(copyHandlers, handlers...)
+}
+
+func (g *RouterGroup) combineHandlers(handlers ...HandlerFunc) []HandlerFunc {
+	length := len(g.Handlers) + len(handlers)
+	if length == 0 {
+		return nil
+	}
+	finalHandlers := make([]HandlerFunc, 0, length)
+	if len(g.Handlers) > 0 {
+		finalHandlers = append(finalHandlers, g.Handlers...)
+	}
+	if len(handlers) > 0 {
+		finalHandlers = append(finalHandlers, handlers...)
+	}
+	return finalHandlers
 }
