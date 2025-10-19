@@ -1,7 +1,9 @@
 package layers
 
 import (
+	"errors"
 	"fmt"
+	"sync"
 )
 
 type LayerType int
@@ -43,16 +45,25 @@ type Decoder interface {
 	Decode(data []byte) (Layer, error)
 }
 
-var layerDecoders = map[LayerType]Decoder{}
+var (
+	layerDecoders   = map[LayerType]Decoder{}
+	layerDecodersMu sync.RWMutex
+
+	ErrDecoderNotFound = errors.New("layers: decoder not registered")
+)
 
 func RegisterLayerDecoder(layerType LayerType, decoder Decoder) {
+	layerDecodersMu.Lock()
 	layerDecoders[layerType] = decoder
+	layerDecodersMu.Unlock()
 }
 
 func DecodeLayer(layerType LayerType, data []byte) (Layer, error) {
+	layerDecodersMu.RLock()
 	decoder, ok := layerDecoders[layerType]
+	layerDecodersMu.RUnlock()
 	if !ok {
-		return nil, fmt.Errorf("no decoder for layer type %d", layerType)
+		return nil, fmt.Errorf("%w: %d", ErrDecoderNotFound, layerType)
 	}
 	return decoder.Decode(data)
 }

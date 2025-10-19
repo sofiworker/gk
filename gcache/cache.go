@@ -2,70 +2,82 @@ package gcache
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
-// Cache 通用缓存接口
-type Cache interface {
-	// Get 获取缓存值
+var (
+	// ErrCacheMiss 表示缓存未命中
+	ErrCacheMiss = errors.New("gcache: cache miss")
+)
+
+// KeyValueCache 负责基础的 KV 能力
+type KeyValueCache interface {
 	Get(ctx context.Context, key string) ([]byte, error)
-
-	// Set 设置缓存值
 	Set(ctx context.Context, key string, value []byte, expiration time.Duration) error
-
-	// Delete 删除缓存
 	Delete(ctx context.Context, key string) error
-
-	// Exists 检查key是否存在
 	Exists(ctx context.Context, key string) (bool, error)
+}
 
-	// Expire 设置过期时间
+// ExpirableCache 负责过期时间管理
+type ExpirableCache interface {
 	Expire(ctx context.Context, key string, expiration time.Duration) error
-
-	// TTL 获取剩余过期时间
 	TTL(ctx context.Context, key string) (time.Duration, error)
+}
 
-	// Increment 自增
+// CounterCache 负责数值自增自减
+type CounterCache interface {
 	Increment(ctx context.Context, key string, value int64) (int64, error)
-
-	// Decrement 自减
 	Decrement(ctx context.Context, key string, value int64) (int64, error)
+}
 
-	// HashSet 设置hash字段
+// HashCache 提供 Hash 结构能力
+type HashCache interface {
 	HashSet(ctx context.Context, key string, field string, value []byte) error
-
-	// HashGet 获取hash字段
 	HashGet(ctx context.Context, key string, field string) ([]byte, error)
-
-	// HashGetAll 获取所有hash字段
 	HashGetAll(ctx context.Context, key string) (map[string][]byte, error)
-
-	// HashDelete 删除hash字段
 	HashDelete(ctx context.Context, key string, fields ...string) error
+}
 
-	// ListPush 列表推送
+// ListCache 提供列表能力
+type ListCache interface {
 	ListPush(ctx context.Context, key string, values ...[]byte) error
-
-	// ListPop 列表弹出
 	ListPop(ctx context.Context, key string) ([]byte, error)
-
-	// ListRange 获取列表范围
 	ListRange(ctx context.Context, key string, start, stop int64) ([][]byte, error)
+}
 
-	// SetAdd 集合添加
+// SetCache 提供集合能力
+type SetCache interface {
 	SetAdd(ctx context.Context, key string, members ...[]byte) error
-
-	// SetMembers 获取集合所有成员
 	SetMembers(ctx context.Context, key string) ([][]byte, error)
-
-	// SetIsMember 判断是否集合成员
 	SetIsMember(ctx context.Context, key string, member []byte) (bool, error)
+}
 
-	// Close 关闭连接
-	Close() error
-
-	// Ping 测试连接
+// HealthChecker 用于探活
+type HealthChecker interface {
 	Ping(ctx context.Context) error
+}
+
+// Closer 用于资源释放
+type Closer interface {
+	Close() error
+}
+
+// BasicCache 组合 KV、过期、计数和健康检查能力
+type BasicCache interface {
+	KeyValueCache
+	ExpirableCache
+	CounterCache
+	HealthChecker
+	Closer
+}
+
+// Cache 在 Basic 基础上组合 Hash/List/Set 能力，适用于 Redis 等
+type Cache interface {
+	BasicCache
+	HashCache
+	ListCache
+	SetCache
 }
 
 // Options 缓存配置选项

@@ -8,48 +8,79 @@ import (
 )
 
 var (
-	ErrHeaderTooShort = errors.New("header too short")
+	ErrHeaderTooShort = errors.New("layers: ipv6 header too short")
 )
 
 const (
-	Version   = 6  // protocol version
-	HeaderLen = 40 // header length
+	IPv6HeaderLen = 40
 )
 
-type Header struct {
-	Version      int    // protocol version
-	TrafficClass int    // traffic class
-	FlowLabel    int    // flow label
-	PayloadLen   int    // payload length
-	NextHeader   int    // next header
-	HopLimit     int    // hop limit
-	Src          net.IP // source address
-	Dst          net.IP // destination address
+type IPv6 struct {
+	BaseLayer
+	Version      uint8
+	TrafficClass uint8
+	FlowLabel    uint32
+	PayloadLen   uint16
+	NextHeader   uint8
+	HopLimit     uint8
+	SrcIP        net.IP
+	DstIP        net.IP
 }
 
-func (h *Header) String() string {
-	if h == nil {
-		return "<nil>"
-	}
-	return fmt.Sprintf("ver=%d tclass=%#x flowlbl=%#x payloadlen=%d nxthdr=%d hoplim=%d src=%v dst=%v", h.Version, h.TrafficClass, h.FlowLabel, h.PayloadLen, h.NextHeader, h.HopLimit, h.Src, h.Dst)
+func (ip *IPv6) LayerType() LayerType {
+	return LayerTypeIPv6
 }
 
-// ParseHeader parses b as an IPv6 base header.
-func ParseHeader(b []byte) (*Header, error) {
-	if len(b) < HeaderLen {
+func (ip *IPv6) String() string {
+	return fmt.Sprintf("IPv6 %v -> %v nh=%d hop=%d", ip.SrcIP, ip.DstIP, ip.NextHeader, ip.HopLimit)
+}
+
+type ipv6Decoder struct{}
+
+func (ipv6Decoder) Decode(data []byte) (Layer, error) {
+	if len(data) < IPv6HeaderLen {
 		return nil, ErrHeaderTooShort
 	}
-	h := &Header{
-		Version:      int(b[0]) >> 4,
-		TrafficClass: int(b[0]&0x0f)<<4 | int(b[1])>>4,
-		FlowLabel:    int(b[1]&0x0f)<<16 | int(b[2])<<8 | int(b[3]),
-		PayloadLen:   int(binary.BigEndian.Uint16(b[4:6])),
-		NextHeader:   int(b[6]),
-		HopLimit:     int(b[7]),
+
+	version := data[0] >> 4
+	if version != 6 {
+		return nil, fmt.Errorf("layers: invalid ipv6 version %d", version)
 	}
-	h.Src = make(net.IP, net.IPv6len)
-	copy(h.Src, b[8:24])
-	h.Dst = make(net.IP, net.IPv6len)
-	copy(h.Dst, b[24:40])
-	return h, nil
+
+	trafficClass := (data[0]&0x0F)<<4 | (data[1] >> 4)
+	flowLabel := uint32(data[1]&0x0F)<<16 | uint32(data[2])<<8 | uint32(data[3])
+	payloadLen := binary.BigEndian.Uint16(data[4:6])
+	nextHeader := data[6]
+	hopLimit := data[7]
+
+	src := make(net.IP, net.IPv6len)
+	dst := make(net.IP, net.IPv6len)
+	copy(src, data[8:24])
+	copy(dst, data[24:40])
+
+	expectedTotal := IPv6HeaderLen + int(payloadLen)
+	if expectedTotal > len(data) {
+		expectedTotal = len(data)
+	}
+
+	ipv6 := &IPv6{
+		BaseLayer: BaseLayer{
+			Contents:    append([]byte(nil), data[:IPv6HeaderLen]...),
+			PayloadData: append([]byte(nil), data[IPv6HeaderLen:expectedTotal]...),
+		},
+		Version:      version,
+		TrafficClass: trafficClass,
+		FlowLabel:    flowLabel,
+		PayloadLen:   payloadLen,
+		NextHeader:   nextHeader,
+		HopLimit:     hopLimit,
+		SrcIP:        src,
+		DstIP:        dst,
+	}
+
+	return ipv6, nil
+}
+
+func init() {
+	RegisterLayerDecoder(LayerTypeIPv6, ipv6Decoder{})
 }

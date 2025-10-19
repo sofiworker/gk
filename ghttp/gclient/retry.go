@@ -1,6 +1,7 @@
 package gclient
 
 import (
+	"net/http"
 	"time"
 
 	"golang.org/x/exp/rand"
@@ -26,7 +27,16 @@ func ExponentialBackoff(baseDelay time.Duration) BackoffStrategy {
 }
 
 func DefaultRetryCondition(resp *Response, err error) bool {
-	return true
+	if err != nil {
+		return true
+	}
+	if resp == nil {
+		return false
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return true
+	}
+	return resp.StatusCode >= 500
 }
 
 func DefaultRetryConfig() *RetryConfig {

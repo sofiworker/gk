@@ -27,6 +27,7 @@ type Router interface {
 	HEAD(path string, handlers ...HandlerFunc)
 	OPTIONS(path string, handlers ...HandlerFunc)
 	ANY(path string, handlers ...HandlerFunc)
+	Use(handlers ...HandlerFunc)
 }
 
 type Routers interface {
@@ -90,6 +91,16 @@ func (g *RouterGroup) ANY(path string, handlers ...HandlerFunc) {
 	for _, method := range anyMethods {
 		g.Handle(method, path, handlers...)
 	}
+}
+
+func (g *RouterGroup) Use(handlers ...HandlerFunc) {
+	if len(handlers) == 0 {
+		return
+	}
+	if g.Handlers == nil {
+		g.Handlers = make([]HandlerFunc, 0, len(handlers))
+	}
+	g.Handlers = append(g.Handlers, handlers...)
 }
 
 func (g *RouterGroup) calculateAbsolutePath(relativePath string) string {

@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"time"
 )
@@ -74,8 +75,73 @@ func (s *SSERequest) SetLastEventID(id string) *SSERequest {
 
 // Stream 执行SSE流式请求
 func (s *SSERequest) Stream(ctx context.Context) error {
+	if s.handler == nil {
+		return fmt.Errorf("sse handler is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
-	return nil
+	retries := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		req := s.Request.Clone()
+		req.SetHeader("Accept", "text/event-stream")
+		req.SetHeader("Cache-Control", "no-cache")
+		req.SetContext(ctx)
+		if s.lastEventID != "" {
+			req.SetHeader("Last-Event-ID", s.lastEventID)
+		}
+
+		builder := newHTTPRequestBuilder(req, req.client)
+		httpReq, err := builder.Build()
+		if err != nil {
+			return err
+		}
+
+		httpResp, err := req.client.executor.Do(httpReq)
+		if err != nil {
+			if !s.shouldReconnect(retries, err) {
+				return err
+			}
+			retries++
+			if err := sleepWithContext(ctx, s.retryDelay); err != nil {
+				return err
+			}
+			continue
+		}
+
+		if httpResp.StatusCode != http.StatusOK {
+			_ = httpResp.Body.Close()
+			err = fmt.Errorf("unexpected status code %d", httpResp.StatusCode)
+			if !s.shouldReconnect(retries, err) {
+				return err
+			}
+			retries++
+			if err := sleepWithContext(ctx, s.retryDelay); err != nil {
+				return err
+			}
+			continue
+		}
+
+		err = s.handleSSEStream(ctx, httpResp.Body)
+		_ = httpResp.Body.Close()
+		if err == nil {
+			return nil
+		}
+		if !s.shouldReconnect(retries, err) {
+			return err
+		}
+		retries++
+		if err := sleepWithContext(ctx, s.retryDelay); err != nil {
+			return err
+		}
+	}
 }
 
 // shouldReconnect 判断是否应该重连
@@ -84,13 +150,21 @@ func (s *SSERequest) shouldReconnect(retries int, err error) bool {
 }
 
 // handleSSEStream 处理SSE流数据
-func (s *SSERequest) handleSSEStream(stream io.Reader) error {
+func (s *SSERequest) handleSSEStream(ctx context.Context, stream io.Reader) error {
 	scanner := bufio.NewScanner(stream)
+	buf := make([]byte, 0, 128*1024)
+	scanner.Buffer(buf, 512*1024)
 
 	var currentEvent SSEEvent
 
 	for scanner.Scan() {
 		line := scanner.Text()
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 
 		// 空行表示一个事件的结束
 		if line == "" {
@@ -131,10 +205,27 @@ func (s *SSERequest) handleSSEStream(stream io.Reader) error {
 			}
 			currentEvent.Data += value
 		case "retry":
-			// 解析重试时间
-			fmt.Sscanf(value, "%d", &currentEvent.Retry)
+			if n, err := fmt.Sscanf(value, "%d", &currentEvent.Retry); err == nil && n == 1 {
+				if currentEvent.Retry > 0 {
+					s.retryDelay = time.Duration(currentEvent.Retry) * time.Millisecond
+				}
+			}
 		}
 	}
 
 	return scanner.Err()
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }

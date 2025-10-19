@@ -1,15 +1,17 @@
 package codec
 
 import (
-	"encoding/json"
-	"encoding/xml"
+	"fmt"
 	"io"
 	"sync"
-
-	"gopkg.in/yaml.v3"
 )
 
 var decoders *DecoderInstance
+
+type Decoder interface {
+    ContentTypes() []string
+    Decode(reader io.Reader, v interface{}) error
+}
 
 type DecoderInstance struct {
 	mutex    sync.RWMutex
@@ -17,71 +19,110 @@ type DecoderInstance struct {
 }
 
 func init() {
-	decoders = &DecoderInstance{
-		decoders: make(map[string]Decoder),
-	}
+    decoders = &DecoderInstance{
+        decoders: make(map[string]Decoder),
+    }
 
-	_ = RegisterDecoder("application/json", NewJsonDecoder())
-	_ = RegisterDecoder("application/xml", NewXmlDecoder())
-	_ = RegisterDecoder("application/yaml", NewYamlDecoder())
-}
-
-func RegisterDecoder(name string, d Decoder) error {
-	decoders.mutex.Lock()
-	defer decoders.mutex.Unlock()
-	decoders.decoders[name] = d
-	return nil
-}
-
-func (d *DecoderInstance) Exist(name string) (Decoder, bool) {
-	d.mutex.RLock()
-	defer d.mutex.RUnlock()
-	decoder, ok := d.decoders[name]
-	return decoder, ok
-}
-
-type Decoder interface {
-	Decode(reader io.Reader, v interface{}) error
+    RegisterDecoder(NewCodecDecoder(NewJSONCodec()))
+    RegisterDecoder(NewCodecDecoder(NewXMLCodec()))
+    RegisterDecoder(NewCodecDecoder(NewYAMLCodec()))
+    RegisterDecoder(NewCodecDecoder(NewPlainCodec()))
 }
 
 func NewJsonDecoder() Decoder {
-	return &jsonDecoder{}
+    return NewCodecDecoder(NewJSONCodec())
 }
-
-type jsonDecoder struct{}
-
-func (d *jsonDecoder) Decode(reader io.Reader, v interface{}) error {
-	return json.NewDecoder(reader).Decode(v)
-}
-
-type xmlDecoder struct{}
 
 func NewXmlDecoder() Decoder {
-	return &xmlDecoder{}
-}
-
-func (d *xmlDecoder) Decode(reader io.Reader, v interface{}) error {
-	return xml.NewDecoder(reader).Decode(v)
-}
-
-type yamlDecoder struct {
+    return NewCodecDecoder(NewXMLCodec())
 }
 
 func NewYamlDecoder() Decoder {
-	return &yamlDecoder{}
+    return NewCodecDecoder(NewYAMLCodec())
 }
 
-func (d *yamlDecoder) Decode(reader io.Reader, v interface{}) error {
-	return yaml.NewDecoder(reader).Decode(v)
+// RegisterDecoder 按照 decoder 支持的 Content-Type 注册
+func RegisterDecoder(d Decoder) {
+	if d == nil {
+		return
+	}
+	decoders.mutex.Lock()
+	defer decoders.mutex.Unlock()
+	for _, ct := range d.ContentTypes() {
+		decoders.decoders[normalizeContentType(ct)] = d
+	}
 }
 
-type contentDecoder struct{}
-
-func NewContentDecoder() Decoder {
-	return &contentDecoder{}
+// DecoderFor 根据 Content-Type 查找 decoder
+func DecoderFor(contentType string) (Decoder, bool) {
+	decoders.mutex.RLock()
+	defer decoders.mutex.RUnlock()
+	decoder, ok := decoders.decoders[normalizeContentType(contentType)]
+	return decoder, ok
 }
 
-func (c *contentDecoder) Decode(reader io.Reader, v interface{}) error {
-	//return Decode(reader, v)
-	return nil
+// Decode 根据 Content-Type 读取数据并解码
+func DecodeBody(reader io.Reader, contentType string, v interface{}) error {
+	if reader == nil {
+		return fmt.Errorf("nil reader")
+	}
+	if v == nil {
+		return fmt.Errorf("nil target")
+	}
+
+	dec, ok := DecoderFor(contentType)
+	if !ok {
+		// 使用默认编解码器
+		if mgr := DefaultManager(); mgr != nil && mgr.DefaultCodec() != nil {
+			all, err := io.ReadAll(reader)
+			if err != nil {
+				return err
+			}
+			return mgr.DefaultCodec().Decode(all, v)
+		}
+		return fmt.Errorf("unsupported content type: %s", contentType)
+	}
+
+    return dec.Decode(reader, v)
+}
+
+// codecDecoder 适配 Codec 到 Decoder
+type codecDecoder struct {
+	codec Codec
+}
+
+func NewCodecDecoder(c Codec) Decoder {
+	return &codecDecoder{
+		codec: c,
+	}
+}
+
+func (c *codecDecoder) ContentTypes() []string {
+	if c.codec == nil {
+		return nil
+	}
+	contentType := c.codec.ContentType()
+	switch normalized := normalizeContentType(contentType); normalized {
+	case normalizeContentType("application/json"):
+		return jsonContentTypes
+	case normalizeContentType("application/xml"):
+		return xmlContentTypes
+	case normalizeContentType("application/x-yaml"):
+		return yamlContentTypes
+	case normalizeContentType("text/plain"):
+		return plainContentTypes
+	default:
+		return []string{contentType}
+	}
+}
+
+func (c *codecDecoder) Decode(reader io.Reader, v interface{}) error {
+	if c.codec == nil {
+		return fmt.Errorf("codec not configured")
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return err
+	}
+	return c.codec.Decode(data, v)
 }

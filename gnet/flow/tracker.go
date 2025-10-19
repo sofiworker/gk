@@ -1,10 +1,11 @@
 package flow
 
 import (
-	"gk/netx/layers"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/sofiworker/gk/gnet/layers"
 )
 
 type FlowKey string
@@ -45,13 +46,13 @@ func (t *Tracker) ProcessPacket(packet *layers.IPv4, tcp *layers.TCP) {
 
 	if state, exists := t.flows[key]; exists {
 		state.PacketsRecv++
-		state.BytesRecv += uint64(len(tcp.Payload))
+		state.BytesRecv += uint64(len(tcp.Payload()))
 		state.EndTime = time.Now()
 	} else {
 		t.flows[key] = &FlowState{
 			StartTime:   time.Now(),
 			PacketsRecv: 1,
-			BytesRecv:   uint64(len(tcp.Payload)),
+			BytesRecv:   uint64(len(tcp.Payload())),
 		}
 	}
 }
