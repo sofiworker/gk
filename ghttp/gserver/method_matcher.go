@@ -15,16 +15,16 @@ type PathFeature struct {
 }
 
 type MethodMatcher struct {
-	staticGroup  map[string]*routeEntry // 静态路径表（O(1)）
-	segmentIndex map[int][]*routeEntry  // 按段数分组的参数路由
-	radixTree    *CompressedRadixTree   // 通配符路由树
+	staticGroup  map[string]*routeEntry       // 静态路径表（O(1)）
+	segmentIndex map[int]*CompressedRadixTree // 按段数分组的参数路由
+	radixTree    *CompressedRadixTree         // 通配符路由树
 	mu           sync.RWMutex
 }
 
 func newMethodMatcher() *MethodMatcher {
 	return &MethodMatcher{
 		staticGroup:  make(map[string]*routeEntry),
-		segmentIndex: make(map[int][]*routeEntry),
+		segmentIndex: make(map[int]*CompressedRadixTree),
 		radixTree:    newCompressedRadixTree(),
 	}
 }
@@ -69,33 +69,50 @@ func (mr *MethodMatcher) addRoute(path string, handler ...HandlerFunc) error {
 		return mr.radixTree.insert(entry)
 	}
 
-	// 普通参数路由 -> segment 索引
-	mr.segmentIndex[feature.segmentCnt] = append(mr.segmentIndex[feature.segmentCnt], entry)
-	return nil
+	if mr.segmentIndex[feature.segmentCnt] == nil {
+		mr.segmentIndex[feature.segmentCnt] = newCompressedRadixTree()
+	}
+	return mr.segmentIndex[feature.segmentCnt].insert(entry)
 }
 
-// 匹配逻辑优化版
 func (mr *MethodMatcher) match(path string) *MatchResult {
 	mr.mu.RLock()
 	defer mr.mu.RUnlock()
 
-	// 静态匹配（最快）
-	if entry, ok := mr.staticGroup[path]; ok {
+	info := extractPathInfo(path)
+
+	// 静态匹配
+	if entry, ok := mr.staticGroup[info.purePath]; ok {
+		if info.hasQuery {
+			return entry.toResult(parseQueryParams(info.queryString))
+		}
 		return entry.toResult(nil)
 	}
 
 	// 段数匹配（例如 /user/:id）
-	segments := splitPathSegments(path)
+	segments := splitPathSegments(info.purePath)
 	if entries, ok := mr.segmentIndex[len(segments)]; ok {
-		for _, e := range entries {
-			if params := matchSegments(e, path); params != nil {
-				return e.toResult(params)
+		if result := entries.search(info.purePath); result != nil {
+			if info.hasQuery {
+				queryParams := parseQueryParams(info.queryString)
+				for k, v := range queryParams {
+					result.Params[k] = v
+				}
 			}
 		}
 	}
 
 	// 最后走通配树匹配
-	return mr.radixTree.search(path)
+	result := mr.radixTree.search(info.purePath)
+	if result != nil {
+		if info.hasQuery {
+			queryParams := parseQueryParams(info.queryString)
+			for k, v := range queryParams {
+				result.Params[k] = v
+			}
+		}
+	}
+	return nil
 }
 
 func (mr *MethodMatcher) removeRoute(path string) error {
@@ -117,14 +134,7 @@ func (mr *MethodMatcher) removeRoute(path string) error {
 	}
 
 	entries := mr.segmentIndex[feature.segmentCnt]
-	for i, entry := range entries {
-		if entry.path == path {
-			mr.segmentIndex[feature.segmentCnt] = append(entries[:i], entries[i+1:]...)
-			return nil
-		}
-	}
-
-	return fmt.Errorf("route not found: %s", path)
+	return entries.remove(path)
 }
 
 // 匹配分段路径并提取参数
@@ -159,4 +169,44 @@ func matchSegments(entry *routeEntry, path string) map[string]string {
 	}
 
 	return params
+}
+
+// 解析查询参数字符串为键值对映射
+func parseQueryParams(queryStr string) map[string]string {
+	params := make(map[string]string)
+	if queryStr == "" {
+		return params
+	}
+
+	pairs := strings.Split(queryStr, "&")
+	for _, pair := range pairs {
+		if eqIdx := strings.IndexByte(pair, '='); eqIdx != -1 {
+			key := pair[:eqIdx]
+			value := pair[eqIdx+1:]
+			params[key] = value
+		} else {
+			params[pair] = ""
+		}
+	}
+	return params
+}
+
+type pathInfo struct {
+	purePath    string
+	hasQuery    bool
+	queryString string
+}
+
+func extractPathInfo(path string) pathInfo {
+	if idx := strings.IndexByte(path, '?'); idx != -1 {
+		return pathInfo{
+			purePath:    path[:idx],
+			hasQuery:    true,
+			queryString: path[idx+1:],
+		}
+	}
+	return pathInfo{
+		purePath: path,
+		hasQuery: false,
+	}
 }
