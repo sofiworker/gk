@@ -185,3 +185,148 @@ func TestMatcher_WildcardCoverage(t *testing.T) {
 		t.Fatal("expected missing tail to not match param+wildcard route")
 	}
 }
+
+func BenchmarkMatcherAddRoutesThenMatchWithQueryAndWildcard(b *testing.B) {
+	sizes := []int{100, 1000, 5000, 10000}
+	methods := []string{"GET", "POST", "PUT", "DELETE", "PATCH"}
+
+	for _, size := range sizes {
+		sz := size
+		b.Run(fmt.Sprintf("routes=%d", sz), func(b *testing.B) {
+			b.ReportAllocs()
+
+			m := newServerMatcher()
+			type target struct {
+				method string
+				path   string
+			}
+			var targets []target
+
+			emptyHandler := func(ctx *Context) {}
+
+			for i := 0; i < sz; i++ {
+				method := methods[i%len(methods)]
+				switch i % 4 {
+				case 0:
+					// 静态路由 + 查询参数
+					path := fmt.Sprintf("/static/%d/page", i)
+					_ = m.AddRoute(method, path, emptyHandler)
+					targets = append(targets, target{method: method, path: path + "?query=param&value=test"})
+				case 1:
+					// 参数路由
+					path := fmt.Sprintf("/users/%d/:id", i)
+					_ = m.AddRoute(method, path, emptyHandler)
+					targets = append(targets, target{method: method, path: fmt.Sprintf("/users/%d/123?detail=true", i)})
+				case 2:
+					// 多参数路由
+					path := fmt.Sprintf("/org/%d/teams/:p1/members/:p2", i)
+					_ = m.AddRoute(method, path, emptyHandler)
+					targets = append(targets, target{method: method, path: fmt.Sprintf("/org/%d/teams/123/members/456?expand=profile", i)})
+				case 3:
+					// 通配符路由
+					path := fmt.Sprintf("/assets/%d/*filepath", i)
+					_ = m.AddRoute(method, path, emptyHandler)
+					targets = append(targets, target{method: method, path: fmt.Sprintf("/assets/%d/images/logo.png?size=large", i)})
+				}
+			}
+
+			if len(targets) == 0 {
+				b.Fatalf("no targets generated")
+			}
+
+			sampleCount := 256
+			if len(targets) < sampleCount {
+				sampleCount = len(targets)
+			}
+			sampleTargets := targets[:sampleCount]
+
+			b.Run("match=hit_with_query", func(b *testing.B) {
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					t := sampleTargets[i%len(sampleTargets)]
+					res := m.Match(t.method, t.path)
+					_ = res
+				}
+			})
+
+			b.Run("match=miss_with_query", func(b *testing.B) {
+				missTargets := []target{
+					{method: "GET", path: "/nonexistent/abc/000?query=missing"},
+					{method: "POST", path: "/users/999999/000?invalid=true"},
+					{method: "PUT", path: "/org/999999/teams/zzz/members/yyy?error=notfound"},
+					{method: "DELETE", path: "/assets/999999/unknown/file.txt?status=404"},
+				}
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					t := missTargets[i%len(missTargets)]
+					res := m.Match(t.method, t.path)
+					_ = res
+				}
+			})
+		})
+	}
+}
+
+func BenchmarkMatcherComplexRoutes(b *testing.B) {
+	sizes := []int{100, 1000, 5000, 10000}
+
+	for _, size := range sizes {
+		sz := size
+		b.Run(fmt.Sprintf("routes=%d", sz), func(b *testing.B) {
+			b.ReportAllocs()
+
+			m := newServerMatcher()
+			type target struct {
+				method string
+				path   string
+			}
+			var targets []target
+
+			emptyHandler := func(ctx *Context) {}
+
+			// 添加复杂路由模式
+			for i := 0; i < sz; i++ {
+				// 混合参数和通配符的复杂路由
+				complexPath := fmt.Sprintf("/api/:version/%d/*resource", i)
+				_ = m.AddRoute("GET", complexPath, emptyHandler)
+				targets = append(targets, target{
+					method: "GET",
+					path: fmt.Sprintf("/api/v%d/%d/data/users/123/profile?include=details&fields=name,email&format=json",
+						i%3+1, i),
+				})
+			}
+
+			if len(targets) == 0 {
+				b.Fatalf("no complex targets generated")
+			}
+
+			sampleCount := 256
+			if len(targets) < sampleCount {
+				sampleCount = len(targets)
+			}
+			sampleTargets := targets[:sampleCount]
+
+			b.Run("match=complex_routes", func(b *testing.B) {
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					t := sampleTargets[i%len(sampleTargets)]
+					res := m.Match(t.method, t.path)
+					_ = res
+				}
+			})
+
+			b.Run("match=complex_miss", func(b *testing.B) {
+				missTargets := []target{
+					{method: "GET", path: "/api/v9/999999/invalid/path?error=true"},
+					{method: "GET", path: "/api/wrong/12345/missing/resource?status=404"},
+				}
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					t := missTargets[i%len(missTargets)]
+					res := m.Match(t.method, t.path)
+					_ = res
+				}
+			})
+		})
+	}
+}
