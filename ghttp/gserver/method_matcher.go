@@ -92,12 +92,15 @@ func (mr *MethodMatcher) match(path string) *MatchResult {
 	// 段数匹配（例如 /user/:id）
 	segments := splitPathSegments(info.purePath)
 	if entries, ok := mr.segmentIndex[len(segments)]; ok {
-		if result := entries.search(info.purePath); result != nil {
+		result := entries.search(info.purePath)
+		if result != nil {
 			if info.hasQuery {
 				queryParams := parseQueryParams(info.queryString)
 				for k, v := range queryParams {
 					result.Params[k] = v
 				}
+			} else {
+				return result
 			}
 		}
 	}
@@ -110,6 +113,8 @@ func (mr *MethodMatcher) match(path string) *MatchResult {
 			for k, v := range queryParams {
 				result.Params[k] = v
 			}
+		} else {
+			return result
 		}
 	}
 	return nil
