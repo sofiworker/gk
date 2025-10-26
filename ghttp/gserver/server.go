@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -42,8 +43,6 @@ type Server struct {
 	mu      sync.RWMutex
 }
 
-type ServerOption func(*Server)
-
 func NewServer(opts ...ServerOption) *Server {
 	rootGroup := &RouterGroup{
 		Handlers: nil,
@@ -60,7 +59,7 @@ func NewServer(opts ...ServerOption) *Server {
 		matcher:                   newServerMatcher(),
 		codecManager:              codec.DefaultManager(),
 		logger:                    newStdLogger(),
-		convertFastRequestCtxFunc: convertToHTTPRequest,
+		convertFastRequestCtxFunc: convertFastRequestCtxSafe,
 	}
 
 	rootGroup.engine = s
@@ -267,8 +266,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(matchResult.Params) > 0 {
-		for k, v := range matchResult.Params {
-			ctx.AddParam(k, v)
+		for _, v := range matchResult.Params {
+			ctx.AddParam(v.Key, v.Value)
 		}
 	}
 
@@ -344,102 +343,51 @@ func (s *Server) ANY(path string, handlers ...HandlerFunc) {
 	s.root.ANY(path, handlers...)
 }
 
-// 将 fasthttp.RequestCtx 转换为标准 http.Request
-func convertToHTTPRequest(ctx *fasthttp.RequestCtx) *http.Request {
+func convertFastRequestCtxSafe(ctx *fasthttp.RequestCtx) *http.Request {
+	uri := ctx.URI()
+
+	scheme := "http"
+	if ctx.IsTLS() {
+		scheme = "https"
+	}
+
 	u := &url.URL{
-		Scheme:   "http",
+		Scheme:   scheme,
 		Host:     string(ctx.Host()),
-		Path:     string(ctx.Path()),
-		RawQuery: string(ctx.URI().QueryString()),
+		Path:     string(uri.Path()),
+		RawQuery: string(uri.QueryString()),
 	}
 
-	body := bytes.NewReader(ctx.Request.Body())
+	// copy body to make it stable
+	bodyCopy := append([]byte(nil), ctx.PostBody()...)
+	reqBody := io.NopCloser(bytes.NewReader(bodyCopy))
 
-	req, err := http.NewRequest(
-		string(ctx.Method()),
-		u.String(),
-		body,
-	)
-	if err != nil {
-		return nil
+	req := &http.Request{
+		Method:        string(ctx.Method()),
+		URL:           u,
+		Host:          string(ctx.Host()),
+		Body:          reqBody,
+		ContentLength: int64(len(bodyCopy)),
+		Header:        make(http.Header, ctx.Request.Header.Len()),
+		RemoteAddr:    ctx.RemoteAddr().String(),
+		// minimal proto info
+		Proto:      "HTTP/1.1",
+		ProtoMajor: 1,
+		ProtoMinor: 1,
 	}
 
-	ctx.Request.Header.VisitAll(func(key, value []byte) {
-		req.Header.Set(string(key), string(value))
+	if ctx.IsTLS() {
+		state := ctx.TLSConnectionState()
+		req.TLS = state
+	}
+
+	ctx.Request.Header.VisitAll(func(k, v []byte) {
+		req.Header.Add(http.CanonicalHeaderKey(string(k)), string(v))
 	})
 
-	req.RemoteAddr = ctx.RemoteAddr().String()
+	// attach original fasthttp ctx in Context for downstream if needed
+	baseCtx := context.WithValue(context.Background(), "", ctx)
+	req = req.WithContext(baseCtx)
 
 	return req
-}
-
-func WithAddress(addr string) ServerOption {
-	return func(s *Server) {
-		if addr != "" {
-			s.Addr = addr
-		}
-	}
-}
-
-func WithPort(port int) ServerOption {
-	return func(s *Server) {
-		if port > 0 {
-			s.Port = port
-		}
-	}
-}
-
-func WithTLSConfig(cfg *tls.Config) ServerOption {
-	return func(s *Server) {
-		s.TLSConfig = cfg
-		if s.server != nil {
-			s.server.TLSConfig = cfg
-		}
-	}
-}
-
-func WithMatcher(m Matcher) ServerOption {
-	return func(s *Server) {
-		if m != nil {
-			s.matcher = m
-		}
-	}
-}
-
-func WithCodecManager(manager *codec.CodecManager) ServerOption {
-	return func(s *Server) {
-		if manager != nil {
-			s.codecManager = manager
-		}
-	}
-}
-
-func WithLogger(logger Logger) ServerOption {
-	return func(s *Server) {
-		if logger != nil {
-			s.logger = logger
-		}
-	}
-}
-
-func WithFastHTTPServer(server *fasthttp.Server) ServerOption {
-	return func(s *Server) {
-		if server != nil {
-			s.server = server
-		}
-	}
-}
-
-func WithRequestConverter(converter RequestConverter) ServerOption {
-	return func(s *Server) {
-		if converter != nil {
-			s.convertFastRequestCtxFunc = converter
-		}
-	}
-}
-
-func WithPanicHandler(handler func(*Context, interface{})) ServerOption {
-	return func(s *Server) {
-		s.panicHandler = handler
-	}
 }
