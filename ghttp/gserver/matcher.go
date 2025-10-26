@@ -2,23 +2,71 @@ package gserver
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 )
 
+type Param struct {
+	Key   string
+	Value string
+}
+
 type MatchResult struct {
-	Path     string            `json:"path"`
-	Handlers []HandlerFunc     `json:"-"`
-	Params   map[string]string `json:"params"`
+	Path        string        `json:"path"`
+	Handlers    []HandlerFunc `json:"-"`
+	Params      []Param       // 比 map[string]string 更友好给 GC
+	QueryValues url.Values    // 可为空；保留原多值语义
+}
+
+// GetParam 提供统一访问接口，避免上层反复线性遍历。
+func (mr *MatchResult) GetParam(key string) (string, bool) {
+	for i := range mr.Params {
+		if mr.Params[i].Key == key {
+			return mr.Params[i].Value, true
+		}
+	}
+	return "", false
+}
+
+func (mr *MatchResult) appendParams(newParams url.Values) {
+	if newParams == nil || len(newParams) == 0 {
+		return
+	}
+	for k, arr := range newParams {
+		if len(arr) == 0 {
+			continue
+		}
+		val := arr[len(arr)-1] // 取最后一个值，语义和我们之前保持一致
+
+		// 先检查是否存在同名
+		replaced := false
+		for i := range mr.Params {
+			if mr.Params[i].Key == k {
+				mr.Params[i].Value = val
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			mr.Params = append(mr.Params, Param{Key: k, Value: val})
+		}
+	}
 }
 
 type MatcherStats struct {
 	TotalRequests    uint64
 	MatchHits        uint64
 	MatchMisses      uint64
-	AvgMatchTimeNs   uint64
+	TotalMatchTimeNs uint64
 	MemoryUsageBytes uint64
 	RoutesCount      int
+}
+
+type RouteInfo struct {
+	Method      string
+	Pattern     string
+	NumHandlers int
 }
 
 // Matcher 核心接口 - 负责路由匹配
@@ -26,6 +74,7 @@ type Matcher interface {
 	Match(method, path string) *MatchResult
 	AddRoute(method, path string, handler ...HandlerFunc) error
 	RemoveRoute(method, path string) error
+	ListRoutes() []*RouteInfo
 	Stats() *MatcherStats
 }
 
@@ -34,45 +83,13 @@ func newServerMatcher() Matcher {
 		methodMatcher: make(map[string]*MethodMatcher),
 		stats:         &MatcherStats{},
 	}
-	s.matchPool.New = func() interface{} {
-		return &MatchResult{}
-	}
 	return s
 }
 
 type serverMatcher struct {
 	methodMatcher map[string]*MethodMatcher
-	matchPool     sync.Pool
 	mu            sync.RWMutex
 	stats         *MatcherStats
-}
-
-type routeGroup struct {
-	routes []*routeEntry
-}
-
-func (rg *routeGroup) addEntry(e *routeEntry) {
-	rg.routes = append(rg.routes, e)
-}
-
-func (rg *routeGroup) removePath(path string) {
-	out := rg.routes[:0]
-	for _, r := range rg.routes {
-		if r.path != path {
-			out = append(out, r)
-		}
-	}
-	rg.routes = out
-}
-
-func (rg *routeGroup) empty() bool {
-	return len(rg.routes) == 0
-}
-
-func (rg *routeGroup) routesCopy() []*routeEntry {
-	cp := make([]*routeEntry, len(rg.routes))
-	copy(cp, rg.routes)
-	return cp
 }
 
 type routeEntry struct {
@@ -90,18 +107,25 @@ func newRouteEntry(path string, handlers []HandlerFunc) *routeEntry {
 	}
 }
 
-func (r *routeEntry) toResult(params map[string]string) *MatchResult {
-	var paramCopy map[string]string
-	if len(params) > 0 {
-		paramCopy = make(map[string]string, len(params))
-		for k, v := range params {
-			paramCopy[k] = v
-		}
-	}
+//func (r *routeEntry) toResult(params map[string]string) *MatchResult {
+//	var paramCopy map[string]string
+//	if len(params) > 0 {
+//		paramCopy = make(map[string]string, len(params))
+//		for k, v := range params {
+//			paramCopy[k] = v
+//		}
+//	}
+//	return &MatchResult{
+//		Path:     r.path,
+//		Handlers: r.handlers,
+//		Params:   paramCopy,
+//	}
+//}
+
+func (r *routeEntry) toResult() *MatchResult {
 	return &MatchResult{
 		Path:     r.path,
 		Handlers: r.handlers,
-		Params:   paramCopy,
 	}
 }
 
@@ -165,5 +189,47 @@ func (s *serverMatcher) RemoveRoute(method, path string) error {
 }
 
 func (s *serverMatcher) Stats() *MatcherStats {
-	return s.stats
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var routeCount int
+	for _, mm := range s.methodMatcher {
+		mm.mu.RLock()
+		routeCount += len(mm.staticGroup)
+		routeCount += mm.segmentIndexRouteCount()
+		routeCount += mm.radixRouteCount()
+		mm.mu.RUnlock()
+	}
+
+	return &MatcherStats{
+		//TotalRequests:    atomic.LoadUint64(&s.totalRequests),
+		//MatchHits:        atomic.LoadUint64(&s.matchHits),
+		//MatchMisses:      atomic.LoadUint64(&s.matchMisses),
+		//TotalMatchTimeNs: atomic.LoadUint64(&s.totalMatchTimeNs),
+		MemoryUsageBytes: 0, // 这里可以在未来加内存估算
+		RoutesCount:      routeCount,
+	}
+}
+
+func (s *serverMatcher) ListRoutes() []*RouteInfo {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make([]*RouteInfo, 0, 32)
+	for method, mm := range s.methodMatcher {
+		mm.mu.RLock()
+		// 静态路由
+		for pat, e := range mm.staticGroup {
+			out = append(out, &RouteInfo{
+				Method:      method,
+				Pattern:     pat,
+				NumHandlers: len(e.handlers),
+			})
+		}
+		// segmentIndex 和 radixTree 的遍历我们委托内部 helper
+		out = append(out, mm.segmentIndexRoutes(method)...)
+		out = append(out, mm.radixRoutes(method)...)
+		mm.mu.RUnlock()
+	}
+	return out
 }
