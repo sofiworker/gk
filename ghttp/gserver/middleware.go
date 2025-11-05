@@ -41,10 +41,6 @@ func Recovery() HandlerFunc {
 		defer func() {
 			if rec := recover(); rec != nil {
 				engine := ctx.Engine()
-				if engine != nil && engine.panicHandler != nil {
-					engine.panicHandler(ctx, rec)
-					return
-				}
 
 				if engine != nil && engine.Logger() != nil {
 					engine.Logger().Errorf("panic recovered: %v\n%s", rec, debug.Stack())

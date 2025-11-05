@@ -6,10 +6,10 @@ import (
 )
 
 var (
-	// regEnLetter matches english letters for http method name
+	// regEnLetter matches english letters for http method name.
 	regEnLetter = regexp.MustCompile("^[A-Z]+$")
 
-	// anyMethods for RouterGroup Any method
+	// anyMethods lists all HTTP methods for the Any method.
 	anyMethods = []string{
 		http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch,
 		http.MethodHead, http.MethodOptions, http.MethodDelete, http.MethodConnect,
@@ -17,40 +17,62 @@ var (
 	}
 )
 
-type Router interface {
-	Handle(method, path string, handlers ...HandlerFunc)
-	GET(path string, handlers ...HandlerFunc)
-	POST(path string, handlers ...HandlerFunc)
-	PUT(path string, handlers ...HandlerFunc)
-	DELETE(path string, handlers ...HandlerFunc)
-	PATCH(path string, handlers ...HandlerFunc)
-	HEAD(path string, handlers ...HandlerFunc)
-	OPTIONS(path string, handlers ...HandlerFunc)
-	ANY(path string, handlers ...HandlerFunc)
-	Use(handlers ...HandlerFunc)
+// IRouter defines the complete interface for routing, middleware, and grouping.
+type IRouter interface {
+	// Middleware
+	Use(handlers ...HandlerFunc) IRouter
+
+	// Route registration
+	Handle(method, path string, handlers ...HandlerFunc) IRouter
+	ANY(path string, handlers ...HandlerFunc) IRouter
+	GET(path string, handlers ...HandlerFunc) IRouter
+	POST(path string, handlers ...HandlerFunc) IRouter
+	DELETE(path string, handlers ...HandlerFunc) IRouter
+	PATCH(path string, handlers ...HandlerFunc) IRouter
+	PUT(path string, handlers ...HandlerFunc) IRouter
+	HEAD(path string, handlers ...HandlerFunc) IRouter
+	OPTIONS(path string, handlers ...HandlerFunc) IRouter
+	Match(methods []string, path string, handlers ...HandlerFunc) IRouter
+
+	// Grouping
+	Group(prefix string, handlers ...HandlerFunc) IRouter
+
+	// Static files
+	Static(relativePath, root string) IRouter
+	StaticFS(relativePath string, fs http.FileSystem) IRouter
 }
 
-type Routers interface {
-	Router
-	Group(prefix string, handlers ...HandlerFunc) Routers
-}
-
+// RouterGroup is used to group routes with a common prefix and middlewares.
 type RouterGroup struct {
 	Handlers []HandlerFunc
-	basePath string
+	path     string
 	engine   *Server
 	root     bool
 }
 
-func (g *RouterGroup) Group(relativePath string, handlers ...HandlerFunc) Routers {
+// Group creates a new router group. It inherits middlewares from the parent group.
+func (g *RouterGroup) Group(relativePath string, handlers ...HandlerFunc) IRouter {
 	return &RouterGroup{
 		engine:   g.engine,
-		basePath: g.calculateAbsolutePath(relativePath),
-		Handlers: g.copyHandler(handlers...),
+		path:     g.calculateAbsolutePath(relativePath),
+		Handlers: g.combineHandlers(handlers...),
 	}
 }
 
-func (g *RouterGroup) Handle(method, path string, handlers ...HandlerFunc) {
+// Use adds middleware handlers to the router group for chaining.
+func (g *RouterGroup) Use(handlers ...HandlerFunc) IRouter {
+	g.Handlers = append(g.Handlers, handlers...)
+	return g.returnObj()
+}
+
+// Handle registers a new request handler and returns the router for chaining.
+func (g *RouterGroup) Handle(method, path string, handlers ...HandlerFunc) IRouter {
+	g.addRoute(method, path, handlers...)
+	return g.returnObj()
+}
+
+// addRoute is the internal method that adds a route.
+func (g *RouterGroup) addRoute(method, path string, handlers ...HandlerFunc) {
 	if matched := regEnLetter.MatchString(method); !matched {
 		panic("http method " + method + " is not valid")
 	}
@@ -59,80 +81,88 @@ func (g *RouterGroup) Handle(method, path string, handlers ...HandlerFunc) {
 	g.engine.addRoute(method, absolutePath, finalHandlers...)
 }
 
-func (g *RouterGroup) GET(path string, handlers ...HandlerFunc) {
-	g.Handle(http.MethodGet, path, handlers...)
+// GET is a shortcut for Handle(http.MethodGet, path, handlers).
+func (g *RouterGroup) GET(path string, handlers ...HandlerFunc) IRouter {
+	return g.Handle(http.MethodGet, path, handlers...)
 }
 
-func (g *RouterGroup) POST(path string, handlers ...HandlerFunc) {
-	g.Handle(http.MethodPost, path, handlers...)
+// POST is a shortcut for Handle(http.MethodPost, path, handlers).
+func (g *RouterGroup) POST(path string, handlers ...HandlerFunc) IRouter {
+	return g.Handle(http.MethodPost, path, handlers...)
 }
 
-func (g *RouterGroup) PUT(path string, handlers ...HandlerFunc) {
-	g.Handle(http.MethodPut, path, handlers...)
+// PUT is a shortcut for Handle(http.MethodPut, path, handlers).
+func (g *RouterGroup) PUT(path string, handlers ...HandlerFunc) IRouter {
+	return g.Handle(http.MethodPut, path, handlers...)
 }
 
-func (g *RouterGroup) DELETE(path string, handlers ...HandlerFunc) {
-	g.Handle(http.MethodDelete, path, handlers...)
+// DELETE is a shortcut for Handle(http.MethodDelete, path, handlers).
+func (g *RouterGroup) DELETE(path string, handlers ...HandlerFunc) IRouter {
+	return g.Handle(http.MethodDelete, path, handlers...)
 }
 
-func (g *RouterGroup) PATCH(path string, handlers ...HandlerFunc) {
-	g.Handle(http.MethodPatch, path, handlers...)
+// PATCH is a shortcut for Handle(http.MethodPatch, path, handlers).
+func (g *RouterGroup) PATCH(path string, handlers ...HandlerFunc) IRouter {
+	return g.Handle(http.MethodPatch, path, handlers...)
 }
 
-func (g *RouterGroup) HEAD(path string, handlers ...HandlerFunc) {
-	g.Handle(http.MethodHead, path, handlers...)
+// HEAD is a shortcut for Handle(http.MethodHead, path, handlers).
+func (g *RouterGroup) HEAD(path string, handlers ...HandlerFunc) IRouter {
+	return g.Handle(http.MethodHead, path, handlers...)
 }
 
-func (g *RouterGroup) OPTIONS(path string, handlers ...HandlerFunc) {
-	g.Handle(http.MethodOptions, path, handlers...)
+// OPTIONS is a shortcut for Handle(http.MethodOptions, path, handlers).
+func (g *RouterGroup) OPTIONS(path string, handlers ...HandlerFunc) IRouter {
+	return g.Handle(http.MethodOptions, path, handlers...)
 }
 
-func (g *RouterGroup) ANY(path string, handlers ...HandlerFunc) {
+// ANY registers a route that matches all HTTP methods.
+func (g *RouterGroup) ANY(path string, handlers ...HandlerFunc) IRouter {
 	for _, method := range anyMethods {
-		g.Handle(method, path, handlers...)
+		g.addRoute(method, path, handlers...)
 	}
+	return g.returnObj()
 }
 
-func (g *RouterGroup) Use(handlers ...HandlerFunc) {
-	if len(handlers) == 0 {
-		return
+// Match registers a route that matches the given HTTP methods.
+func (g *RouterGroup) Match(methods []string, path string, handlers ...HandlerFunc) IRouter {
+	for _, method := range methods {
+		g.addRoute(method, path, handlers...)
 	}
-	if g.Handlers == nil {
-		g.Handlers = make([]HandlerFunc, 0, len(handlers))
-	}
-	g.Handlers = append(g.Handlers, handlers...)
+	return g.returnObj()
 }
 
+// Static serves static files from a directory.
+func (g *RouterGroup) Static(relativePath, root string) IRouter {
+	return g.engine.Static(g.calculateAbsolutePath(relativePath), root)
+}
+
+// StaticFS serves static files from an abstract file system.
+func (g *RouterGroup) StaticFS(relativePath string, fs http.FileSystem) IRouter {
+	return g.engine.StaticFS(g.calculateAbsolutePath(relativePath), fs)
+}
+
+// calculateAbsolutePath calculates the full path for a route, including the group's base path.
 func (g *RouterGroup) calculateAbsolutePath(relativePath string) string {
-	if relativePath == "" {
-		return g.basePath
-	}
-	if relativePath[0] == '/' {
-		return JoinPaths("", relativePath)
-	}
-	return JoinPaths(g.basePath, relativePath)
+	return JoinPaths(g.path, relativePath)
 }
 
-func (g *RouterGroup) copyHandler(handlers ...HandlerFunc) []HandlerFunc {
-	copyHandlers := make([]HandlerFunc, len(g.Handlers))
-	copy(copyHandlers, g.Handlers)
-	if len(handlers) == 0 {
-		return copyHandlers
-	}
-	return append(copyHandlers, handlers...)
-}
-
+// combineHandlers merges the group's handlers with new handlers.
 func (g *RouterGroup) combineHandlers(handlers ...HandlerFunc) []HandlerFunc {
-	length := len(g.Handlers) + len(handlers)
-	if length == 0 {
+	finalSize := len(g.Handlers) + len(handlers)
+	if finalSize == 0 {
 		return nil
 	}
-	finalHandlers := make([]HandlerFunc, 0, length)
-	if len(g.Handlers) > 0 {
-		finalHandlers = append(finalHandlers, g.Handlers...)
+	mergedHandlers := make([]HandlerFunc, 0, finalSize)
+	mergedHandlers = append(mergedHandlers, g.Handlers...)
+	mergedHandlers = append(mergedHandlers, handlers...)
+	return mergedHandlers
+}
+
+// returnObj returns the correct router instance for method chaining.
+func (g *RouterGroup) returnObj() IRouter {
+	if g.root {
+		return g.engine.IRouter
 	}
-	if len(handlers) > 0 {
-		finalHandlers = append(finalHandlers, handlers...)
-	}
-	return finalHandlers
+	return g
 }

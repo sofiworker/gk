@@ -1,13 +1,11 @@
 package gserver
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"net"
 	"net/http"
 	"net/url"
-	"runtime/debug"
 	"strconv"
 	"sync"
 	"time"
@@ -16,147 +14,89 @@ import (
 	"github.com/valyala/fasthttp"
 )
 
+var (
+	ctxPool = sync.Pool{
+		New: func() interface{} {
+			return &Context{}
+		},
+	}
+	requestPool = sync.Pool{
+		New: func() interface{} {
+			return &http.Request{
+				Header: make(http.Header),
+				URL:    &url.URL{},
+			}
+		},
+	}
+	bodyReaderPool = sync.Pool{
+		New: func() interface{} {
+			return &bodyReader{}
+		},
+	}
+	respWriterPool = sync.Pool{
+		New: func() interface{} {
+			return &respWriter{}
+		},
+	}
+)
+
 type RequestConverter func(ctx *fasthttp.RequestCtx) *http.Request
+type RequestConverterFailedHandler func(ctx *fasthttp.RequestCtx)
 
 type Server struct {
 	Addr string
 	Port int
 
 	TLSConfig *tls.Config
+	server    *fasthttp.Server
 
-	server  *fasthttp.Server
-	matcher Matcher
-	ctxPool sync.Pool
-	root    *RouterGroup
-	Routers Routers
-	logger  Logger
+	IRouter
+
+	Match
+
+	logger Logger
 
 	convertFastRequestCtxFunc RequestConverter
+	convertFailedHandler      RequestConverterFailedHandler
 
 	codecManager *codec.CodecManager
-
-	noRoute      []HandlerFunc
-	panicHandler func(*Context, interface{})
 
 	started bool
 	mu      sync.RWMutex
 }
 
-type ServerOption func(*Server)
-
 func NewServer(opts ...ServerOption) *Server {
-	rootGroup := &RouterGroup{
+	r := &RouterGroup{
 		Handlers: nil,
-		basePath: "/",
+		path:     "/",
 		root:     true,
 	}
-
 	s := &Server{
+		IRouter:                   r,
+		Match:                     newServerMatcher(),
 		Addr:                      "0.0.0.0",
 		Port:                      8080,
 		TLSConfig:                 nil,
-		root:                      rootGroup,
-		Routers:                   rootGroup,
-		matcher:                   newServerMatcher(),
 		codecManager:              codec.DefaultManager(),
 		logger:                    newStdLogger(),
-		convertFastRequestCtxFunc: convertToHTTPRequest,
+		convertFastRequestCtxFunc: ConvertToHTTPRequest,
+		convertFailedHandler: func(ctx *fasthttp.RequestCtx) {
+			ctx.SetStatusCode(http.StatusInternalServerError)
+		},
 	}
-
-	rootGroup.engine = s
-
-	s.ctxPool.New = func() interface{} {
-		ctx := &Context{}
-		ctx.setEngine(s)
-		return ctx
-	}
-
-	s.server = &fasthttp.Server{
-		Handler:   s.FastHandler,
-		TLSConfig: s.TLSConfig,
-	}
+	r.engine = s
 
 	for _, opt := range opts {
 		opt(s)
 	}
 
-	if s.server != nil {
-		s.server.Handler = s.FastHandler
-		s.server.TLSConfig = s.TLSConfig
+	if s.server == nil {
+		s.server = &fasthttp.Server{}
 	}
+	s.server.Handler = s.FastHandler
+	s.server.TLSConfig = s.TLSConfig
 
 	return s
-}
-
-func (s *Server) CodecManager() *codec.CodecManager {
-	return s.codecManager
-}
-
-func (s *Server) SetCodecManager(manager *codec.CodecManager) {
-	if manager == nil {
-		return
-	}
-	s.codecManager = manager
-}
-
-func (s *Server) Logger() Logger {
-	return s.logger
-}
-
-func (s *Server) SetLogger(logger Logger) {
-	if logger == nil {
-		return
-	}
-	s.logger = logger
-}
-
-func (s *Server) RegisterCodec(cdc codec.Codec) {
-	if cdc == nil {
-		return
-	}
-	if s.codecManager == nil {
-		s.codecManager = codec.NewCodecManager()
-	}
-	s.codecManager.RegisterCodec(cdc)
-}
-
-func (s *Server) SetPanicHandler(handler func(*Context, interface{})) {
-	s.panicHandler = handler
-}
-
-func (s *Server) SetRequestConverter(converter RequestConverter) {
-	if converter == nil {
-		return
-	}
-	s.convertFastRequestCtxFunc = converter
-}
-
-func (s *Server) Use(middleware ...HandlerFunc) {
-	if s.root != nil {
-		s.root.Use(middleware...)
-	}
-}
-
-func (s *Server) NoRoute(handlers ...HandlerFunc) {
-	s.noRoute = append([]HandlerFunc(nil), handlers...)
-}
-
-func (s *Server) addRoute(method, path string, handlers ...HandlerFunc) {
-	if len(path) == 0 {
-		panic("path should not be ''")
-	}
-	if path[0] != '/' {
-		panic("path must begin with '/'")
-	}
-	if method == "" {
-		panic("HTTP method cannot be empty")
-	}
-	if len(handlers) == 0 {
-		panic("there must be at least one handler")
-	}
-	if err := s.matcher.AddRoute(method, path, handlers...); err != nil {
-		panic(err)
-	}
 }
 
 func (s *Server) Start() error {
@@ -218,52 +158,71 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return server.ShutdownWithContext(shutdownCtx)
 }
 
+func (s *Server) Logger() Logger {
+	return s.logger
+}
+
+func (s *Server) Use(middleware ...HandlerFunc) IRouter {
+	s.IRouter.Use(middleware...)
+	return s.IRouter
+}
+
+func (s *Server) addRoute(method, path string, handlers ...HandlerFunc) {
+	CheckPathValid(path)
+	if method == "" {
+		panic("HTTP method cannot be empty")
+	}
+	if len(handlers) == 0 {
+		panic("there must be at least one handler")
+	}
+	if err := s.AddRoute(method, path, handlers...); err != nil {
+		panic(err)
+	}
+}
+
 func (s *Server) FastHandler(ctx *fasthttp.RequestCtx) {
 	request := s.convertFastRequestCtxFunc(ctx)
 	if request == nil {
-		if s.logger != nil {
-			s.logger.Errorf("failed to convert fasthttp request to http.Request")
-		}
-		ctx.Error("failed to convert request", fasthttp.StatusInternalServerError)
+		s.logger.Errorf("failed to convert fasthttp request to http.Request")
+		s.convertFailedHandler(ctx)
 		return
 	}
-	respWriter := &respWriter{ctx: ctx}
-	s.ServeHTTP(respWriter, request)
+	writer := respWriterPool.Get().(*respWriter)
+	writer.ctx = ctx
+	s.ServeHTTP(writer, request)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	ctx := s.ctxPool.Get().(*Context)
+	ctx := ctxPool.Get().(*Context)
 	ctx.Reset()
-	ctx.setEngine(s)
 	ctx.Writer = wrapResponseWriter(w)
 	ctx.Request = r
 
 	defer func() {
-		if rec := recover(); rec != nil {
-			if s.panicHandler != nil {
-				s.panicHandler(ctx, rec)
-			} else {
-				if s.logger != nil {
-					s.logger.Errorf("panic recovered: %v\n%s", rec, debug.Stack())
-				}
-				if ctx.Writer != nil && !ctx.Writer.Written() {
-					ctx.AbortWithStatus(http.StatusInternalServerError)
-				}
-			}
+		if r.Body != nil {
+			r.Body.Close()
 		}
-		s.ctxPool.Put(ctx)
+		ResetRequest(r)
+		requestPool.Put(r)
+
+		if rw, ok := w.(*respWriter); ok {
+			rw.Reset()
+			respWriterPool.Put(rw)
+		}
+
+		ctxPool.Put(ctx)
 	}()
 
-	matchResult := s.matcher.Match(r.Method, r.URL.Path)
+	matchResult := s.Lookup(r.Method, r.URL.Path)
 	if matchResult == nil {
 		s.handleNotFound(ctx)
 		return
 	}
 
+	ctx.SetFullPath(matchResult.Path)
+
 	if len(matchResult.Handlers) > 0 {
-		ctx.handlers = append(ctx.handlers[:0], matchResult.Handlers...)
-	} else {
-		ctx.handlers = ctx.handlers[:0]
+		ctx.handlers = append(ctx.handlers, matchResult.Handlers...)
 	}
 
 	if len(matchResult.Params) > 0 {
@@ -272,106 +231,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ctx.SetFullPath(matchResult.Path)
 	ctx.Next()
 }
 
 func (s *Server) handleNotFound(ctx *Context) {
-	if len(s.noRoute) == 0 {
-		http.NotFound(ctx.Writer, ctx.Request)
-		return
-	}
-	ctx.handlers = append(ctx.handlers[:0], s.combineHandlers(s.noRoute...)...)
-	ctx.SetFullPath(ctx.Request.URL.Path)
-	ctx.Next()
+	ctx.Writer.WriteHeader(http.StatusNotFound)
 }
 
-func (s *Server) combineHandlers(handlers ...HandlerFunc) []HandlerFunc {
-	if s.root == nil {
-		cp := make([]HandlerFunc, len(handlers))
-		copy(cp, handlers)
-		return cp
-	}
-	return s.root.copyHandler(handlers...)
-}
+// ///////////////////////////////// with 参数 //////////////////////////
 
-func (s *Server) Group(relativePath string, handlers ...HandlerFunc) Routers {
-	if s.root == nil {
-		return nil
-	}
-	return s.root.Group(relativePath, handlers...)
-}
-
-func (s *Server) Handle(method, path string, handlers ...HandlerFunc) {
-	if s.root == nil {
-		return
-	}
-	s.root.Handle(method, path, handlers...)
-}
-
-func (s *Server) GET(path string, handlers ...HandlerFunc) {
-	s.Handle(http.MethodGet, path, handlers...)
-}
-
-func (s *Server) POST(path string, handlers ...HandlerFunc) {
-	s.Handle(http.MethodPost, path, handlers...)
-}
-
-func (s *Server) PUT(path string, handlers ...HandlerFunc) {
-	s.Handle(http.MethodPut, path, handlers...)
-}
-
-func (s *Server) DELETE(path string, handlers ...HandlerFunc) {
-	s.Handle(http.MethodDelete, path, handlers...)
-}
-
-func (s *Server) PATCH(path string, handlers ...HandlerFunc) {
-	s.Handle(http.MethodPatch, path, handlers...)
-}
-
-func (s *Server) HEAD(path string, handlers ...HandlerFunc) {
-	s.Handle(http.MethodHead, path, handlers...)
-}
-
-func (s *Server) OPTIONS(path string, handlers ...HandlerFunc) {
-	s.Handle(http.MethodOptions, path, handlers...)
-}
-
-func (s *Server) ANY(path string, handlers ...HandlerFunc) {
-	if s.root == nil {
-		return
-	}
-	s.root.ANY(path, handlers...)
-}
-
-// 将 fasthttp.RequestCtx 转换为标准 http.Request
-func convertToHTTPRequest(ctx *fasthttp.RequestCtx) *http.Request {
-	u := &url.URL{
-		Scheme:   "http",
-		Host:     string(ctx.Host()),
-		Path:     string(ctx.Path()),
-		RawQuery: string(ctx.URI().QueryString()),
-	}
-
-	body := bytes.NewReader(ctx.Request.Body())
-
-	req, err := http.NewRequest(
-		string(ctx.Method()),
-		u.String(),
-		body,
-	)
-	if err != nil {
-		return nil
-	}
-
-	ctx.Request.Header.VisitAll(func(key, value []byte) {
-		req.Header.Set(string(key), string(value))
-	})
-
-	req.RemoteAddr = ctx.RemoteAddr().String()
-
-	return req
-}
+type ServerOption func(*Server)
 
 func WithAddress(addr string) ServerOption {
 	return func(s *Server) {
@@ -383,7 +252,7 @@ func WithAddress(addr string) ServerOption {
 
 func WithPort(port int) ServerOption {
 	return func(s *Server) {
-		if port > 0 {
+		if port > 0 && port < 65535 {
 			s.Port = port
 		}
 	}
@@ -398,10 +267,10 @@ func WithTLSConfig(cfg *tls.Config) ServerOption {
 	}
 }
 
-func WithMatcher(m Matcher) ServerOption {
+func WithMatcher(m Match) ServerOption {
 	return func(s *Server) {
 		if m != nil {
-			s.matcher = m
+			s.Match = m
 		}
 	}
 }
@@ -439,7 +308,5 @@ func WithRequestConverter(converter RequestConverter) ServerOption {
 }
 
 func WithPanicHandler(handler func(*Context, interface{})) ServerOption {
-	return func(s *Server) {
-		s.panicHandler = handler
-	}
+	return nil
 }

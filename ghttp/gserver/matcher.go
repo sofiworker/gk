@@ -21,15 +21,22 @@ type MatcherStats struct {
 	RoutesCount      int
 }
 
-// Matcher 核心接口 - 负责路由匹配
-type Matcher interface {
-	Match(method, path string) *MatchResult
+// Match 核心接口 - 负责路由匹配
+type Match interface {
+	Lookup(method, path string) *MatchResult
 	AddRoute(method, path string, handler ...HandlerFunc) error
 	RemoveRoute(method, path string) error
 	Stats() *MatcherStats
 }
 
-func newServerMatcher() Matcher {
+type serverMatcher struct {
+	methodMatcher map[string]*MethodMatcher
+	matchPool     sync.Pool
+	mu            sync.RWMutex
+	stats         *MatcherStats
+}
+
+func newServerMatcher() Match {
 	s := &serverMatcher{
 		methodMatcher: make(map[string]*MethodMatcher),
 		stats:         &MatcherStats{},
@@ -40,41 +47,6 @@ func newServerMatcher() Matcher {
 	return s
 }
 
-type serverMatcher struct {
-	methodMatcher map[string]*MethodMatcher
-	matchPool     sync.Pool
-	mu            sync.RWMutex
-	stats         *MatcherStats
-}
-
-type routeGroup struct {
-	routes []*routeEntry
-}
-
-func (rg *routeGroup) addEntry(e *routeEntry) {
-	rg.routes = append(rg.routes, e)
-}
-
-func (rg *routeGroup) removePath(path string) {
-	out := rg.routes[:0]
-	for _, r := range rg.routes {
-		if r.path != path {
-			out = append(out, r)
-		}
-	}
-	rg.routes = out
-}
-
-func (rg *routeGroup) empty() bool {
-	return len(rg.routes) == 0
-}
-
-func (rg *routeGroup) routesCopy() []*routeEntry {
-	cp := make([]*routeEntry, len(rg.routes))
-	copy(cp, rg.routes)
-	return cp
-}
-
 type routeEntry struct {
 	path       string
 	handlers   []HandlerFunc
@@ -82,7 +54,6 @@ type routeEntry struct {
 }
 
 func newRouteEntry(path string, handlers []HandlerFunc) *routeEntry {
-	checkPathValid(path)
 	return &routeEntry{
 		path:       path,
 		handlers:   handlers,
@@ -132,7 +103,7 @@ func splitPathSegments(path string) []string {
 	return strings.Split(trimmed, "/")
 }
 
-func (s *serverMatcher) Match(method, path string) *MatchResult {
+func (s *serverMatcher) Lookup(method, path string) *MatchResult {
 	s.mu.RLock()
 	methodRouter := s.methodMatcher[method]
 	s.mu.RUnlock()

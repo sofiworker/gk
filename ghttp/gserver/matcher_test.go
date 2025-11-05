@@ -38,7 +38,7 @@ func TestMatcher_StaticAndDynamicRoutes(t *testing.T) {
 	}
 
 	// === 测试静态路由 ===
-	r1 := m.Match("GET", "/users")
+	r1 := m.Lookup("GET", "/users")
 	if r1 == nil {
 		t.Fatal("expected /users to match")
 	}
@@ -50,7 +50,7 @@ func TestMatcher_StaticAndDynamicRoutes(t *testing.T) {
 	}
 
 	// === 测试参数路由 ===
-	r2 := m.Match("GET", "/users/42")
+	r2 := m.Lookup("GET", "/users/42")
 	if r2 == nil {
 		t.Fatal("expected /users/42 to match /users/:id")
 	}
@@ -62,7 +62,7 @@ func TestMatcher_StaticAndDynamicRoutes(t *testing.T) {
 	}
 
 	// === 测试通配符 ===
-	r3 := m.Match("GET", "/assets/img/logo.png")
+	r3 := m.Lookup("GET", "/assets/img/logo.png")
 	if r3 == nil {
 		t.Fatal("expected /assets/img/logo.png to match /assets/*path")
 	}
@@ -74,7 +74,7 @@ func TestMatcher_StaticAndDynamicRoutes(t *testing.T) {
 	}
 
 	// === 测试多参数 ===
-	r4 := m.Match("GET", "/articles/tech/123")
+	r4 := m.Lookup("GET", "/articles/tech/123")
 	if r4 == nil {
 		t.Fatal("expected /articles/tech/123 to match /articles/:category/:id")
 	}
@@ -86,20 +86,20 @@ func TestMatcher_StaticAndDynamicRoutes(t *testing.T) {
 	}
 
 	// === 测试方法区分 ===
-	r5 := m.Match("POST", "/submit")
+	r5 := m.Lookup("POST", "/submit")
 	if r5 == nil {
 		t.Fatal("expected POST /submit to match")
 	}
 	if r5.Path != "/submit" {
 		t.Fatalf("expected matched pattern /submit, got %s", r5.Path)
 	}
-	r6 := m.Match("GET", "/submit")
+	r6 := m.Lookup("GET", "/submit")
 	if r6 != nil {
 		t.Fatal("GET /submit should not match POST route")
 	}
 
 	// === 测试不存在路径 ===
-	r7 := m.Match("GET", "/notfound")
+	r7 := m.Lookup("GET", "/notfound")
 	if r7 != nil {
 		t.Fatal("expected /notfound not to match anything")
 	}
@@ -117,7 +117,7 @@ func TestMatcher_StaticPrecedenceOverParam(t *testing.T) {
 		t.Fatalf("AddRoute failed: %v", err)
 	}
 
-	staticMatch := m.Match("GET", "/files/static")
+	staticMatch := m.Lookup("GET", "/files/static")
 	if staticMatch == nil {
 		t.Fatal("expected static route to match first")
 	}
@@ -128,7 +128,7 @@ func TestMatcher_StaticPrecedenceOverParam(t *testing.T) {
 		t.Fatalf("expected no params for static route, got %+v", staticMatch.Params)
 	}
 
-	paramMatch := m.Match("GET", "/files/readme")
+	paramMatch := m.Lookup("GET", "/files/readme")
 	if paramMatch == nil {
 		t.Fatal("expected param route to match")
 	}
@@ -150,7 +150,7 @@ func TestMatcher_WildcardCoverage(t *testing.T) {
 		t.Fatalf("AddRoute failed: %v", err)
 	}
 
-	baseMatch := m.Match("GET", "/download")
+	baseMatch := m.Lookup("GET", "/download")
 	if baseMatch == nil {
 		t.Fatal("expected /download to match wildcard route")
 	}
@@ -158,7 +158,7 @@ func TestMatcher_WildcardCoverage(t *testing.T) {
 		t.Fatalf("expected empty wildcard capture, got %q", baseMatch.Params["file"])
 	}
 
-	nestedMatch := m.Match("GET", "/download/archives/file.zip")
+	nestedMatch := m.Lookup("GET", "/download/archives/file.zip")
 	if nestedMatch == nil {
 		t.Fatal("expected nested path to match wildcard route")
 	}
@@ -166,7 +166,7 @@ func TestMatcher_WildcardCoverage(t *testing.T) {
 		t.Fatalf("expected archives/file.zip, got %q", nestedMatch.Params["file"])
 	}
 
-	mixedMatch := m.Match("GET", "/api/v2/files/images/logo.png")
+	mixedMatch := m.Lookup("GET", "/api/v2/files/images/logo.png")
 	if mixedMatch == nil {
 		t.Fatal("expected mixed param and wildcard route to match")
 	}
@@ -180,7 +180,7 @@ func TestMatcher_WildcardCoverage(t *testing.T) {
 		t.Fatalf("expected path=images/logo.png, got %q", mixedMatch.Params["path"])
 	}
 
-	noMatch := m.Match("GET", "/api/v2")
+	noMatch := m.Lookup("GET", "/api/v2")
 	if noMatch != nil {
 		t.Fatal("expected missing tail to not match param+wildcard route")
 	}
@@ -244,7 +244,7 @@ func BenchmarkMatcherAddRoutesThenMatchWithQueryAndWildcard(b *testing.B) {
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					t := sampleTargets[i%len(sampleTargets)]
-					res := m.Match(t.method, t.path)
+					res := m.Lookup(t.method, t.path)
 					_ = res
 				}
 			})
@@ -259,7 +259,7 @@ func BenchmarkMatcherAddRoutesThenMatchWithQueryAndWildcard(b *testing.B) {
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					t := missTargets[i%len(missTargets)]
-					res := m.Match(t.method, t.path)
+					res := m.Lookup(t.method, t.path)
 					_ = res
 				}
 			})
@@ -310,7 +310,7 @@ func BenchmarkMatcherComplexRoutes(b *testing.B) {
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					t := sampleTargets[i%len(sampleTargets)]
-					res := m.Match(t.method, t.path)
+					res := m.Lookup(t.method, t.path)
 					_ = res
 				}
 			})
@@ -323,7 +323,7 @@ func BenchmarkMatcherComplexRoutes(b *testing.B) {
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					t := missTargets[i%len(missTargets)]
-					res := m.Match(t.method, t.path)
+					res := m.Lookup(t.method, t.path)
 					_ = res
 				}
 			})
