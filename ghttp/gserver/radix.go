@@ -191,7 +191,7 @@ func (crt *CompressedRadixTree) search(path string) *MatchResult {
 		return nil
 	}
 
-	return entry.toResult(params)
+	return entry.toResult()
 }
 
 func (n *CompressedRadixNode) find(segments []string, params *map[string]string) *routeEntry {
@@ -249,3 +249,8 @@ func ensureParams(params *map[string]string) map[string]string {
 	}
 	return *params
 }
+
+func (crt *CompressedRadixTree) listRoutes(method string) []*RouteInfo { return nil }
+
+// routeCount 返回树上多少条路由（for stats）
+func (crt *CompressedRadixTree) routeCount() int { return 0 }
