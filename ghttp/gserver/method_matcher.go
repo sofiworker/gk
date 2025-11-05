@@ -2,6 +2,7 @@ package gserver
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -52,6 +53,8 @@ func (mr *MethodMatcher) addRoute(path string, handler ...HandlerFunc) error {
 	mr.mu.Lock()
 	defer mr.mu.Unlock()
 
+	CheckPathValid(path)
+
 	entry := newRouteEntry(path, handler)
 	feature := mr.extractPathFeature(path)
 
@@ -79,45 +82,28 @@ func (mr *MethodMatcher) match(path string) *MatchResult {
 	mr.mu.RLock()
 	defer mr.mu.RUnlock()
 
-	info := extractPathInfo(path)
+	path = filepath.Clean(path)
 
 	// 静态匹配
-	if entry, ok := mr.staticGroup[info.purePath]; ok {
-		if info.hasQuery {
-			return entry.toResult(parseQueryParams(info.queryString))
+	if entry, ok := mr.staticGroup[path]; ok {
+		return &MatchResult{
+			Handlers: entry.handlers,
+			//Params:   entry.paramNames,
+			Path: path,
 		}
-		return entry.toResult(nil)
 	}
 
 	// 段数匹配（例如 /user/:id）
-	segments := splitPathSegments(info.purePath)
+	segments := splitPathSegments(path)
 	if entries, ok := mr.segmentIndex[len(segments)]; ok {
-		result := entries.search(info.purePath)
+		result := entries.search(path)
 		if result != nil {
-			if info.hasQuery {
-				queryParams := parseQueryParams(info.queryString)
-				for k, v := range queryParams {
-					result.Params[k] = v
-				}
-			} else {
-				return result
-			}
+			return result
 		}
 	}
 
 	// 最后走通配树匹配
-	result := mr.radixTree.search(info.purePath)
-	if result != nil {
-		if info.hasQuery {
-			queryParams := parseQueryParams(info.queryString)
-			for k, v := range queryParams {
-				result.Params[k] = v
-			}
-		} else {
-			return result
-		}
-	}
-	return nil
+	return mr.radixTree.search(path)
 }
 
 func (mr *MethodMatcher) removeRoute(path string) error {
@@ -142,76 +128,76 @@ func (mr *MethodMatcher) removeRoute(path string) error {
 	return entries.remove(path)
 }
 
-// 匹配分段路径并提取参数
-func matchSegments(entry *routeEntry, path string) map[string]string {
-	patternSegs := splitPathSegments(entry.path)
-	targetSegs := splitPathSegments(path)
+//// 匹配分段路径并提取参数
+//func matchSegments(entry *routeEntry, path string) map[string]string {
+//	patternSegs := splitPathSegments(entry.path)
+//	targetSegs := splitPathSegments(path)
+//
+//	if len(patternSegs) != len(targetSegs) {
+//		return nil
+//	}
+//
+//	var params map[string]string
+//	for i, segment := range patternSegs {
+//		if len(segment) == 0 {
+//			if targetSegs[i] != "" {
+//				return nil
+//			}
+//			continue
+//		}
+//
+//		if segment[0] == ':' {
+//			if params == nil {
+//				params = make(map[string]string)
+//			}
+//			params[segment[1:]] = targetSegs[i]
+//			continue
+//		}
+//
+//		if segment != targetSegs[i] {
+//			return nil
+//		}
+//	}
+//
+//	return params
+//}
+//
+//// 解析查询参数字符串为键值对映射
+//func parseQueryParams(queryStr string) map[string]string {
+//	params := make(map[string]string)
+//	if queryStr == "" {
+//		return params
+//	}
+//
+//	pairs := strings.Split(queryStr, "&")
+//	for _, pair := range pairs {
+//		if eqIdx := strings.IndexByte(pair, '='); eqIdx != -1 {
+//			key := pair[:eqIdx]
+//			value := pair[eqIdx+1:]
+//			params[key] = value
+//		} else {
+//			params[pair] = ""
+//		}
+//	}
+//	return params
+//}
+//
+//type pathInfo struct {
+//	purePath    string
+//	hasQuery    bool
+//	queryString string
+//}
 
-	if len(patternSegs) != len(targetSegs) {
-		return nil
-	}
-
-	var params map[string]string
-	for i, segment := range patternSegs {
-		if len(segment) == 0 {
-			if targetSegs[i] != "" {
-				return nil
-			}
-			continue
-		}
-
-		if segment[0] == ':' {
-			if params == nil {
-				params = make(map[string]string)
-			}
-			params[segment[1:]] = targetSegs[i]
-			continue
-		}
-
-		if segment != targetSegs[i] {
-			return nil
-		}
-	}
-
-	return params
-}
-
-// 解析查询参数字符串为键值对映射
-func parseQueryParams(queryStr string) map[string]string {
-	params := make(map[string]string)
-	if queryStr == "" {
-		return params
-	}
-
-	pairs := strings.Split(queryStr, "&")
-	for _, pair := range pairs {
-		if eqIdx := strings.IndexByte(pair, '='); eqIdx != -1 {
-			key := pair[:eqIdx]
-			value := pair[eqIdx+1:]
-			params[key] = value
-		} else {
-			params[pair] = ""
-		}
-	}
-	return params
-}
-
-type pathInfo struct {
-	purePath    string
-	hasQuery    bool
-	queryString string
-}
-
-func extractPathInfo(path string) pathInfo {
-	if idx := strings.IndexByte(path, '?'); idx != -1 {
-		return pathInfo{
-			purePath:    path[:idx],
-			hasQuery:    true,
-			queryString: path[idx+1:],
-		}
-	}
-	return pathInfo{
-		purePath: path,
-		hasQuery: false,
-	}
-}
+//func extractPathInfo(path string) pathInfo {
+//	if idx := strings.IndexByte(path, '?'); idx != -1 {
+//		return pathInfo{
+//			purePath:    path[:idx],
+//			hasQuery:    true,
+//			queryString: path[idx+1:],
+//		}
+//	}
+//	return pathInfo{
+//		purePath: path,
+//		hasQuery: false,
+//	}
+//}

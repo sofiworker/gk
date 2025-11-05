@@ -178,3 +178,11 @@ func (r *respWriter) Size() int {
 func (r *respWriter) Flush() {
 	// fasthttp 在每次请求结束时会自动写回，显式 Flush 为空实现即可
 }
+
+func (r *respWriter) Reset() {
+	r.ctx = nil
+	r.header = nil
+	r.wroteHeader = false
+	r.statusCode = 0
+	r.size = 0
+}

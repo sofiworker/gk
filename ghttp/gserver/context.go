@@ -35,8 +35,6 @@ func (*noCopy) Unlock() {}
 type Context struct {
 	noCopy noCopy
 
-	engine *Server
-
 	Request *http.Request
 	Writer  ResponseWriter
 
@@ -51,14 +49,6 @@ type Context struct {
 	fullPath   string
 	statusCode int
 	bodyBytes  []byte
-}
-
-func (c *Context) setEngine(engine *Server) {
-	c.engine = engine
-}
-
-func (c *Context) Engine() *Server {
-	return c.engine
 }
 
 func (c *Context) Reset() {
@@ -319,9 +309,6 @@ func (c *Context) bindWithCodec(contentType string, obj interface{}) error {
 }
 
 func (c *Context) codecManager() *codec.CodecManager {
-	if c.engine != nil && c.engine.codecManager != nil {
-		return c.engine.codecManager
-	}
 	return defaultCodecManager()
 }
 
