@@ -34,10 +34,10 @@ func WithTLSConfig(cfg *tls.Config) ServerOption {
 	}
 }
 
-func WithMatcher(m Matcher) ServerOption {
+func WithMatcher(m Match) ServerOption {
 	return func(s *Server) {
 		if m != nil {
-			s.matcher = m
+			s.Match = m
 		}
 	}
 }
@@ -71,11 +71,5 @@ func WithRequestConverter(converter RequestConverter) ServerOption {
 		if converter != nil {
 			s.convertFastRequestCtxFunc = converter
 		}
-	}
-}
-
-func WithPanicHandler(handler func(*Context, interface{})) ServerOption {
-	return func(s *Server) {
-		s.panicHandler = handler
 	}
 }
