@@ -1,75 +1,58 @@
 package gserver
 
-import (
-	"crypto/tls"
+type ServerOption func(config *Config)
 
-	"github.com/sofiworker/gk/ghttp/codec"
-	"github.com/valyala/fasthttp"
-)
-
-type ServerOption func(*Server)
-
-func WithAddress(addr string) ServerOption {
-	return func(s *Server) {
-		if addr != "" {
-			s.Addr = addr
-		}
-	}
-}
-
-func WithPort(port int) ServerOption {
-	return func(s *Server) {
-		if port > 0 {
-			s.Port = port
-		}
-	}
-}
-
-func WithTLSConfig(cfg *tls.Config) ServerOption {
-	return func(s *Server) {
-		s.TLSConfig = cfg
-		if s.server != nil {
-			s.server.TLSConfig = cfg
-		}
-	}
+type Config struct {
+	matcher                   Match
+	codec                     *CodecFactory
+	logger                    Logger
+	UseRawPath                bool
+	convertFastRequestCtxFunc RequestConverter
+	convertFailedHandler      RequestConverterFailedHandler
 }
 
 func WithMatcher(m Match) ServerOption {
-	return func(s *Server) {
+	return func(c *Config) {
 		if m != nil {
-			s.Match = m
+			c.matcher = m
 		}
 	}
 }
 
-func WithCodecManager(manager *codec.CodecManager) ServerOption {
-	return func(s *Server) {
-		if manager != nil {
-			s.codecManager = manager
+func WithCodec(codec *CodecFactory) ServerOption {
+	return func(c *Config) {
+		if codec != nil {
+			c.codec = codec
 		}
 	}
 }
 
 func WithLogger(logger Logger) ServerOption {
-	return func(s *Server) {
+	return func(c *Config) {
 		if logger != nil {
-			s.logger = logger
-		}
-	}
-}
-
-func WithFastHTTPServer(server *fasthttp.Server) ServerOption {
-	return func(s *Server) {
-		if server != nil {
-			s.server = server
+			c.logger = logger
 		}
 	}
 }
 
 func WithRequestConverter(converter RequestConverter) ServerOption {
-	return func(s *Server) {
+	return func(c *Config) {
 		if converter != nil {
-			s.convertFastRequestCtxFunc = converter
+			c.convertFastRequestCtxFunc = converter
 		}
+	}
+}
+
+func WithRequestConvertFailedHandler(handler RequestConverterFailedHandler) ServerOption {
+	return func(c *Config) {
+		if handler != nil {
+			c.convertFailedHandler = handler
+		}
+	}
+}
+
+func WithUseRawPath(use bool) ServerOption {
+	return func(c *Config) {
+		c.UseRawPath = use
 	}
 }

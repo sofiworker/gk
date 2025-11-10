@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sofiworker/gk/ghttp/codec"
+	"github.com/sofiworker/gk/gcodec"
 )
 
 var (
@@ -50,7 +50,7 @@ type Client struct {
 	cookieMu   sync.RWMutex
 	bufferPool *MultiSizeBufferPool
 
-	codecManager *codec.CodecManager
+	codec *gcodec.HTTPCodec
 
 	debug bool
 	mu    sync.RWMutex
@@ -65,7 +65,7 @@ func NewClient(opts ...ClientOption) *Client {
 		retryConfig:         cfg.RetryConfig,
 		logger:              newClientLogger(),
 		tracer:              &NoopTracer{},
-		codecManager:        codec.DefaultManager(),
+		codec:               gcodec.NewHTTPCodec(),
 		requestMiddlewares:  make([]RequestMiddleware, 0),
 		responseMiddlewares: make([]ResponseMiddleware, 0),
 	}
@@ -99,10 +99,6 @@ func (c *Client) init() {
 	}
 	if c.retryConfig == nil {
 		c.retryConfig = DefaultRetryConfig()
-	}
-
-	if c.codecManager == nil {
-		c.codecManager = codec.DefaultManager()
 	}
 
 	if c.tracer == nil {
@@ -268,15 +264,15 @@ func (c *Client) SetRetryConfig(cfg *RetryConfig) *Client {
 	return c
 }
 
-func (c *Client) RegisterCodec(cdc codec.Codec) *Client {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.codecManager == nil {
-		c.codecManager = codec.NewCodecManager()
-	}
-	c.codecManager.RegisterCodec(cdc)
-	return c
-}
+//func (c *Client) RegisterCodec(cdc gcodec.StreamCodec) *Client {
+//	c.mu.Lock()
+//	defer c.mu.Unlock()
+//	if c.codecManager == nil {
+//		c.codecManager = gcodec.NewCodecManager()
+//	}
+//	c.codecManager.RegisterCodec(cdc)
+//	return c
+//}
 
 func (c *Client) UseRequest(middlewares ...RequestMiddleware) {
 	c.mu.Lock()
@@ -664,10 +660,10 @@ func WithDefaultHeaders(headers http.Header) ClientOption {
 	}
 }
 
-func WithCodecManager(manager *codec.CodecManager) ClientOption {
+func WithCodecManager(manager gcodec.StreamCodec) ClientOption {
 	return func(c *Client) {
 		if manager != nil {
-			c.codecManager = manager
+			//c.codecManager = manager
 		}
 	}
 }

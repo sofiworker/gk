@@ -2,7 +2,6 @@ package gserver
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -82,14 +81,11 @@ func (mr *MethodMatcher) match(path string) *MatchResult {
 	mr.mu.RLock()
 	defer mr.mu.RUnlock()
 
-	path = filepath.Clean(path)
-
 	// 静态匹配
 	if entry, ok := mr.staticGroup[path]; ok {
 		return &MatchResult{
 			Handlers: entry.handlers,
-			//Params:   entry.paramNames,
-			Path: path,
+			Path:     path,
 		}
 	}
 
