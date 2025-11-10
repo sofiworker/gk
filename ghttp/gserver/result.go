@@ -45,7 +45,7 @@ func (r *JsonResult) Execute(c *Context) {
 	if code == 0 {
 		code = http.StatusOK
 	}
-	c.JSON(code, r.Data)
+	//c.JSON(code, r.Data)
 }
 
 func (r *StringResult) Execute(c *Context) {
@@ -56,7 +56,7 @@ func (r *StringResult) Execute(c *Context) {
 	if code == 0 {
 		code = http.StatusOK
 	}
-	c.String(code, r.Format, r.Data...)
+	//c.String(code, r.Format, r.Data...)
 }
 
 func (r *HtmlResult) Execute(c *Context) {
@@ -69,15 +69,15 @@ func (r *HtmlResult) Execute(c *Context) {
 	}
 	switch v := r.Data.(type) {
 	case string:
-		c.HTML(code, v)
+		//c.HTML(code, v)
 	case []byte:
-		c.Data(code, MIMEHTML+"; charset=utf-8", v)
+		//c.Data(code, MIMEHTML+"; charset=utf-8", v)
 	default:
 		content := r.Template
 		if content == "" && v != nil {
 			content = fmt.Sprint(v)
 		}
-		c.HTML(code, content)
+		//c.HTML(code, content)
 	}
 }
 
@@ -96,9 +96,9 @@ func (r *ErrorResult) Execute(c *Context) {
 	if msg == "" {
 		msg = http.StatusText(code)
 	}
-	c.AbortWithStatusJSON(code, map[string]interface{}{
-		"error": msg,
-	})
+	//c.AbortWithStatusJSON(code, map[string]interface{}{
+	//	"error": msg,
+	//})
 }
 
 func (r *RedirectResult) Execute(c *Context) {
@@ -109,7 +109,7 @@ func (r *RedirectResult) Execute(c *Context) {
 	if code == 0 {
 		code = http.StatusFound
 	}
-	c.Redirect(code, r.URL)
+	//c.Redirect(code, r.URL)
 }
 
 func (r *EmptyResult) Execute(c *Context) {
@@ -121,7 +121,7 @@ func (r *EmptyResult) Execute(c *Context) {
 		code = http.StatusNoContent
 	}
 	if c.Writer != nil && !c.Writer.Written() {
-		c.Status(code)
+		//c.Status(code)
 	}
 }
 

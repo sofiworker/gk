@@ -2,377 +2,238 @@ package glog
 
 import (
 	"context"
-	"fmt"
-	"io"
-	"os"
-	"sync"
-	"time"
 
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
-// zapLogger
 type zapLogger struct {
-	zapLogger *zap.Logger
-	config    *Config
-	fields    []zap.Field
-	mu        sync.RWMutex
+	l           *zap.Logger
+	atomicLevel zap.AtomicLevel
+	config      *Config
 }
 
-// NewLogger 创建新的Logger实例
-func NewLogger(config *Config) (Logger, error) {
+func newZapLogger(config *Config) (GLogger, error) {
 	writers, err := buildWriters(config)
 	if err != nil {
 		return nil, err
 	}
 
-	// 使用多个writer
-	var coreWriter io.Writer
-	if len(writers) == 1 {
-		coreWriter = writers[0]
-	} else {
-		coreWriter = io.MultiWriter(writers...)
+	syncers := make([]zapcore.WriteSyncer, 0, len(writers))
+	for _, writer := range writers {
+		syncers = append(syncers, zapcore.AddSync(writer))
+	}
+	writeSyncer := zapcore.NewMultiWriteSyncer(syncers...)
+
+	encoder := buildEncoder(config)
+	atomicLevel := zap.NewAtomicLevelAt(zapcore.Level(config.Level))
+
+	core := zapcore.NewCore(encoder, writeSyncer, atomicLevel)
+
+	options := buildOptions(config)
+	l := zap.New(core, options...)
+
+	configCopy := *config
+	if config.RotationConfig != nil {
+		rotationCopy := *config.RotationConfig
+		configCopy.RotationConfig = &rotationCopy
+	}
+	if config.InitialFields != nil {
+		fieldsCopy := make(map[string]interface{})
+		for k, v := range config.InitialFields {
+			fieldsCopy[k] = v
+		}
+		configCopy.InitialFields = fieldsCopy
+	}
+	if config.TimeFormat != "" {
+		configCopy.TimeFormat = config.TimeFormat
 	}
 
-	zapConfig := buildZapConfig(config)
-
-	core := zapcore.NewCore(
-		buildEncoder(config),
-		zapcore.AddSync(coreWriter),
-		zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
-			return lvl >= zapcore.Level(config.Level)
-		}),
-	)
-
-	options := buildOptions(zapConfig)
-	options = append(options, zap.AddCallerSkip(config.CallerSkip))
-	l := zap.New(core, options...)
-	zap.AddCallerSkip(config.CallerSkip)
-
 	return &zapLogger{
-		zapLogger: l,
-		config:    config,
+		l:           l,
+		atomicLevel: atomicLevel,
+		config:      &configCopy,
 	}, nil
 }
 
-func (l *zapLogger) WithCallerSkip(skip int) CoreLogger {
-	// 创建新的zap logger，添加调用者跳过选项
-	newZapLogger := l.zapLogger.WithOptions(zap.AddCallerSkip(skip))
-
-	// 返回新的logger实例
-	newLogger := *l
-	newLogger.zapLogger = newZapLogger
-	return &newLogger
+func (l *zapLogger) Config() *Config {
+	return l.config
 }
 
-func (l *zapLogger) Debug(msg string, fields ...Field) {
-	l.zapLogger.Debug(msg, l.convertFields(fields)...)
+func (l *zapLogger) SetLevel(level Level) {
+	l.atomicLevel.SetLevel(zapcore.Level(level))
+	l.config.Level = level
 }
 
-func (l *zapLogger) Info(msg string, fields ...Field) {
-	l.zapLogger.Info(msg, l.convertFields(fields)...)
-}
-
-func (l *zapLogger) Warn(msg string, fields ...Field) {
-	l.zapLogger.Warn(msg, l.convertFields(fields)...)
-}
-
-func (l *zapLogger) Error(msg string, fields ...Field) {
-	l.zapLogger.Error(msg, l.convertFields(fields)...)
-}
-
-func (l *zapLogger) DPanic(msg string, fields ...Field) {
-	l.zapLogger.DPanic(msg, l.convertFields(fields)...)
-}
-
-func (l *zapLogger) Panic(msg string, fields ...Field) {
-	l.zapLogger.Panic(msg, l.convertFields(fields)...)
-}
-
-func (l *zapLogger) Fatal(msg string, fields ...Field) {
-	l.zapLogger.Fatal(msg, l.convertFields(fields)...)
-}
-
-func (l *zapLogger) Debugw(msg string, keysAndValues ...interface{}) {
-	l.zapLogger.Sugar().Debugw(msg, keysAndValues...)
-}
-
-func (l *zapLogger) Infow(msg string, keysAndValues ...interface{}) {
-	l.zapLogger.Sugar().Infow(msg, keysAndValues...)
-}
-
-func (l *zapLogger) Warnw(msg string, keysAndValues ...interface{}) {
-	l.zapLogger.Sugar().Warnw(msg, keysAndValues...)
-}
-
-func (l *zapLogger) Errorw(msg string, keysAndValues ...interface{}) {
-	l.zapLogger.Sugar().Errorw(msg, keysAndValues...)
-}
-
-func (l *zapLogger) DPanicw(msg string, keysAndValues ...interface{}) {
-	l.zapLogger.Sugar().DPanicw(msg, keysAndValues...)
-}
-
-func (l *zapLogger) Panicw(msg string, keysAndValues ...interface{}) {
-	l.zapLogger.Sugar().Panicw(msg, keysAndValues...)
-}
-
-func (l *zapLogger) Fatalw(msg string, keysAndValues ...interface{}) {
-	l.zapLogger.Sugar().Fatalw(msg, keysAndValues...)
-}
-
-// Debugf 使用格式化字符串记录 debug 级别日志
-func (l *zapLogger) Debugf(format string, args ...interface{}) {
-	if l.zapLogger.Core().Enabled(zapcore.DebugLevel) {
-		l.zapLogger.Debug(fmt.Sprintf(format, args...))
+func (l *zapLogger) With(args ...interface{}) GLogger {
+	fields, err := l.argsToZapFields(args...)
+	if err != nil {
+		l.l.Warn("glog: failed to create structured logger with provided fields", zap.Error(err))
+		return &zapLogger{l: l.l, atomicLevel: l.atomicLevel, config: l.config}
 	}
+	return &zapLogger{l: l.l.With(fields...), atomicLevel: l.atomicLevel, config: l.config}
 }
 
-// Infof 使用格式化字符串记录 info 级别日志
-func (l *zapLogger) Infof(format string, args ...interface{}) {
-	if l.zapLogger.Core().Enabled(zapcore.InfoLevel) {
-		l.zapLogger.Info(fmt.Sprintf(format, args...))
+func (l *zapLogger) Debug(msg string, args ...interface{}) {
+	fields, err := l.argsToZapFields(args...)
+	if err != nil {
+		fields = append(fields, zap.Error(err))
 	}
+	l.l.Debug(msg, fields...)
 }
-
-// Warnf 使用格式化字符串记录 warn 级别日志
-func (l *zapLogger) Warnf(format string, args ...interface{}) {
-	if l.zapLogger.Core().Enabled(zapcore.WarnLevel) {
-		l.zapLogger.Warn(fmt.Sprintf(format, args...))
+func (l *zapLogger) Info(msg string, args ...interface{}) {
+	fields, err := l.argsToZapFields(args...)
+	if err != nil {
+		fields = append(fields, zap.Error(err))
 	}
+	l.l.Info(msg, fields...)
 }
-
-// Errorf 使用格式化字符串记录 error 级别日志
-func (l *zapLogger) Errorf(format string, args ...interface{}) {
-	if l.zapLogger.Core().Enabled(zapcore.ErrorLevel) {
-		l.zapLogger.Error(fmt.Sprintf(format, args...))
+func (l *zapLogger) Warn(msg string, args ...interface{}) {
+	fields, err := l.argsToZapFields(args...)
+	if err != nil {
+		fields = append(fields, zap.Error(err))
 	}
+	l.l.Warn(msg, fields...)
 }
-
-// DPanicf 使用格式化字符串记录 dpanic 级别日志
-func (l *zapLogger) DPanicf(format string, args ...interface{}) {
-	if l.zapLogger.Core().Enabled(zapcore.DPanicLevel) {
-		l.zapLogger.DPanic(fmt.Sprintf(format, args...))
+func (l *zapLogger) Error(msg string, args ...interface{}) {
+	fields, err := l.argsToZapFields(args...)
+	if err != nil {
+		fields = append(fields, zap.Error(err))
 	}
+	l.l.Error(msg, fields...)
 }
-
-// Panicf 使用格式化字符串记录 panic 级别日志
-func (l *zapLogger) Panicf(format string, args ...interface{}) {
-	if l.zapLogger.Core().Enabled(zapcore.PanicLevel) {
-		l.zapLogger.Panic(fmt.Sprintf(format, args...))
+func (l *zapLogger) Fatal(msg string, args ...interface{}) {
+	fields, err := l.argsToZapFields(args...)
+	if err != nil {
+		fields = append(fields, zap.Error(err))
 	}
+	l.l.Fatal(msg, fields...)
 }
 
-// Fatalf 使用格式化字符串记录 fatal 级别日志
-func (l *zapLogger) Fatalf(format string, args ...interface{}) {
-	if l.zapLogger.Core().Enabled(zapcore.FatalLevel) {
-		l.zapLogger.Fatal(fmt.Sprintf(format, args...))
+func (l *zapLogger) Debugf(format string, v ...interface{}) { l.l.Sugar().Debugf(format, v...) }
+func (l *zapLogger) Infof(format string, v ...interface{})  { l.l.Sugar().Infof(format, v...) }
+func (l *zapLogger) Warnf(format string, v ...interface{})  { l.l.Sugar().Warnf(format, v...) }
+func (l *zapLogger) Errorf(format string, v ...interface{}) { l.l.Sugar().Errorf(format, v...) }
+
+func (l *zapLogger) DebugContext(ctx context.Context, msg string, args ...interface{}) {
+	fields, err := l.argsToZapFields(args...)
+	if err != nil {
+		fields = append(fields, zap.Error(err))
 	}
-}
-
-func (l *zapLogger) DebugContext(ctx context.Context, msg string, fields ...Field) {
 	fields = append(fields, l.traceContextFields(ctx)...)
-	l.Debug(msg, fields...)
+	l.l.Debug(msg, fields...)
 }
-
-func (l *zapLogger) InfoContext(ctx context.Context, msg string, fields ...Field) {
+func (l *zapLogger) InfoContext(ctx context.Context, msg string, args ...interface{}) {
+	fields, err := l.argsToZapFields(args...)
+	if err != nil {
+		fields = append(fields, zap.Error(err))
+	}
 	fields = append(fields, l.traceContextFields(ctx)...)
-	l.Info(msg, fields...)
+	l.l.Info(msg, fields...)
 }
-
-func (l *zapLogger) WarnContext(ctx context.Context, msg string, fields ...Field) {
+func (l *zapLogger) WarnContext(ctx context.Context, msg string, args ...interface{}) {
+	fields, err := l.argsToZapFields(args...)
+	if err != nil {
+		fields = append(fields, zap.Error(err))
+	}
 	fields = append(fields, l.traceContextFields(ctx)...)
-	l.Warn(msg, fields...)
+	l.l.Warn(msg, fields...)
 }
-
-func (l *zapLogger) ErrorContext(ctx context.Context, msg string, fields ...Field) {
+func (l *zapLogger) ErrorContext(ctx context.Context, msg string, args ...interface{}) {
+	fields, err := l.argsToZapFields(args...)
+	if err != nil {
+		fields = append(fields, zap.Error(err))
+	}
 	fields = append(fields, l.traceContextFields(ctx)...)
-	l.Error(msg, fields...)
-}
-
-func (l *zapLogger) WithOptions(opts ...Option) CoreLogger {
-	return l
-}
-
-func (l *zapLogger) With(fields ...Field) CoreLogger {
-	newLogger := *l
-	newLogger.fields = append(newLogger.fields, l.convertFields(fields)...)
-	newLogger.zapLogger = l.zapLogger.With(l.convertFields(fields)...)
-	return &newLogger
+	l.l.Error(msg, fields...)
 }
 
 func (l *zapLogger) Sync() error {
-	return l.zapLogger.Sync()
+	return l.l.Sync()
 }
 
-func (l *zapLogger) SetLevel(lvl Level) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.config.Level = lvl
-	// 注意：实际应用中需要重新构建logger核心
-}
-
-func (l *zapLogger) GetLevel() Level {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	return l.config.Level
-}
-
-func (l *zapLogger) SetOutput(w io.Writer) {
-	// 简化实现，实际需要重建logger核心
-}
-
-func (l *zapLogger) AddOutput(w io.Writer) {
-	// 简化实现
-}
-
-func (l *zapLogger) Rotate() error {
-	// 如果使用lumberjack，则调用其Rotate方法
-	// 这里简化处理
-	return nil
-}
-
-// Clone 创建一个新的logger实例，不影响原logger
-func (l *zapLogger) Clone() Logger {
-	// 创建配置的深拷贝
-	configCopy := *l.config
-
-	// 构建writers
-	writers, err := buildWriters(&configCopy)
-	if err != nil {
-		// 如果构建失败，使用默认stdout
-		writers = []io.Writer{os.Stdout}
+func (l *zapLogger) argsToZapFields(args ...interface{}) ([]zap.Field, error) {
+	if len(args)%2 != 0 {
+		return nil, ErrInvalidKeyValuePairs
 	}
-
-	// 使用多个writer
-	var coreWriter io.Writer
-	if len(writers) == 1 {
-		coreWriter = writers[0]
-	} else {
-		coreWriter = io.MultiWriter(writers...)
+	fields := make([]zap.Field, 0, len(args)/2)
+	for i := 0; i < len(args); i += 2 {
+		key, ok := args[i].(string)
+		if !ok {
+			return nil, ErrKeyNotString
+		}
+		fields = append(fields, zap.Any(key, args[i+1]))
 	}
-
-	// 创建新的zap logger实例
-	zapConfig := buildZapConfig(&configCopy)
-	core := zapcore.NewCore(
-		buildEncoder(&configCopy),
-		zapcore.AddSync(coreWriter),
-		zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
-			return lvl >= zapcore.Level(configCopy.Level)
-		}),
-	)
-
-	newZapLogger := zap.New(core, buildOptions(zapConfig)...)
-	zap.AddCallerSkip(configCopy.CallerSkip)
-
-	return &zapLogger{
-		zapLogger: newZapLogger,
-		config:    &configCopy,
-		fields:    append([]zap.Field(nil), l.fields...), // 拷贝现有字段
-	}
+	return fields, nil
 }
 
-// Module 设置模块名称作为固定前缀
-func (l *zapLogger) Module(name string) CoreLogger {
-	moduleField := Field{Key: "module", Value: name}
-	return l.With(moduleField)
-}
-
-func (l *zapLogger) convertFields(fields []Field) []zap.Field {
-	zapFields := make([]zap.Field, len(fields))
-	for i, f := range fields {
-		zapFields[i] = zap.Any(f.Key, f.Value)
-	}
-	return zapFields
-}
-
-func (l *zapLogger) traceContextFields(ctx context.Context) []Field {
+func (l *zapLogger) traceContextFields(ctx context.Context) []zap.Field {
 	span := trace.SpanFromContext(ctx)
 	if !span.IsRecording() {
 		return nil
 	}
-
-	ctxFields := []Field{
-		{Key: "trace_id", Value: span.SpanContext().TraceID()},
-		{Key: "span_id", Value: span.SpanContext().SpanID()},
+	spanCtx := span.SpanContext()
+	if !spanCtx.IsValid() {
+		return nil
 	}
-
-	return ctxFields
-}
-
-func buildZapConfig(config *Config) zap.Config {
-	zapConfig := zap.NewProductionConfig()
-	if config.Development {
-		zapConfig = zap.NewDevelopmentConfig()
+	return []zap.Field{
+		zap.String("trace_id", spanCtx.TraceID().String()),
+		zap.String("span_id", spanCtx.SpanID().String()),
 	}
-
-	zapConfig.Level = zap.NewAtomicLevelAt(zapcore.Level(config.Level))
-	zapConfig.DisableCaller = config.DisableCaller
-	zapConfig.DisableStacktrace = config.DisableStacktrace
-	zapConfig.Encoding = string(config.Encoding)
-
-	if config.EncoderConfig.MessageKey != "" {
-		zapConfig.EncoderConfig.MessageKey = config.EncoderConfig.MessageKey
-	}
-	if config.EncoderConfig.LevelKey != "" {
-		zapConfig.EncoderConfig.LevelKey = config.EncoderConfig.LevelKey
-	}
-	return zapConfig
 }
 
 func buildEncoder(config *Config) zapcore.Encoder {
-	encoderConfig := zapcore.EncoderConfig{
-		TimeKey:        "time",
-		LevelKey:       "level",
-		NameKey:        "logger",
-		CallerKey:      "caller",
-		FunctionKey:    zapcore.OmitKey,
-		MessageKey:     "msg",
-		StacktraceKey:  "stack",
-		LineEnding:     zapcore.DefaultLineEnding,
-		EncodeLevel:    zapcore.LowercaseLevelEncoder,
-		EncodeTime:     zapcore.ISO8601TimeEncoder,
-		EncodeDuration: zapcore.SecondsDurationEncoder,
-		EncodeCaller:   zapcore.ShortCallerEncoder,
+	var zapEncoderConfig zapcore.EncoderConfig
+	if config.Development {
+		zapEncoderConfig = zap.NewDevelopmentEncoderConfig()
+	} else {
+		zapEncoderConfig = zap.NewProductionEncoderConfig()
 	}
-
+	if config.EncoderConfig.MessageKey != "" {
+		zapEncoderConfig.MessageKey = config.EncoderConfig.MessageKey
+	}
+	if config.EncoderConfig.LevelKey != "" {
+		zapEncoderConfig.LevelKey = config.EncoderConfig.LevelKey
+	}
+	if config.EncoderConfig.TimeKey != "" {
+		zapEncoderConfig.TimeKey = config.EncoderConfig.TimeKey
+	}
+	if config.EncoderConfig.CallerKey != "" {
+		zapEncoderConfig.CallerKey = config.EncoderConfig.CallerKey
+	}
+	if config.EncoderConfig.StacktraceKey != "" {
+		zapEncoderConfig.StacktraceKey = config.EncoderConfig.StacktraceKey
+	}
+	zapEncoderConfig.EncodeTime = zapcore.EpochMillisTimeEncoder
+	if config.TimeFormat != "" {
+		zapEncoderConfig.EncodeTime = zapcore.TimeEncoderOfLayout(config.TimeFormat)
+	}
 	if config.Encoding == JSONEncoding {
-		return zapcore.NewJSONEncoder(encoderConfig)
+		return zapcore.NewJSONEncoder(zapEncoderConfig)
 	}
-	return zapcore.NewConsoleEncoder(encoderConfig)
+	return zapcore.NewConsoleEncoder(zapEncoderConfig)
 }
 
-func buildOptions(zapConfig zap.Config) []zap.Option {
+func buildOptions(config *Config) []zap.Option {
 	var opts []zap.Option
-
-	if zapConfig.Development {
-		opts = append(opts, zap.Development())
-	}
-
-	if !zapConfig.DisableCaller {
+	opts = append(opts, zap.AddCallerSkip(1))
+	if !config.DisableCaller {
 		opts = append(opts, zap.AddCaller())
 	}
-
 	stackLevel := zap.ErrorLevel
-	if zapConfig.Development {
+	if config.Development {
 		stackLevel = zap.WarnLevel
 	}
-	if !zapConfig.DisableStacktrace {
-		opts = append(opts, zap.AddStacktrace(zapcore.Level(stackLevel)))
+	if !config.DisableStacktrace {
+		opts = append(opts, zap.AddStacktrace(stackLevel))
 	}
-
-	if zapConfig.Sampling != nil {
-		opts = append(opts, zap.WrapCore(func(core zapcore.Core) zapcore.Core {
-			return zapcore.NewSamplerWithOptions(
-				core,
-				time.Second,
-				zapConfig.Sampling.Initial,
-				zapConfig.Sampling.Thereafter,
-			)
-		}))
+	if len(config.InitialFields) > 0 {
+		fields := make([]zap.Field, 0, len(config.InitialFields))
+		for k, v := range config.InitialFields {
+			fields = append(fields, zap.Any(k, v))
+		}
+		opts = append(opts, zap.Fields(fields...))
 	}
-
 	return opts
 }

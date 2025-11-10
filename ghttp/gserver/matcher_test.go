@@ -57,7 +57,7 @@ func TestMatcher_StaticAndDynamicRoutes(t *testing.T) {
 	if r2.Path != "/users/:id" {
 		t.Fatalf("expected matched pattern /users/:id, got %s", r2.Path)
 	}
-	if v := r2.Params["id"]; v != "42" {
+	if v := r2.PathParams["id"]; v != "42" {
 		t.Fatalf("expected param id=42, got %v", v)
 	}
 
@@ -69,7 +69,7 @@ func TestMatcher_StaticAndDynamicRoutes(t *testing.T) {
 	if r3.Path != "/assets/*path" {
 		t.Fatalf("expected matched pattern /assets/*path, got %s", r3.Path)
 	}
-	if v := r3.Params["path"]; v != "img/logo.png" {
+	if v := r3.PathParams["path"]; v != "img/logo.png" {
 		t.Fatalf("expected param path=img/logo.png, got %v", v)
 	}
 
@@ -81,8 +81,8 @@ func TestMatcher_StaticAndDynamicRoutes(t *testing.T) {
 	if r4.Path != "/articles/:category/:id" {
 		t.Fatalf("expected matched pattern /articles/:category/:id, got %s", r4.Path)
 	}
-	if r4.Params["category"] != "tech" || r4.Params["id"] != "123" {
-		t.Fatalf("wrong params: %+v", r4.Params)
+	if r4.PathParams["category"] != "tech" || r4.PathParams["id"] != "123" {
+		t.Fatalf("wrong params: %+v", r4.PathParams)
 	}
 
 	// === 测试方法区分 ===
@@ -124,8 +124,8 @@ func TestMatcher_StaticPrecedenceOverParam(t *testing.T) {
 	if staticMatch.Path != "/files/static" {
 		t.Fatalf("expected static route pattern, got %s", staticMatch.Path)
 	}
-	if staticMatch.Params != nil && len(staticMatch.Params) > 0 {
-		t.Fatalf("expected no params for static route, got %+v", staticMatch.Params)
+	if staticMatch.PathParams != nil && len(staticMatch.PathParams) > 0 {
+		t.Fatalf("expected no params for static route, got %+v", staticMatch.PathParams)
 	}
 
 	paramMatch := m.Lookup("GET", "/files/readme")
@@ -135,8 +135,8 @@ func TestMatcher_StaticPrecedenceOverParam(t *testing.T) {
 	if paramMatch.Path != "/files/:name" {
 		t.Fatalf("expected param route pattern, got %s", paramMatch.Path)
 	}
-	if paramMatch.Params["name"] != "readme" {
-		t.Fatalf("expected name=readme, got %+v", paramMatch.Params)
+	if paramMatch.PathParams["name"] != "readme" {
+		t.Fatalf("expected name=readme, got %+v", paramMatch.PathParams)
 	}
 }
 
@@ -154,16 +154,16 @@ func TestMatcher_WildcardCoverage(t *testing.T) {
 	if baseMatch == nil {
 		t.Fatal("expected /download to match wildcard route")
 	}
-	if baseMatch.Params["file"] != "" {
-		t.Fatalf("expected empty wildcard capture, got %q", baseMatch.Params["file"])
+	if baseMatch.PathParams["file"] != "" {
+		t.Fatalf("expected empty wildcard capture, got %q", baseMatch.PathParams["file"])
 	}
 
 	nestedMatch := m.Lookup("GET", "/download/archives/file.zip")
 	if nestedMatch == nil {
 		t.Fatal("expected nested path to match wildcard route")
 	}
-	if nestedMatch.Params["file"] != "archives/file.zip" {
-		t.Fatalf("expected archives/file.zip, got %q", nestedMatch.Params["file"])
+	if nestedMatch.PathParams["file"] != "archives/file.zip" {
+		t.Fatalf("expected archives/file.zip, got %q", nestedMatch.PathParams["file"])
 	}
 
 	mixedMatch := m.Lookup("GET", "/api/v2/files/images/logo.png")
@@ -173,11 +173,11 @@ func TestMatcher_WildcardCoverage(t *testing.T) {
 	if mixedMatch.Path != "/api/:version/files/*path" {
 		t.Fatalf("expected /api/:version/files/*path pattern, got %s", mixedMatch.Path)
 	}
-	if mixedMatch.Params["version"] != "v2" {
-		t.Fatalf("expected version=v2, got %q", mixedMatch.Params["version"])
+	if mixedMatch.PathParams["version"] != "v2" {
+		t.Fatalf("expected version=v2, got %q", mixedMatch.PathParams["version"])
 	}
-	if mixedMatch.Params["path"] != "images/logo.png" {
-		t.Fatalf("expected path=images/logo.png, got %q", mixedMatch.Params["path"])
+	if mixedMatch.PathParams["path"] != "images/logo.png" {
+		t.Fatalf("expected path=images/logo.png, got %q", mixedMatch.PathParams["path"])
 	}
 
 	noMatch := m.Lookup("GET", "/api/v2")

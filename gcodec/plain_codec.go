@@ -1,37 +1,42 @@
-package codec
+package gcodec
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"reflect"
 )
 
 type PlainCodec struct{}
 
-var plainContentTypes = []string{
-	"text/plain",
-	"text/plain; charset=utf-8",
-}
-
 func NewPlainCodec() *PlainCodec {
 	return &PlainCodec{}
 }
 
-func (p *PlainCodec) Encode(v interface{}) ([]byte, error) {
+func (p *PlainCodec) Encode(w io.Writer, v interface{}) error {
+	var data []byte
 	switch val := v.(type) {
 	case []byte:
-		return val, nil
+		data = val
 	case string:
-		return []byte(val), nil
+		data = []byte(val)
 	case fmt.Stringer:
-		return []byte(val.String()), nil
+		data = []byte(val.String())
 	case error:
-		return []byte(val.Error()), nil
+		data = []byte(val.Error())
 	default:
-		return []byte(fmt.Sprint(v)), nil
+		data = []byte(fmt.Sprint(v))
 	}
+	_, err := w.Write(data)
+	return err
 }
 
-func (p *PlainCodec) Decode(data []byte, v interface{}) error {
+func (p *PlainCodec) Decode(r io.Reader, v interface{}) error {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+
 	switch out := v.(type) {
 	case *[]byte:
 		*out = append((*out)[:0], data...)
@@ -56,10 +61,14 @@ func (p *PlainCodec) Decode(data []byte, v interface{}) error {
 	return nil
 }
 
-func (p *PlainCodec) ContentType() string {
-	return plainContentTypes[0]
+func (p *PlainCodec) EncodeBytes(v interface{}) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := p.Encode(&buf, v); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
-func (p *PlainCodec) Supports(contentType string) bool {
-	return matchContentType(contentType, plainContentTypes)
+func (p *PlainCodec) DecodeBytes(data []byte, v interface{}) error {
+	return p.Decode(bytes.NewReader(data), v)
 }

@@ -7,9 +7,9 @@ import (
 )
 
 type MatchResult struct {
-	Path     string            `json:"path"`
-	Handlers []HandlerFunc     `json:"-"`
-	Params   map[string]string `json:"params"`
+	Path       string            `json:"path"`
+	Handlers   []HandlerFunc     `json:"-"`
+	PathParams map[string]string `json:"path_params"`
 }
 
 type MatcherStats struct {
@@ -70,9 +70,9 @@ func (r *routeEntry) toResult(params map[string]string) *MatchResult {
 		}
 	}
 	return &MatchResult{
-		Path:     r.path,
-		Handlers: r.handlers,
-		Params:   paramCopy,
+		Path:       r.path,
+		Handlers:   r.handlers,
+		PathParams: paramCopy,
 	}
 }
 

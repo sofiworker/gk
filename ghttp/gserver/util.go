@@ -3,6 +3,7 @@ package gserver
 import (
 	"bytes"
 	"net/http"
+	"net/url"
 	"path"
 
 	"github.com/valyala/fasthttp"
@@ -77,7 +78,7 @@ func CheckPathValid(path string) {
 func ResetRequest(req *http.Request) {
 	// 重置 http.Request 结构体字段
 	req.Method = ""
-	req.URL = nil
+	req.URL = &url.URL{}
 	req.Proto = ""
 	req.ProtoMajor = 0
 	req.ProtoMinor = 0
@@ -95,35 +96,46 @@ func ResetRequest(req *http.Request) {
 	req.MultipartForm = nil
 }
 
-func ConvertToHTTPRequest(ctx *fasthttp.RequestCtx) *http.Request {
+func ConvertToHTTPRequest(ctx *fasthttp.RequestCtx) (*http.Request, error) {
 	req := requestPool.Get().(*http.Request)
 
+	req.Proto = string(ctx.Request.Header.Protocol())
+	req.ProtoMajor, req.ProtoMinor, _ = ParseHTTPVersion(req.Proto)
+
 	req.Method = string(ctx.Method())
-	req.Proto = "HTTP/1.1"
-	req.ProtoMajor = 1
-	req.ProtoMinor = 1
+
 	req.RequestURI = string(ctx.RequestURI())
 	req.ContentLength = int64(ctx.Request.Header.ContentLength())
 	req.Host = string(ctx.Host())
 	req.RemoteAddr = ctx.RemoteAddr().String()
 
-	// URL
-	req.URL.Scheme = "http" // fasthttp 不直接支持 https，通常在代理后
-	if ctx.IsTLS() {
-		req.URL.Scheme = "https"
+	fullURI := string(ctx.Request.URI().FullURI())
+	u, err := url.Parse(fullURI)
+	if err != nil {
+		return nil, err
 	}
-	req.URL.Host = string(ctx.Host())
-	req.URL.Path = string(ctx.Path())
-	req.URL.RawQuery = string(ctx.URI().QueryString())
+	req.URL = u
 
-	// Body
 	br := bodyReaderPool.Get().(*bodyReader)
 	br.Reader = bytes.NewReader(ctx.Request.Body())
 	req.Body = br
 
-	ctx.Request.Header.VisitAll(func(key, value []byte) {
-		req.Header.Set(string(key), string(value))
+	ctx.Request.Header.All()(func(key, value []byte) bool {
+		req.Header.Add(string(key), string(value))
+		return true
 	})
 
-	return req
+	return req, nil
+}
+
+func ParseHTTPVersion(vers string) (major, minor int, ok bool) {
+	switch vers {
+	case "HTTP/1.1":
+		return 1, 1, true
+	case "HTTP/1.0":
+		return 1, 0, true
+	case "HTTP/2", "HTTP/2.0":
+		return 2, 0, true
+	}
+	return 0, 0, false
 }

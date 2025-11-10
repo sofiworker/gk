@@ -6,11 +6,12 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path"
 	"strconv"
 	"sync"
 	"time"
 
-	"github.com/sofiworker/gk/ghttp/codec"
+	"github.com/sofiworker/gk/glog"
 	"github.com/valyala/fasthttp"
 )
 
@@ -40,55 +41,52 @@ var (
 	}
 )
 
-type RequestConverter func(ctx *fasthttp.RequestCtx) *http.Request
+type RequestConverter func(ctx *fasthttp.RequestCtx) (*http.Request, error)
 type RequestConverterFailedHandler func(ctx *fasthttp.RequestCtx)
 
 type Server struct {
-	Addr string
-	Port int
-
+	Addr      string
+	Port      int
 	TLSConfig *tls.Config
 	server    *fasthttp.Server
 
+	*Config
+
 	IRouter
-
 	Match
-
-	logger Logger
-
-	convertFastRequestCtxFunc RequestConverter
-	convertFailedHandler      RequestConverterFailedHandler
-
-	codecManager *codec.CodecManager
 
 	started bool
 	mu      sync.RWMutex
 }
 
 func NewServer(opts ...ServerOption) *Server {
+	c := &Config{
+		matcher:                   newServerMatcher(),
+		codec:                     newCodecFactory(),
+		logger:                    glog.Default(),
+		convertFastRequestCtxFunc: ConvertToHTTPRequest,
+		convertFailedHandler: func(ctx *fasthttp.RequestCtx) {
+			ctx.SetStatusCode(http.StatusInternalServerError)
+		},
+	}
+	for _, opt := range opts {
+		opt(c)
+	}
+
 	r := &RouterGroup{
 		Handlers: nil,
 		path:     "/",
 		root:     true,
 	}
 	s := &Server{
-		IRouter:                   r,
-		Match:                     newServerMatcher(),
-		Addr:                      "0.0.0.0",
-		Port:                      8080,
-		TLSConfig:                 nil,
-		codecManager:              codec.DefaultManager(),
-		logger:                    newStdLogger(),
-		convertFastRequestCtxFunc: ConvertToHTTPRequest,
-		convertFailedHandler: func(ctx *fasthttp.RequestCtx) {
-			ctx.SetStatusCode(http.StatusInternalServerError)
-		},
+		IRouter:   r,
+		Match:     newServerMatcher(),
+		Addr:      "0.0.0.0",
+		Port:      8080,
+		TLSConfig: nil,
+		Config:    c,
 	}
 	r.engine = s
-
-	for _, opt := range opts {
-		opt(s)
-	}
 
 	if s.server == nil {
 		s.server = &fasthttp.Server{}
@@ -116,6 +114,8 @@ func (s *Server) Start() error {
 	s.server.TLSConfig = s.TLSConfig
 
 	addr := net.JoinHostPort(s.Addr, strconv.Itoa(s.Port))
+	s.logger.Infof("start http server %v", addr)
+
 	server := s.server
 	tlsCfg := s.TLSConfig
 	s.started = true
@@ -158,10 +158,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return server.ShutdownWithContext(shutdownCtx)
 }
 
-func (s *Server) Logger() Logger {
-	return s.logger
-}
-
 func (s *Server) Use(middleware ...HandlerFunc) IRouter {
 	s.IRouter.Use(middleware...)
 	return s.IRouter
@@ -175,15 +171,20 @@ func (s *Server) addRoute(method, path string, handlers ...HandlerFunc) {
 	if len(handlers) == 0 {
 		panic("there must be at least one handler")
 	}
+	s.logger.Infof("add route %s %s", method, path)
 	if err := s.AddRoute(method, path, handlers...); err != nil {
 		panic(err)
 	}
 }
 
 func (s *Server) FastHandler(ctx *fasthttp.RequestCtx) {
-	request := s.convertFastRequestCtxFunc(ctx)
+	request, err := s.convertFastRequestCtxFunc(ctx)
+	if err != nil {
+		s.logger.Errorf("failed to convert fasthttp request to http.Request, error is %v", err)
+		s.convertFailedHandler(ctx)
+		return
+	}
 	if request == nil {
-		s.logger.Errorf("failed to convert fasthttp request to http.Request")
 		s.convertFailedHandler(ctx)
 		return
 	}
@@ -213,20 +214,23 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ctxPool.Put(ctx)
 	}()
 
-	matchResult := s.Lookup(r.Method, r.URL.Path)
+	rPath := path.Clean(r.URL.Path)
+	if s.UseRawPath && len(r.URL.RawPath) > 0 {
+		rPath = r.URL.RawPath
+	}
+
+	matchResult := s.Lookup(r.Method, rPath)
 	if matchResult == nil {
 		s.handleNotFound(ctx)
 		return
 	}
 
-	ctx.SetFullPath(matchResult.Path)
-
 	if len(matchResult.Handlers) > 0 {
 		ctx.handlers = append(ctx.handlers, matchResult.Handlers...)
 	}
 
-	if len(matchResult.Params) > 0 {
-		for k, v := range matchResult.Params {
+	if len(matchResult.PathParams) > 0 {
+		for k, v := range matchResult.PathParams {
 			ctx.AddParam(k, v)
 		}
 	}

@@ -1,12 +1,16 @@
 package gserver
 
 import (
+	"fmt"
 	"testing"
 )
 
 func TestName(t *testing.T) {
 	server := NewServer()
-	noop := func(*Context) {}
+	noop := func(c *Context) {
+		fmt.Println(1)
+
+	}
 	server.GET("/", noop).GET("/ttttt", noop)
 	server.Start()
 }
@@ -51,14 +55,14 @@ func TestName(t *testing.T) {
 //			t.Fatalf("expected pattern %s, got %s", tc.wantPath, result.Path)
 //		}
 //		if len(tc.wantParams) == 0 {
-//			if len(result.Params) != 0 {
-//				t.Fatalf("expected no params for %s %s, got %+v", tc.method, tc.path, result.Params)
+//			if len(result.PathParams) != 0 {
+//				t.Fatalf("expected no params for %s %s, got %+v", tc.method, tc.path, result.PathParams)
 //			}
 //			continue
 //		}
 //		for k, v := range tc.wantParams {
-//			if result.Params[k] != v {
-//				t.Fatalf("expected param %s=%s, got %s", k, v, result.Params[k])
+//			if result.PathParams[k] != v {
+//				t.Fatalf("expected param %s=%s, got %s", k, v, result.PathParams[k])
 //			}
 //		}
 //	}
