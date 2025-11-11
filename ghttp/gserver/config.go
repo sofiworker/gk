@@ -3,12 +3,10 @@ package gserver
 type ServerOption func(config *Config)
 
 type Config struct {
-	matcher                   Match
-	codec                     *CodecFactory
-	logger                    Logger
-	UseRawPath                bool
-	convertFastRequestCtxFunc RequestConverter
-	convertFailedHandler      RequestConverterFailedHandler
+	matcher    Match
+	codec      *CodecFactory
+	logger     Logger
+	UseRawPath bool
 }
 
 func WithMatcher(m Match) ServerOption {
@@ -31,22 +29,6 @@ func WithLogger(logger Logger) ServerOption {
 	return func(c *Config) {
 		if logger != nil {
 			c.logger = logger
-		}
-	}
-}
-
-func WithRequestConverter(converter RequestConverter) ServerOption {
-	return func(c *Config) {
-		if converter != nil {
-			c.convertFastRequestCtxFunc = converter
-		}
-	}
-}
-
-func WithRequestConvertFailedHandler(handler RequestConverterFailedHandler) ServerOption {
-	return func(c *Config) {
-		if handler != nil {
-			c.convertFailedHandler = handler
 		}
 	}
 }
