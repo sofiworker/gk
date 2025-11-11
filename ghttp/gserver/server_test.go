@@ -2,6 +2,8 @@ package gserver
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -13,6 +15,17 @@ func TestName(t *testing.T) {
 	}
 	server.GET("/", noop).GET("/ttttt", noop)
 	server.Start()
+}
+
+func TestStd(t *testing.T) {
+	newServer := NewServer()
+	newServer.GET("", func(c *Context) {
+
+	})
+	err := http.ListenAndServe(":8080", newServer)
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 //func TestNew(t *testing.T) {
@@ -173,6 +186,33 @@ func TestName(t *testing.T) {
 //		t.Fatalf("expected body 'ok', got %q", body)
 //	}
 //}
+
+func TestServerServeHTTP_DefaultContentType(t *testing.T) {
+	server := NewServer()
+	var called bool
+	server.GET("/ping", func(c *Context) {
+		called = true
+		_, _ = c.Writer.Write([]byte("hello world"))
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	resp := httptest.NewRecorder()
+	server.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.Code)
+	}
+	if !called {
+		t.Fatal("expected handler to be executed")
+	}
+	if body := resp.Body.String(); body != "hello world" {
+		t.Fatalf("unexpected body %q", body)
+	}
+	if got := resp.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
+		t.Fatalf("expected default content type, got %q", got)
+	}
+}
+
 //
 //func TestServer(t *testing.T) {
 //	s := NewServer()

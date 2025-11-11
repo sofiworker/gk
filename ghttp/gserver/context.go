@@ -1,18 +1,10 @@
 package gserver
 
 import (
-	"net/http"
 	"net/url"
 	"sync"
-)
 
-const (
-	defaultMultipartMemory = 32 << 20 // 32MB
-	headerContentType      = "Content-Type"
-	headerXForwardedFor    = "X-Forwarded-For"
-	headerXRealIP          = "X-Real-IP"
-	headerCFConnectingIP   = "CF-Connecting-IP"
-	headerForwarded        = "Forwarded"
+	"github.com/valyala/fasthttp"
 )
 
 type noCopy struct{}
@@ -23,8 +15,9 @@ func (*noCopy) Unlock() {}
 type Context struct {
 	noCopy noCopy
 
-	Request *http.Request
-	Writer  ResponseWriter
+	Writer ResponseWriter
+
+	fastCtx *fasthttp.RequestCtx
 
 	pathMutex  sync.RWMutex
 	PathParams map[string]string
@@ -36,8 +29,9 @@ type Context struct {
 }
 
 func (c *Context) Reset() {
-	c.Request = nil
 	c.Writer = nil
+	c.fastCtx = nil
+
 	c.handlers = c.handlers[:0]
 	c.handlerIndex = -1
 	c.queryCache = nil
@@ -45,6 +39,8 @@ func (c *Context) Reset() {
 		for k := range c.PathParams {
 			delete(c.PathParams, k)
 		}
+	} else {
+		c.PathParams = make(map[string]string)
 	}
 }
 
@@ -86,4 +82,8 @@ func (c *Context) Params() map[string]string {
 	c.pathMutex.RLock()
 	defer c.pathMutex.RUnlock()
 	return c.PathParams
+}
+
+func (c *Context) FastContext() *fasthttp.RequestCtx {
+	return c.fastCtx
 }

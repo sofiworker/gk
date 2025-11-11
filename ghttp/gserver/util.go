@@ -1,12 +1,7 @@
 package gserver
 
 import (
-	"bytes"
-	"net/http"
-	"net/url"
 	"path"
-
-	"github.com/valyala/fasthttp"
 )
 
 func longestCommonPrefix(a, b string) int {
@@ -73,59 +68,6 @@ func CheckPathValid(path string) {
 			panic("'?' character is not allowed in path '" + path + "'")
 		}
 	}
-}
-
-func ResetRequest(req *http.Request) {
-	// 重置 http.Request 结构体字段
-	req.Method = ""
-	req.URL = &url.URL{}
-	req.Proto = ""
-	req.ProtoMajor = 0
-	req.ProtoMinor = 0
-	req.Header = make(http.Header)
-	req.Body = nil
-	req.ContentLength = 0
-	req.TransferEncoding = nil
-	req.Close = false
-	req.Trailer = nil
-	req.RemoteAddr = ""
-	req.RequestURI = ""
-	req.TLS = nil
-	req.Form = nil
-	req.PostForm = nil
-	req.MultipartForm = nil
-}
-
-func ConvertToHTTPRequest(ctx *fasthttp.RequestCtx) (*http.Request, error) {
-	req := requestPool.Get().(*http.Request)
-
-	req.Proto = string(ctx.Request.Header.Protocol())
-	req.ProtoMajor, req.ProtoMinor, _ = ParseHTTPVersion(req.Proto)
-
-	req.Method = string(ctx.Method())
-
-	req.RequestURI = string(ctx.RequestURI())
-	req.ContentLength = int64(ctx.Request.Header.ContentLength())
-	req.Host = string(ctx.Host())
-	req.RemoteAddr = ctx.RemoteAddr().String()
-
-	fullURI := string(ctx.Request.URI().FullURI())
-	u, err := url.Parse(fullURI)
-	if err != nil {
-		return nil, err
-	}
-	req.URL = u
-
-	br := bodyReaderPool.Get().(*bodyReader)
-	br.Reader = bytes.NewReader(ctx.Request.Body())
-	req.Body = br
-
-	ctx.Request.Header.All()(func(key, value []byte) bool {
-		req.Header.Add(string(key), string(value))
-		return true
-	})
-
-	return req, nil
 }
 
 func ParseHTTPVersion(vers string) (major, minor int, ok bool) {
