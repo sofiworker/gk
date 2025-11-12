@@ -11,10 +11,9 @@ func TestName(t *testing.T) {
 	server := NewServer()
 	noop := func(c *Context) {
 		fmt.Println(1)
-
 	}
 	server.GET("/", noop).GET("/ttttt", noop)
-	server.Start()
+	server.Run()
 }
 
 func TestStd(t *testing.T) {

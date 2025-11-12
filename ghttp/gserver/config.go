@@ -1,5 +1,7 @@
 package gserver
 
+import "time"
+
 type ServerOption func(config *Config)
 
 type Config struct {
@@ -7,6 +9,31 @@ type Config struct {
 	codec      *CodecFactory
 	logger     Logger
 	UseRawPath bool
+
+	// The fields below are all fasthttp, so we will expose them
+	Concurrency                   int
+	ReadBufferSize                int
+	WriteBufferSize               int
+	ReadTimeout                   time.Duration
+	WriteTimeout                  time.Duration
+	IdleTimeout                   time.Duration
+	MaxConnsPerIP                 int
+	MaxRequestsPerConn            int
+	MaxIdleWorkerDuration         time.Duration
+	TCPKeepalivePeriod            time.Duration
+	MaxRequestBodySize            int
+	DisableKeepalive              bool
+	TCPKeepalive                  bool
+	ReduceMemoryUsage             bool
+	GetOnly                       bool
+	DisablePreParseMultipartForm  bool
+	DisableHeaderNamesNormalizing bool
+	NoDefaultServerHeader         bool
+	NoDefaultDate                 bool
+	NoDefaultContentType          bool
+	KeepHijackedConns             bool
+	CloseOnShutdown               bool
+	StreamRequestBody             bool
 }
 
 func WithMatcher(m Match) ServerOption {
