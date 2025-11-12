@@ -2,15 +2,14 @@ package gserver
 
 import (
 	"context"
-	"crypto/tls"
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"path"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/sofiworker/gk/glog"
 	"github.com/valyala/fasthttp"
@@ -21,7 +20,7 @@ var (
 		New: func() interface{} {
 			return &Context{
 				handlerIndex: -1,
-				PathParams:   make(map[string]string),
+				pathParams:   make(map[string]string),
 			}
 		},
 	}
@@ -33,26 +32,22 @@ var (
 )
 
 type Server struct {
-	Addr      string
-	Port      int
-	TLSConfig *tls.Config
-	server    *fasthttp.Server
+	server *fasthttp.Server
 
 	*Config
 
 	IRouter
 	Match
-
-	started bool
-	mu      sync.RWMutex
 }
 
 func NewServer(opts ...ServerOption) *Server {
 	c := &Config{
-		matcher: newServerMatcher(),
-		codec:   newCodecFactory(),
-		logger:  glog.Default(),
+		matcher:    newServerMatcher(),
+		codec:      newCodecFactory(),
+		logger:     glog.Default(),
+		UseRawPath: false,
 	}
+
 	for _, opt := range opts {
 		opt(c)
 	}
@@ -63,83 +58,75 @@ func NewServer(opts ...ServerOption) *Server {
 		root:     true,
 	}
 	s := &Server{
-		IRouter:   r,
-		Match:     newServerMatcher(),
-		Addr:      "0.0.0.0",
-		Port:      8080,
-		TLSConfig: nil,
-		Config:    c,
+		IRouter: r,
+		Match:   newServerMatcher(),
+		Config:  c,
+		server: &fasthttp.Server{
+			Concurrency:                   c.Concurrency,
+			IdleTimeout:                   c.IdleTimeout,
+			MaxRequestBodySize:            c.MaxRequestBodySize,
+			MaxIdleWorkerDuration:         c.MaxIdleWorkerDuration,
+			MaxConnsPerIP:                 c.MaxConnsPerIP,
+			MaxRequestsPerConn:            c.MaxRequestsPerConn,
+			TCPKeepalive:                  c.TCPKeepalive,
+			TCPKeepalivePeriod:            c.TCPKeepalivePeriod,
+			DisableKeepalive:              c.DisableKeepalive,
+			DisableHeaderNamesNormalizing: c.DisableHeaderNamesNormalizing,
+			DisablePreParseMultipartForm:  c.DisablePreParseMultipartForm,
+			NoDefaultContentType:          c.NoDefaultContentType,
+			NoDefaultDate:                 c.NoDefaultDate,
+			NoDefaultServerHeader:         c.NoDefaultServerHeader,
+			ReduceMemoryUsage:             c.ReduceMemoryUsage,
+			StreamRequestBody:             c.StreamRequestBody,
+		},
 	}
 	r.engine = s
-
-	if s.server == nil {
-		s.server = &fasthttp.Server{}
-	}
 	s.server.Handler = s.FastHandler
-	s.server.TLSConfig = s.TLSConfig
 
 	return s
 }
 
-func (s *Server) Start() error {
-	s.mu.Lock()
-	if s.started {
-		s.mu.Unlock()
-		return nil
+func (s *Server) Run(addr ...string) error {
+	address := resolveAddress(addr)
+	ln, err := net.Listen("tcp", address)
+	if err != nil {
+		return err
 	}
-
-	if s.server == nil {
-		s.server = &fasthttp.Server{
-			Handler:   s.FastHandler,
-			TLSConfig: s.TLSConfig,
-		}
-	}
-	s.server.Handler = s.FastHandler
-	s.server.TLSConfig = s.TLSConfig
-
-	addr := net.JoinHostPort(s.Addr, strconv.Itoa(s.Port))
-	s.logger.Infof("start http server %v", addr)
-
-	server := s.server
-	tlsCfg := s.TLSConfig
-	s.started = true
-	s.mu.Unlock()
-
-	var err error
-	if tlsCfg != nil {
-		var ln net.Listener
-		ln, err = net.Listen("tcp", addr)
-		if err != nil {
-			s.mu.Lock()
-			s.started = false
-			s.mu.Unlock()
-			return err
-		}
-		err = server.Serve(tls.NewListener(ln, tlsCfg))
-	} else {
-		err = server.ListenAndServe(addr)
-	}
-
-	s.mu.Lock()
-	s.started = false
-	s.mu.Unlock()
-
-	return err
+	return s.RunListener(ln)
 }
 
-func (s *Server) Shutdown(ctx context.Context) error {
-	s.mu.RLock()
-	server := s.server
-	s.mu.RUnlock()
-	if server == nil {
-		return nil
+func (s *Server) RunTLS(addr, certFile, keyFile string) error {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
 	}
-	if ctx == nil {
-		ctx = context.Background()
+	return s.server.ServeTLS(ln, certFile, keyFile)
+}
+
+func (s *Server) RunListener(l net.Listener) error {
+	return s.server.Serve(l)
+}
+
+func (s *Server) Shutdown() error {
+	return s.server.Shutdown()
+}
+
+func (s *Server) ShutdownWithContext(ctx context.Context) error {
+	return s.server.ShutdownWithContext(ctx)
+}
+
+func resolveAddress(addr []string) string {
+	switch len(addr) {
+	case 0:
+		if port := os.Getenv("PORT"); port != "" {
+			return ":" + port
+		}
+		return ":8080"
+	case 1:
+		return addr[0]
+	default:
+		panic("too many parameters")
 	}
-	shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	return server.ShutdownWithContext(shutdownCtx)
 }
 
 func (s *Server) Use(middleware ...HandlerFunc) IRouter {
@@ -168,6 +155,7 @@ func (s *Server) FastHandler(ctx *fasthttp.RequestCtx) {
 	writer := respWriterPool.Get().(*respWriter)
 	writer.ctx = ctx
 	gctx.Writer = wrapResponseWriter(writer)
+	gctx.codec = s.codec
 
 	defer func() {
 		gctx.Reset()
@@ -316,12 +304,13 @@ func writeFastResponseToHTTP(w http.ResponseWriter, resp *fasthttp.Response) {
 	}
 
 	hasContentType := false
-	resp.Header.VisitAll(func(key, value []byte) {
+	resp.Header.All()(func(key, value []byte) bool {
 		k := string(key)
 		if !hasContentType && strings.EqualFold(k, fasthttp.HeaderContentType) {
 			hasContentType = true
 		}
 		header.Add(k, string(value))
+		return true
 	})
 
 	status := resp.StatusCode()
