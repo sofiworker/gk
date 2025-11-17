@@ -249,7 +249,10 @@ func (b *Builder) buildSelectSQL() (string, []interface{}, error) {
 	}
 
 	// WHERE
-	whereClause, whereArgs := b.buildWhereClause()
+	whereClause, whereArgs, err := b.buildWhereClause()
+	if err != nil {
+		return "", nil, err
+	}
 	if whereClause != "" {
 		sb.WriteString(" WHERE ")
 		sb.WriteString(whereClause)
@@ -339,7 +342,10 @@ func (b *Builder) buildUpdateSQL() (string, []interface{}, error) {
 	sb.WriteString(strings.Join(setClauses, ", "))
 
 	// WHERE
-	whereClause, whereArgs := b.buildWhereClause()
+	whereClause, whereArgs, err := b.buildWhereClause()
+	if err != nil {
+		return "", nil, err
+	}
 	if whereClause != "" {
 		sb.WriteString(" WHERE ")
 		sb.WriteString(whereClause)
@@ -358,7 +364,10 @@ func (b *Builder) buildDeleteSQL() (string, []interface{}, error) {
 	sb.WriteString(b.table)
 
 	// WHERE
-	whereClause, whereArgs := b.buildWhereClause()
+	whereClause, whereArgs, err := b.buildWhereClause()
+	if err != nil {
+		return "", nil, err
+	}
 	if whereClause != "" {
 		sb.WriteString(" WHERE ")
 		sb.WriteString(whereClause)
@@ -382,7 +391,10 @@ func (b *Builder) buildCountSQL() (string, []interface{}, error) {
 	}
 
 	// WHERE
-	whereClause, whereArgs := b.buildWhereClause()
+	whereClause, whereArgs, err := b.buildWhereClause()
+	if err != nil {
+		return "", nil, err
+	}
 	if whereClause != "" {
 		sb.WriteString(" WHERE ")
 		sb.WriteString(whereClause)
@@ -403,9 +415,9 @@ func (b *Builder) buildCountSQL() (string, []interface{}, error) {
 	return sb.String(), whereArgs, nil
 }
 
-func (b *Builder) buildWhereClause() (string, []interface{}) {
+func (b *Builder) buildWhereClause() (string, []interface{}, error) {
 	if len(b.where) == 0 {
-		return "", nil
+		return "", nil, nil
 	}
 
 	var finalArgs []interface{}
@@ -424,7 +436,17 @@ func (b *Builder) buildWhereClause() (string, []interface{}) {
 
 		newWherePart := wherePart
 		for _, arg := range partArgs {
-			if reflect.TypeOf(arg).Kind() == reflect.Slice {
+			if sub, ok := arg.(*Builder); ok {
+				subSQL, subArgs, err := sub.ToSQL()
+				if err != nil {
+					return "", nil, fmt.Errorf("gsql: failed to build subquery: %w", err)
+				}
+				newWherePart = strings.Replace(newWherePart, "?", "("+subSQL+")", 1)
+				finalArgs = append(finalArgs, subArgs...)
+				continue
+			}
+
+			if arg != nil && reflect.TypeOf(arg).Kind() == reflect.Slice {
 				s := reflect.ValueOf(arg)
 				if s.Len() == 0 {
 					newWherePart = strings.Replace(newWherePart, "?", "(NULL)", 1)
@@ -444,7 +466,7 @@ func (b *Builder) buildWhereClause() (string, []interface{}) {
 		finalWhere = append(finalWhere, newWherePart)
 	}
 
-	return strings.Join(finalWhere, " AND "), finalArgs
+	return strings.Join(finalWhere, " AND "), finalArgs, nil
 }
 
 func (b *Builder) extractColumnsAndValues() ([]string, []interface{}, error) {

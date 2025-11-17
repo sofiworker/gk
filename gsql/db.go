@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	DriverName = "gtrace"
+	DriverName = "gsql-driver"
 )
 
 // Executor 定义了执行 SQL 操作的接口，DB 和 Tx 都需要实现这个接口
@@ -61,13 +61,6 @@ func (db *DB) From(table string) *Builder {
 	return b.From(table)
 }
 
-func (db *DB) Migrate() *Migrate {
-	return &Migrate{
-		db: db,
-	}
-}
-
-// Executor interface implementation for DB
 func (db *DB) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
 	return db.DB.ExecContext(ctx, query, args...)
 }

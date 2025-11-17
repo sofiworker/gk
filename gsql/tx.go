@@ -12,7 +12,6 @@ type Tx struct {
 	db *DB
 }
 
-// Executor interface implementation for Tx
 func (tx *Tx) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
 	return tx.Tx.ExecContext(ctx, query, args...)
 }
