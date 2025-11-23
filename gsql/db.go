@@ -87,15 +87,23 @@ func WithTxReadOnly() TxOption {
 	}
 }
 
+// Tx begins a transaction
 func (db *DB) Tx(fn func(*Tx) error, opts ...TxOption) (err error) {
+	return db.TxContext(context.Background(), fn, opts...)
+}
+
+// TxContext begins a transaction with context
+func (db *DB) TxContext(ctx context.Context, fn func(*Tx) error, opts ...TxOption) (err error) {
 	var txOpts sql.TxOptions
 	for _, opt := range opts {
 		opt(&txOpts)
 	}
-	txx, err := db.DB.BeginTxx(context.Background(), &txOpts)
+
+	txx, err := db.DB.BeginTxx(ctx, &txOpts)
 	if err != nil {
 		return err
 	}
+
 	defer func() {
 		if p := recover(); p != nil {
 			_ = txx.Rollback()
@@ -110,7 +118,7 @@ func (db *DB) Tx(fn func(*Tx) error, opts ...TxOption) (err error) {
 		}
 	}()
 
-	tx := &Tx{txx, db}
+	tx := &Tx{txx, db, 0} // Level 0 indicates top-level transaction
 	err = fn(tx)
 	return err
 }

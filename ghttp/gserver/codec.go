@@ -16,7 +16,17 @@ type CodecFactory struct {
 }
 
 func newCodecFactory() *CodecFactory {
-	return &CodecFactory{}
+	cf := &CodecFactory{}
+
+	// Register default codecs for common content types
+	cf.Register("application/json", gcodec.NewJSONCodec())
+	cf.Register("application/xml", gcodec.NewXMLCodec())
+	cf.Register("text/xml", gcodec.NewXMLCodec())
+	cf.Register("application/x-yaml", gcodec.NewYAMLCodec())
+	cf.Register("application/yaml", gcodec.NewYAMLCodec())
+	cf.Register("text/yaml", gcodec.NewYAMLCodec())
+
+	return cf
 }
 
 func (c *CodecFactory) Get(name string) gcodec.Codec {

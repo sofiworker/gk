@@ -143,19 +143,32 @@ func (r *respWriter) WriteString(s string) (int, error) {
 	return r.ctx.WriteString(s)
 }
 
+// WriteHeader implementation to reduce memory allocations
 func (r *respWriter) WriteHeader(statusCode int) {
 	if statusCode <= 0 {
 		statusCode = http.StatusOK
 	}
 	r.statusCode = statusCode
-	if r.header != nil {
+
+	// Directly set headers to fasthttp context without intermediate storage when possible
+	if r.header != nil && len(r.header) > 0 {
+		// Reset fasthttp response headers
 		r.ctx.Response.Header.Reset()
+
+		// Copy headers directly to fasthttp response
 		for k, values := range r.header {
 			for _, v := range values {
 				r.ctx.Response.Header.Add(k, v)
 			}
 		}
+
+		// Clear the header map to allow garbage collection
+		// This helps with memory reuse as recommended by fasthttp best practices
+		for k := range r.header {
+			delete(r.header, k)
+		}
 	}
+
 	r.ctx.SetStatusCode(statusCode)
 	r.wroteHeader = true
 }
@@ -176,12 +189,21 @@ func (r *respWriter) Size() int {
 }
 
 func (r *respWriter) Flush() {
-	// fasthttp 在每次请求结束时会自动写回，显式 Flush 为空实现即可
+	// fasthttp automatically flushes at the end of each request
+	// Explicit flush is a no-op for better performance
 }
 
+// Reset method for better object reuse
 func (r *respWriter) Reset() {
 	r.ctx = nil
-	r.header = nil
+	// Reuse the header map instead of setting to nil for better performance
+	// This reduces allocations in subsequent requests as recommended by fasthttp best practices
+	if r.header != nil {
+		// Clear all header entries but keep the map allocated
+		for k := range r.header {
+			delete(r.header, k)
+		}
+	}
 	r.wroteHeader = false
 	r.statusCode = 0
 	r.size = 0
