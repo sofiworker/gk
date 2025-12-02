@@ -1,86 +1,59 @@
 package gsql
 
 import (
+	"context"
 	"database/sql"
+	"database/sql/driver"
+	"io"
 	"testing"
 
-	"github.com/go-sql-driver/mysql"
+	"github.com/stretchr/testify/require"
 )
 
-func TestOpen(t *testing.T) {
-	sql.Register(DriverName, WrapDriver(&mysql.MySQLDriver{}))
+type fakeDriver struct{}
 
-	dsn := "root:123456@tcp(192.168.191.135:3306)/testdb?charset=utf8mb4&parseTime=True&loc=Local"
-	db, err := Open(DriverName, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if err := db.Ping(); err != nil {
-		t.Fatal(err)
-	}
-	result, err := db.Exec("DROP TABLE IF EXISTS users")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Log(result.RowsAffected())
-	var userID int64
-	err = db.Get(&userID, `SELECT id FROM userss WHERE id = ?`, 1)
-	if err != nil && err != sql.ErrNoRows {
-		t.Fatal(err)
-	}
+func (fakeDriver) Open(string) (driver.Conn, error) { return &fakeConn{}, nil }
+
+type fakeConn struct{}
+
+func (c *fakeConn) Prepare(query string) (driver.Stmt, error) { return &fakeStmt{query: query}, nil }
+func (c *fakeConn) Close() error                              { return nil }
+func (c *fakeConn) Begin() (driver.Tx, error)                 { return &noopTx{}, nil }
+
+type fakeStmt struct {
+	query string
 }
 
-// TestTransaction 测试新的事务实现
-func TestTransaction(t *testing.T) {
-	sql.Register(DriverName, WrapDriver(&mysql.MySQLDriver{}))
+func (s *fakeStmt) Close() error  { return nil }
+func (s *fakeStmt) NumInput() int { return -1 }
+func (s *fakeStmt) Exec(args []driver.Value) (driver.Result, error) {
+	return driver.RowsAffected(1), nil
+}
+func (s *fakeStmt) Query(args []driver.Value) (driver.Rows, error) { return &fakeRows{}, nil }
 
-	dsn := "root:123456@tcp(192.168.191.135:3306)/testdb?charset=utf8mb4&parseTime=True&loc=Local"
-	db, err := Open(DriverName, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+type fakeRows struct{}
 
-	// 创建测试表
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS test_users (
-		id INT AUTO_INCREMENT PRIMARY KEY,
-		name VARCHAR(255) NOT NULL,
-		email VARCHAR(255) NOT NULL
-	)`)
-	if err != nil {
-		t.Fatal(err)
-	}
+func (r *fakeRows) Columns() []string              { return []string{"id"} }
+func (r *fakeRows) Close() error                   { return nil }
+func (r *fakeRows) Next(dest []driver.Value) error { return io.EOF }
 
-	// 测试事务操作
-	err = db.From("test_users").Tx(func(tx *Tx) error {
-		// 插入数据
-		_, err := tx.ExecContext(nil, "INSERT INTO test_users (name, email) VALUES (?, ?)", "Alice", "alice@example.com")
-		if err != nil {
-			return err
-		}
+func TestWrapDriverWithOptionsLogsOperations(t *testing.T) {
+	driverName := t.Name()
+	logger := &recordingLogger{}
+	sql.Register(driverName, WrapDriverWithOptions(&fakeDriver{}, func(cfg *driverConfig) {
+		cfg.logger = logger
+	}))
 
-		// 更新数据
-		_, err = tx.ExecContext(nil, "UPDATE test_users SET email = ? WHERE name = ?", "alice.new@example.com", "Alice")
-		if err != nil {
-			return err
-		}
+	db, err := Open(driverName, "")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
 
-		return nil
-	})
+	require.NoError(t, db.Tx(func(tx *Tx) error {
+		_, err := tx.ExecContext(context.Background(), "INSERT INTO demo(id) VALUES (?)", 1)
+		return err
+	}))
 
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// 验证数据是否正确更新
-	var email string
-	err = db.Get(&email, "SELECT email FROM test_users WHERE name = ?", "Alice")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if email != "alice.new@example.com" {
-		t.Fatalf("Expected email to be alice.new@example.com, got %s", email)
-	}
+	require.NotEmpty(t, logger.messages)
+	require.Contains(t, logger.messages[0], "BEGIN")
+	require.Contains(t, logger.messages[len(logger.messages)-1], "COMMIT")
 }

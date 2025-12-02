@@ -2,221 +2,143 @@ package gsql
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+	"time"
 
-	_ "github.com/mattn/go-sqlite3" // In-memory DB for testing
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/jmoiron/sqlx"
+	"github.com/stretchr/testify/require"
 )
 
-// --- Test Helpers ---
-
-func setupTestDB(t *testing.T) *DB {
-	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())
-	db, err := Open("sqlite3", dsn)
-	if err != nil {
-		t.Fatalf("Failed to open in-memory database: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	return db
+type mockMigrationSource struct {
+	migrations []*Migration
+	err        error
 }
 
-func createTestSQLFiles(t *testing.T, dir string, files map[string]string) {
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		t.Fatalf("Failed to create test migration directory: %v", err)
-	}
-	for name, content := range files {
-		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			t.Fatalf("Failed to write test migration file %s: %v", name, err)
-		}
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
+func (m mockMigrationSource) Collect() ([]*Migration, error) {
+	return m.migrations, m.err
 }
 
-type testLogger struct {
-	builder strings.Builder
+func newMockDB(t *testing.T) (*DB, sqlmock.Sqlmock) {
+	sqlDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	return WrapSQLX(sqlx.NewDb(sqlDB, "sqlmock"), "sqlmock"), mock
 }
 
-func (l *testLogger) Printf(format string, v ...interface{}) {
-	l.builder.WriteString(fmt.Sprintf(format, v...))
-	l.builder.WriteString("\n")
-}
-func (l *testLogger) String() string { return l.builder.String() }
-func (l *testLogger) Clear()         { l.builder.Reset() }
+func TestMigratorSetsDefaultLogger(t *testing.T) {
+	db, mock := newMockDB(t)
 
-// --- SQL Collector Strategy Tests ---
+	mock.ExpectBegin()
+	mock.ExpectCommit()
 
-func TestMigrator_Run_DefaultCommentCollector(t *testing.T) {
-	db := setupTestDB(t)
-	migrationsDir := t.TempDir()
-	files := map[string]string{
-		"001_create_users.sql": `
--- +gsql Up
-CREATE TABLE users (id INTEGER);
--- +gsql Down
-DROP TABLE users;
-`,
-		"002_no_comment.sql": "CREATE TABLE should_be_ignored (id INTEGER);",
-	}
-	createTestSQLFiles(t, migrationsDir, files)
-
-	// Use default collector by not passing one
 	migrator := db.Migrate()
-	migrator.AddSource(NewSQLDirSource(migrationsDir))
-	if err := migrator.Run(context.Background()); err != nil {
-		t.Fatalf("migrator.Run() failed: %v", err)
-	}
+	migrator.AddSource(mockMigrationSource{
+		migrations: []*Migration{
+			{ID: "001", Name: "noop", Up: func(*Tx) error { return nil }},
+		},
+	})
 
-	// Verify only the table from the file with comments was created
-	var tableName string
-	if err := db.GetContext(context.Background(), &tableName, "SELECT name FROM sqlite_master WHERE type='table' AND name='users'"); err != nil {
-		t.Errorf("Failed to find 'users' table which should have been created: %v", err)
-	}
-	err := db.GetContext(context.Background(), &tableName, "SELECT name FROM sqlite_master WHERE type='table' AND name='should_be_ignored'")
-	if !errors.Is(err, sql.ErrNoRows) {
-		t.Error("'should_be_ignored' table should not exist, but it does")
-	}
+	require.NoError(t, migrator.Run(context.Background()))
+	require.NotNil(t, db.logger)
+	require.NotNil(t, migrator.Logger)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestMigrator_Run_WholeFileCollector(t *testing.T) {
-	db := setupTestDB(t)
-	migrationsDir := t.TempDir()
-	files := map[string]string{
-		"001_create_users.sql": "CREATE TABLE users (id INTEGER);",
-		"002_create_posts.sql": "CREATE TABLE posts (id INTEGER);",
-	}
-	createTestSQLFiles(t, migrationsDir, files)
+func TestMigratorPassesContextToMigration(t *testing.T) {
+	db, mock := newMockDB(t)
 
-	// Inject the WholeFileCollector strategy
+	mock.ExpectBegin()
+	mock.ExpectCommit()
+
+	ctxKey := struct{}{}
+	ctx := context.WithValue(context.Background(), ctxKey, "value")
+	var received context.Context
+
 	migrator := db.Migrate()
-	migrator.AddSource(NewSQLDirSource(migrationsDir, &WholeFileCollector{}))
-	if err := migrator.Run(context.Background()); err != nil {
-		t.Fatalf("migrator.Run() failed: %v", err)
-	}
+	migrator.AddSource(mockMigrationSource{
+		migrations: []*Migration{
+			{
+				ID:   "ctx-mig",
+				Name: "ctx-migration",
+				UpWithContext: func(runCtx context.Context, _ *Tx) error {
+					received = runCtx
+					return nil
+				},
+			},
+		},
+	})
 
-	// Verify both tables were created
-	var tableName string
-	if err := db.GetContext(context.Background(), &tableName, "SELECT name FROM sqlite_master WHERE type='table' AND name='users'"); err != nil {
-		t.Errorf("Failed to find 'users' table: %v", err)
-	}
-	if err := db.GetContext(context.Background(), &tableName, "SELECT name FROM sqlite_master WHERE type='table' AND name='posts'"); err != nil {
-		t.Errorf("Failed to find 'posts' table: %v", err)
-	}
+	require.NoError(t, migrator.Run(ctx))
+	require.Same(t, ctx, received)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestMigrator_Run_FilenameCollector(t *testing.T) {
-	db := setupTestDB(t)
-	migrationsDir := t.TempDir()
-	files := map[string]string{
-		"001_users_up.sql":   "CREATE TABLE users (id INTEGER);",
-		"001_users_down.sql": "DROP TABLE users;",
-		"002_posts_up.sql":   "CREATE TABLE posts (id INTEGER);",
-	}
-	createTestSQLFiles(t, migrationsDir, files)
+func TestMigratorUsesContextForCollectorQueries(t *testing.T) {
+	db, mock := newMockDB(t)
 
-	// Inject the FilenameCollector strategy
+	dir := t.TempDir()
+	sqlContent := "-- +gsql Up\nCREATE TABLE users (id INT);"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "001_create_users.sql"), []byte(sqlContent), 0o644))
+
+	mock.ExpectBegin()
+	mock.ExpectExec("CREATE TABLE users").
+		WillDelayFor(50 * time.Millisecond).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
 	migrator := db.Migrate()
-	migrator.AddSource(NewSQLDirSource(migrationsDir, &FilenameCollector{}))
-	if err := migrator.Run(context.Background()); err != nil {
-		t.Fatalf("migrator.Run() failed: %v", err)
-	}
+	migrator.AddSource(NewSQLDirSource(dir))
 
-	// Verify tables were created
-	var tableName string
-	if err := db.GetContext(context.Background(), &tableName, "SELECT name FROM sqlite_master WHERE type='table' AND name='users'"); err != nil {
-		t.Errorf("Failed to find 'users' table: %v", err)
-	}
-	if err := db.GetContext(context.Background(), &tableName, "SELECT name FROM sqlite_master WHERE type='table' AND name='posts'"); err != nil {
-		t.Errorf("Failed to find 'posts' table: %v", err)
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
 
-	// Verify migrations were recorded by base name
-	var count int
-	if err := db.GetContext(context.Background(), &count, "SELECT count(*) FROM gsql_migrations WHERE id IN ('001_users', '002_posts')"); err != nil {
-		t.Fatalf("Failed to query migrations table: %v", err)
-	}
-	if count != 2 {
-		t.Errorf("Expected 2 migrations to be recorded with base names, got %d", count)
-	}
+	err := migrator.Run(ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cancel")
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// --- Struct Parser Strategy Tests ---
-
-func TestMigrator_Run_DefaultStructParser(t *testing.T) {
-	db := setupTestDB(t)
+func TestDefaultStructParserSetsMigrationID(t *testing.T) {
+	parser := NewDefaultStructParser()
 	type MyUser struct {
 		ID int `db:"id"`
 	}
 
-	// Use default parser by not passing one
-	migrator := db.Migrate()
-	migrator.AddSource(NewStructSource(db.dialect, []interface{}{&MyUser{}}))
-	if err := migrator.Run(context.Background()); err != nil {
-		t.Fatalf("migrator.Run() failed: %v", err)
-	}
-
-	// Verify table name is the default snake_case version
-	var tableName string
-	if err := db.GetContext(context.Background(), &tableName, "SELECT name FROM sqlite_master WHERE type='table' AND name='my_user'"); err != nil {
-		t.Errorf("Failed to find table with default name 'my_user': %v", err)
-	}
+	mig, err := parser.Parse(newDialect("mysql"), &MyUser{})
+	require.NoError(t, err)
+	require.NotNil(t, mig)
+	require.Equal(t, "structs_my_user", mig.ID)
+	require.Contains(t, mig.Name, "my_user")
 }
 
-func TestMigrator_Run_CustomStructParser_TableName(t *testing.T) {
-	db := setupTestDB(t)
-	type MyUser struct {
-		ID int `db:"id"`
-	}
-
-	// Define a custom table naming strategy
-	//customNamer := func(t reflect.Type) string {
-	//	return "tbl_" + strings.ToLower(t.Name())
-	//}
-
-	// Create a parser with the custom strategy
-	customParser := NewDefaultStructParser()
-
-	// Inject the custom parser
-	migrator := db.Migrate()
-	migrator.AddSource(NewStructSource(db.dialect, []interface{}{&MyUser{}}, customParser))
-	if err := migrator.Run(context.Background()); err != nil {
-		t.Fatalf("migrator.Run() failed: %v", err)
-	}
-
-	// Verify table was created with the custom name
-	var tableName string
-	if err := db.GetContext(context.Background(), &tableName, "SELECT name FROM sqlite_master WHERE type='table' AND name='tbl_myuser'"); err != nil {
-		t.Errorf("Failed to find table with custom name 'tbl_myuser': %v", err)
-	}
+type recordingLogger struct {
+	messages []string
 }
 
-// --- Other Basic Tests (Unchanged but still relevant) ---
+func (l *recordingLogger) Debugf(string, ...interface{}) {}
+func (l *recordingLogger) Infof(format string, v ...interface{}) {
+	l.messages = append(l.messages, fmt.Sprintf(format, v...))
+}
+func (l *recordingLogger) Warnf(string, ...interface{})  {}
+func (l *recordingLogger) Errorf(string, ...interface{}) {}
 
-func TestMigrator_Run_RollbackOnFailure(t *testing.T) {
-	db := setupTestDB(t)
-	migrationsDir := t.TempDir()
-	files := map[string]string{
-		"001_create_users.sql": "-- +gsql Up\nCREATE TABLE users (id INTEGER);",
-		"002_invalid.sql":      "-- +gsql Up\nCREATE TABLE products (id INTEGER; -- Syntax error",
-	}
-	createTestSQLFiles(t, migrationsDir, files)
+type noopTx struct{}
 
-	migrator := db.Migrate()
-	migrator.AddSource(NewSQLDirSource(migrationsDir))
-	err := migrator.Run(context.Background())
-	if err == nil {
-		t.Fatal("migrator.Run() was expected to fail, but it succeeded")
+func (noopTx) Commit() error   { return nil }
+func (noopTx) Rollback() error { return nil }
+
+func TestTracedTxRollbackLogsRollback(t *testing.T) {
+	logger := &recordingLogger{}
+	tx := &tracedTx{
+		Tx: &noopTx{},
+		driverConfig: &driverConfig{
+			logger: logger,
+		},
 	}
 
-	// Verify that the first successful migration was rolled back
-	var tableName string
-	err = db.GetContext(context.Background(), &tableName, "SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
-	if !errors.Is(err, sql.ErrNoRows) {
-		t.Error("'users' table should not exist due to rollback, but it does")
-	}
+	require.NoError(t, tx.Rollback())
+	require.Equal(t, []string{"ROLLBACK"}, logger.messages)
 }

@@ -73,11 +73,13 @@ func (p *DefaultStructParser) Parse(dialect Dialect, structs ...interface{}) (*M
 		}
 		tableName := toSnakeCase(t.Name())
 		tableNames[t] = tableName
+		structNames = append(structNames, tableName)
 		if t.Implements(reflect.TypeOf((*TableName)(nil)).Elem()) {
 			if name, ok := str.(TableName); ok {
 				tableName = name.TableName()
 			}
 			tableNames[t] = tableName
+			structNames[len(structNames)-1] = tableName
 		}
 	}
 
@@ -121,24 +123,34 @@ func (p *DefaultStructParser) Parse(dialect Dialect, structs ...interface{}) (*M
 	sort.Sort(sort.Reverse(sort.StringSlice(downSQLs)))
 	upSQLs := append(tableSQLs, indexSQLs...)
 
-	return &Migration{
-		ID:   fmt.Sprintf("structs_%s", strings.ToLower(strings.Join(structNames, "_"))),
-		Name: fmt.Sprintf("Create tables from structs: %s", strings.Join(structNames, ", ")),
-		Up: func(tx *Tx) error {
-			for _, sql := range upSQLs {
-				if _, err := tx.ExecContext(context.Background(), sql); err != nil {
-					return fmt.Errorf("failed to execute struct migration SQL: '%s', error: %w", sql, err)
-				}
+	upWithContext := func(ctx context.Context, tx *Tx) error {
+		for _, sql := range upSQLs {
+			if _, err := tx.ExecContext(ctx, sql); err != nil {
+				return fmt.Errorf("failed to execute struct migration SQL: '%s', error: %w", sql, err)
 			}
-			return nil
+		}
+		return nil
+	}
+
+	downWithContext := func(ctx context.Context, tx *Tx) error {
+		for _, sql := range downSQLs {
+			if _, err := tx.ExecContext(ctx, sql); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	return &Migration{
+		ID:              fmt.Sprintf("structs_%s", strings.ToLower(strings.Join(structNames, "_"))),
+		Name:            fmt.Sprintf("Create tables from structs: %s", strings.Join(structNames, ", ")),
+		UpWithContext:   upWithContext,
+		DownWithContext: downWithContext,
+		Up: func(tx *Tx) error {
+			return upWithContext(context.Background(), tx)
 		},
 		Down: func(tx *Tx) error {
-			for _, sql := range downSQLs {
-				if _, err := tx.ExecContext(context.Background(), sql); err != nil {
-					return err
-				}
-			}
-			return nil
+			return downWithContext(context.Background(), tx)
 		},
 	}, nil
 }
@@ -241,12 +253,20 @@ func (c *CommentCollector) Collect(dir string) ([]*Migration, error) {
 		migration := &Migration{
 			ID:   d.Name(),
 			Name: strings.TrimSuffix(d.Name(), ".sql"),
+			UpWithContext: func(ctx context.Context, tx *Tx) error {
+				_, err := tx.ExecContext(ctx, upSQL)
+				return err
+			},
 			Up: func(tx *Tx) error {
 				_, err := tx.ExecContext(context.Background(), upSQL)
 				return err
 			},
 		}
 		if downSQL != "" {
+			migration.DownWithContext = func(ctx context.Context, tx *Tx) error {
+				_, err := tx.ExecContext(ctx, downSQL)
+				return err
+			}
 			migration.Down = func(tx *Tx) error {
 				_, err := tx.ExecContext(context.Background(), downSQL)
 				return err
@@ -277,13 +297,15 @@ func (c *WholeFileCollector) Collect(dir string) ([]*Migration, error) {
 		if strings.TrimSpace(upSQL) == "" {
 			return nil
 		}
+		upWithContext := func(ctx context.Context, tx *Tx) error {
+			_, err := tx.ExecContext(ctx, upSQL)
+			return err
+		}
 		migrations = append(migrations, &Migration{
-			ID:   d.Name(),
-			Name: strings.TrimSuffix(d.Name(), ".sql"),
-			Up: func(tx *Tx) error {
-				_, err := tx.ExecContext(context.Background(), upSQL)
-				return err
-			},
+			ID:            d.Name(),
+			Name:          strings.TrimSuffix(d.Name(), ".sql"),
+			UpWithContext: upWithContext,
+			Up:            func(tx *Tx) error { return upWithContext(context.Background(), tx) },
 		})
 		return nil
 	})
@@ -335,13 +357,15 @@ func (c *FilenameCollector) Collect(dir string) ([]*Migration, error) {
 			return nil, err
 		}
 		upSQL := string(upContent)
+		upWithContext := func(ctx context.Context, tx *Tx) error {
+			_, err := tx.ExecContext(ctx, upSQL)
+			return err
+		}
 		mig := &Migration{
-			ID:   base,
-			Name: base,
-			Up: func(tx *Tx) error {
-				_, err := tx.ExecContext(context.Background(), upSQL)
-				return err
-			},
+			ID:            base,
+			Name:          base,
+			UpWithContext: upWithContext,
+			Up:            func(tx *Tx) error { return upWithContext(context.Background(), tx) },
 		}
 		if p.downFile != "" {
 			downContent, err := os.ReadFile(p.downFile)
@@ -349,6 +373,10 @@ func (c *FilenameCollector) Collect(dir string) ([]*Migration, error) {
 				return nil, err
 			}
 			downSQL := string(downContent)
+			mig.DownWithContext = func(ctx context.Context, tx *Tx) error {
+				_, err := tx.ExecContext(ctx, downSQL)
+				return err
+			}
 			mig.Down = func(tx *Tx) error {
 				_, err := tx.ExecContext(context.Background(), downSQL)
 				return err

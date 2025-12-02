@@ -46,18 +46,42 @@ func (hc *HTTPCodec) GetCodec(contentType string) (Codec, bool) {
 }
 
 func (hc *HTTPCodec) Encode(w io.Writer, v interface{}) error {
+	if codec, ok := hc.GetCodec("application/json"); ok {
+		return codec.Encode(w, v)
+	}
+	if codec := hc.firstCodec(); codec != nil {
+		return codec.Encode(w, v)
+	}
 	return nil
 }
 
 func (hc *HTTPCodec) Decode(r io.Reader, v interface{}) error {
+	if codec, ok := hc.GetCodec("application/json"); ok {
+		return codec.Decode(r, v)
+	}
+	if codec := hc.firstCodec(); codec != nil {
+		return codec.Decode(r, v)
+	}
 	return nil
+}
+
+func (hc *HTTPCodec) firstCodec() Codec {
+	var first Codec
+	hc.codecs.Range(func(_, value interface{}) bool {
+		if codec, ok := value.(Codec); ok {
+			first = codec
+			return false
+		}
+		return true
+	})
+	return first
 }
 
 // normalizeContentType standardizes a content type string.
 // It converts to lowercase and removes any parameters (e.g., ; charset=utf-8).
 func normalizeContentType(ct string) string {
 	ct = strings.TrimSpace(strings.ToLower(ct))
-	if idx := strings.Index(ct, ";"); idx >= 0 {
+	if idx := strings.IndexAny(ct, ";,"); idx >= 0 {
 		ct = ct[:idx]
 	}
 	return ct

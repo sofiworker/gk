@@ -4,8 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/jmoiron/sqlx"
 )
 
 // mockExecutor is a mock implementation of the Executor interface for testing.
@@ -251,5 +255,39 @@ func TestBuilder_UnsafeUpdate(t *testing.T) {
 	expectedErr := "gsql: unsafe update without where clause"
 	if err.Error() != expectedErr {
 		t.Errorf("Expected error '%s', got '%s'", expectedErr, err.Error())
+	}
+}
+
+func TestBuilderTxContextNestedSavepoint(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create sqlmock: %v", err)
+	}
+	defer sqlDB.Close()
+
+	db := WrapSQLX(sqlx.NewDb(sqlDB, "mysql"), "mysql")
+	ctx := context.Background()
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SAVEPOINT gsql_sp_1")).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO users (id) VALUES (?)")).
+		WithArgs(1).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(regexp.QuoteMeta("RELEASE SAVEPOINT gsql_sp_1")).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+
+	err = db.TxContext(ctx, func(tx *Tx) error {
+		builder := tx.Builder().Insert("users", map[string]interface{}{"id": 1})
+		return builder.TxContext(ctx, func(nested *Tx) error {
+			_, execErr := nested.ExecContext(ctx, "INSERT INTO users (id) VALUES (?)", 1)
+			return execErr
+		})
+	})
+	if err != nil {
+		t.Fatalf("TxContext failed: %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("Unmet expectations: %v", err)
 	}
 }

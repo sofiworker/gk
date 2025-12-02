@@ -2,6 +2,7 @@ package gserver
 
 import (
 	"errors"
+	"strings"
 	"sync"
 
 	"github.com/sofiworker/gk/gcodec"
@@ -9,6 +10,7 @@ import (
 
 var (
 	ErrAlreadyRegistered = errors.New("codec already registered")
+	ErrInvalidCodec      = errors.New("codec is nil")
 )
 
 type CodecFactory struct {
@@ -30,16 +32,29 @@ func newCodecFactory() *CodecFactory {
 }
 
 func (c *CodecFactory) Get(name string) gcodec.Codec {
-	if v, ok := c.codecs.Load(name); ok {
+	key := normalizeContentType(name)
+	if v, ok := c.codecs.Load(key); ok {
 		return v.(gcodec.Codec)
 	}
 	return nil
 }
 
 func (c *CodecFactory) Register(name string, codec gcodec.Codec) error {
-	if _, ok := c.codecs.Load(name); ok {
+	if codec == nil {
+		return ErrInvalidCodec
+	}
+	key := normalizeContentType(name)
+	if _, ok := c.codecs.Load(key); ok {
 		return ErrAlreadyRegistered
 	}
-	c.codecs.Store(name, codec)
+	c.codecs.Store(key, codec)
 	return nil
+}
+
+func normalizeContentType(ct string) string {
+	ct = strings.TrimSpace(strings.ToLower(ct))
+	if idx := strings.IndexAny(ct, ";,"); idx >= 0 {
+		ct = ct[:idx]
+	}
+	return ct
 }

@@ -93,7 +93,7 @@ func (t *tracedTx) Commit() error {
 }
 
 func (t *tracedTx) Rollback() error {
-	t.logger.Infof("COMMIT")
+	t.logger.Infof("ROLLBACK")
 	return t.Tx.Rollback()
 }
 

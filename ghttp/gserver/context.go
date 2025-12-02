@@ -29,6 +29,7 @@ type Context struct {
 	pathParams map[string]string
 
 	queryCache url.Values
+	logger     Logger
 
 	valueCtx context.Context
 
@@ -46,6 +47,7 @@ func (c *Context) Reset() {
 	c.handlerIndex = -1
 	c.queryCache = nil
 	c.valueCtx = context.Background()
+	c.logger = nil
 
 	// Optimize pathParams reset for better performance
 	// Instead of recreating the map, clear it to reduce allocations
@@ -85,6 +87,10 @@ func (c *Context) AddParam(k, v string) {
 	c.pathMutex.Lock()
 	defer c.pathMutex.Unlock()
 	c.pathParams[k] = v
+}
+
+func (c *Context) Logger() Logger {
+	return c.logger
 }
 
 func (c *Context) Param(key string) string {

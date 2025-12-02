@@ -146,7 +146,7 @@ func (b *Builder) TxContext(ctx context.Context, fn func(tx *Tx) error, opts ...
 
 	// 如果 executor 是 *Tx 类型，直接使用该事务的嵌套事务功能
 	if tx, ok := b.executor.(*Tx); ok {
-		return tx.NestedTx(fn, opts...)
+		return tx.NestedTxContext(ctx, fn, opts...)
 	}
 
 	return fmt.Errorf("unsupported executor type")

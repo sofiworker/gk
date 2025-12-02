@@ -30,7 +30,11 @@ type Migration struct {
 	ID   string
 	Name string
 	Up   func(tx *Tx) error
-	Down func(tx *Tx) error
+	// UpWithContext 优先于 Up，被 Migrator.Run 调用以透传外部上下文。
+	UpWithContext func(ctx context.Context, tx *Tx) error
+	Down          func(tx *Tx) error
+	// DownWithContext 为 Down 的上下文版本，保留接口完整性。
+	DownWithContext func(ctx context.Context, tx *Tx) error
 }
 
 type MigrateOptions struct {
@@ -60,7 +64,7 @@ type Migrator struct {
 func (db *DB) Migrate(opts ...MigrateOption) *Migrator {
 	options := MigrateOptions{
 		RecordTableName: RecordTableName,
-		Logger:          db.logger,
+		Logger:          db.ensureLogger(),
 	}
 	for _, opt := range opts {
 		opt(&options)
@@ -88,7 +92,7 @@ func (m *Migrator) Run(ctx context.Context) (err error) {
 		return allMigrations[i].ID < allMigrations[j].ID
 	})
 
-	return m.db.Tx(func(tx *Tx) error {
+	return m.db.TxContext(ctx, func(tx *Tx) error {
 		if err := m.Recorder.Init(ctx, tx); err != nil {
 			return fmt.Errorf("failed to initialize recorder: %w", err)
 		}
@@ -103,7 +107,16 @@ func (m *Migrator) Run(ctx context.Context) (err error) {
 			}
 			pendingCount++
 			m.Logger.Infof("Applying migration '%s'...", mig.Name)
-			if err := mig.Up(tx); err != nil {
+			runUp := mig.Up
+			if mig.UpWithContext != nil {
+				runUp = func(_tx *Tx) error {
+					return mig.UpWithContext(ctx, _tx)
+				}
+			}
+			if runUp == nil {
+				return fmt.Errorf("migration '%s' has no up function", mig.Name)
+			}
+			if err := runUp(tx); err != nil {
 				return fmt.Errorf("failed to apply migration '%s': %w", mig.Name, err)
 			}
 			if err := m.Recorder.Record(ctx, tx, mig.ID); err != nil {

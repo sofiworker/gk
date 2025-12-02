@@ -34,11 +34,23 @@ func (m *mockMatcher) Match(method, path string) *MatchResult {
 	return nil
 }
 
+func (m *mockMatcher) Lookup(method, path string) *MatchResult {
+	return m.Match(method, path)
+}
+
+func (m *mockMatcher) RemoveRoute(method, path string) error {
+	delete(m.routes, method+"-"+path)
+	return nil
+}
+
+func (m *mockMatcher) Stats() *MatcherStats {
+	return &MatcherStats{RoutesCount: len(m.routes)}
+}
+
 // Helper to create a new server with a mock matcher for testing.
 func newTestServer() (*Server, *mockMatcher) {
 	m := newMockMatcher()
-	opts := []ServerOption{}
-	s := NewServer(opts...)
+	s := NewServer(WithMatcher(m))
 	return s, m
 }
 

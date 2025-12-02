@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sofiworker/gk/gcodec"
+	"github.com/sofiworker/gk/ghttp/codec"
 )
 
 var (
@@ -46,11 +46,10 @@ type Client struct {
 
 	defaultHeaders http.Header
 
-	cookies    []*http.Cookie
-	cookieMu   sync.RWMutex
-	bufferPool *MultiSizeBufferPool
-
-	codec *gcodec.HTTPCodec
+	cookies      []*http.Cookie
+	cookieMu     sync.RWMutex
+	bufferPool   *MultiSizeBufferPool
+	codecManager *codec.Manager
 
 	debug bool
 	mu    sync.RWMutex
@@ -65,9 +64,9 @@ func NewClient(opts ...ClientOption) *Client {
 		retryConfig:         cfg.RetryConfig,
 		logger:              newClientLogger(),
 		tracer:              &NoopTracer{},
-		codec:               gcodec.NewHTTPCodec(),
 		requestMiddlewares:  make([]RequestMiddleware, 0),
 		responseMiddlewares: make([]ResponseMiddleware, 0),
+		codecManager:        codec.DefaultManager().Clone(),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -107,6 +106,10 @@ func (c *Client) init() {
 
 	if c.bufferPool == nil {
 		c.bufferPool = NewMultiSizeBufferPool()
+	}
+
+	if c.codecManager == nil {
+		c.codecManager = codec.DefaultManager().Clone()
 	}
 
 	if c.executor == nil {
@@ -264,15 +267,16 @@ func (c *Client) SetRetryConfig(cfg *RetryConfig) *Client {
 	return c
 }
 
-//func (c *Client) RegisterCodec(cdc gcodec.StreamCodec) *Client {
-//	c.mu.Lock()
-//	defer c.mu.Unlock()
-//	if c.codecManager == nil {
-//		c.codecManager = gcodec.NewCodecManager()
-//	}
-//	c.codecManager.RegisterCodec(cdc)
-//	return c
-//}
+// RegisterCodec 注册自定义内容类型的编解码器。
+func (c *Client) RegisterCodec(contentType string, cd codec.Codec) *Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.codecManager == nil {
+		c.codecManager = codec.DefaultManager().Clone()
+	}
+	c.codecManager.Register(contentType, cd)
+	return c
+}
 
 func (c *Client) UseRequest(middlewares ...RequestMiddleware) {
 	c.mu.Lock()
@@ -387,6 +391,8 @@ func (c *Client) execute(r *Request) (*Response, error) {
 				if !c.shouldRetry(resp, lastErr, attempt, time.Since(start)) {
 					return resp, lastErr
 				}
+			} else if c.shouldRetry(resp, nil, attempt, time.Since(start)) {
+				// continue retry loop
 			} else {
 				break
 			}
@@ -660,10 +666,10 @@ func WithDefaultHeaders(headers http.Header) ClientOption {
 	}
 }
 
-func WithCodecManager(manager gcodec.StreamCodec) ClientOption {
+func WithCodecManager(manager *codec.Manager) ClientOption {
 	return func(c *Client) {
 		if manager != nil {
-			//c.codecManager = manager
+			c.codecManager = manager
 		}
 	}
 }
