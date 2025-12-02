@@ -1,59 +1,161 @@
 package gsql
 
 import (
+	"context"
+	"errors"
+	"regexp"
 	"testing"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/jmoiron/sqlx"
+	"github.com/stretchr/testify/require"
 )
 
-func TestNestedTransactions(t *testing.T) {
-	// This is a basic test to demonstrate the nested transaction functionality
-	// In a real scenario, you would use a test database
-
-	// Since we can't easily test without a real database, we'll just verify the API compiles
-	_ = &Tx{}
-	_ = &DB{}
+func newTxMockDB(t *testing.T, opts ...DBOption) (*DB, sqlmock.Sqlmock) {
+	sqlDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db := WrapSQLX(sqlx.NewDb(sqlDB, "sqlmock"), "sqlmock", opts...)
+	return db, mock
 }
 
-// ExampleNestedTransaction demonstrates how to use nested transactions
-func ExampleNestedTransaction() {
-	// This is a conceptual example showing how nested transactions would be used:
-	// In practice, you would have a real database connection
-	/*
-		db := &DB{} // In practice, this would be a real database connection
+func TestNestedTxUsesSavepoint(t *testing.T) {
+	db, mock := newTxMockDB(t, WithDBNestedStrategy(NestedSavepoint))
+	ctx := context.Background()
 
-		err := db.Tx(func(tx *Tx) error {
-			// First level transaction
-			_, err := tx.ExecContext(context.Background(), "INSERT INTO users (name) VALUES (?)", "Alice")
-			if err != nil {
-				return err
-			}
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SAVEPOINT gsql_sp_1")).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO users").
+		WithArgs(1).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(regexp.QuoteMeta("RELEASE SAVEPOINT gsql_sp_1")).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
 
-			// Nested transaction
-			err = tx.NestedTx(func(nestedTx *Tx) error {
-				// Second level transaction (shares the same underlying sql.Tx)
-				_, err := nestedTx.ExecContext(context.Background(), "INSERT INTO orders (user_id, amount) VALUES (?, ?)", 1, 100)
-				if err != nil {
-					return err // This would cause the nested transaction to fail but not commit
-				}
-
-				// Another nested transaction
-				err = nestedTx.NestedTx(func(nestedTx2 *Tx) error {
-					// Third level transaction
-					_, err := nestedTx2.ExecContext(context.Background(), "INSERT INTO order_items (order_id, product) VALUES (?, ?)", 1, "Product A")
-					return err
-				})
-
-				return err
-			})
-
-			if err != nil {
-				return err // This would rollback the first level transaction
-			}
-
-			return nil // This would commit the transaction
+	err := db.TxContext(ctx, func(tx *Tx) error {
+		return tx.NestedTxContext(ctx, func(nested *Tx) error {
+			_, err := nested.ExecContext(ctx, "INSERT INTO users(id) VALUES (?)", 1)
+			return err
 		})
+	})
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
 
-		if err != nil {
-			// Handle error
-		}
-	*/
+func TestNestedTxRollbackToSavepoint(t *testing.T) {
+	db, mock := newTxMockDB(t, WithDBNestedStrategy(NestedSavepoint))
+	ctx := context.Background()
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SAVEPOINT gsql_sp_1")).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO users").
+		WithArgs(1).
+		WillReturnError(errors.New("boom"))
+	mock.ExpectExec(regexp.QuoteMeta("ROLLBACK TO SAVEPOINT gsql_sp_1")).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+
+	err := db.TxContext(ctx, func(tx *Tx) error {
+		return tx.NestedTxContext(ctx, func(nested *Tx) error {
+			_, err := nested.ExecContext(ctx, "INSERT INTO users(id) VALUES (?)", 1)
+			return err
+		})
+	})
+	require.Error(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestNestedTxWithoutSavepointFallsBack(t *testing.T) {
+	db, mock := newTxMockDB(t, WithDBNestedStrategy(NestedReuse))
+	ctx := context.Background()
+
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO users").
+		WithArgs(1).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	err := db.TxContext(ctx, func(tx *Tx) error {
+		return tx.NestedTxContext(ctx, func(nested *Tx) error {
+			_, err := nested.ExecContext(ctx, "INSERT INTO users(id) VALUES (?)", 1)
+			return err
+		})
+	})
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestNestedTxDisabled(t *testing.T) {
+	db, mock := newTxMockDB(t, WithDBNestedStrategy(NestedError))
+	ctx := context.Background()
+
+	mock.ExpectBegin()
+	mock.ExpectRollback()
+
+	err := db.TxContext(ctx, func(tx *Tx) error {
+		return tx.NestedTxContext(ctx, func(*Tx) error {
+			return nil
+		})
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "nested transaction is disabled")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestNestedCommitNotAllowed(t *testing.T) {
+	db, mock := newTxMockDB(t, WithDBNestedStrategy(NestedReuse))
+	ctx := context.Background()
+
+	mock.ExpectBegin()
+	mock.ExpectRollback()
+
+	err := db.TxContext(ctx, func(tx *Tx) error {
+		return tx.NestedTxContext(ctx, func(nested *Tx) error {
+			return nested.Commit()
+		})
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cannot commit nested transaction")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestNestedDialectUsesSavepointWhenSupported(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db := WrapSQLX(sqlx.NewDb(sqlDB, "postgres"), "postgres", WithDBNestedStrategy(NestedDialect))
+	ctx := context.Background()
+
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SAVEPOINT gsql_sp_1")).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO users").
+		WithArgs(1).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(regexp.QuoteMeta("RELEASE SAVEPOINT gsql_sp_1")).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+
+	err = db.TxContext(ctx, func(tx *Tx) error {
+		return tx.NestedTxContext(ctx, func(nested *Tx) error {
+			_, e := nested.ExecContext(ctx, "INSERT INTO users(id) VALUES (?)", 1)
+			return e
+		})
+	})
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestNestedDialectErrorsWhenUnsupported(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	db := WrapSQLX(sqlx.NewDb(sqlDB, "generic"), "generic", WithDBNestedStrategy(NestedDialect))
+	ctx := context.Background()
+
+	mock.ExpectBegin()
+	mock.ExpectRollback()
+
+	err = db.TxContext(ctx, func(tx *Tx) error {
+		return tx.NestedTxContext(ctx, func(*Tx) error { return nil })
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "nested transaction is disabled")
+	require.NoError(t, mock.ExpectationsWereMet())
 }

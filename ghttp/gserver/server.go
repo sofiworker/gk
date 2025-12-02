@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"strconv"
@@ -52,6 +53,11 @@ func NewServer(opts ...ServerOption) *Server {
 		opt(c)
 	}
 
+	matcher := c.matcher
+	if matcher == nil {
+		matcher = newServerMatcher()
+	}
+
 	r := &RouterGroup{
 		Handlers: nil,
 		path:     "/",
@@ -59,7 +65,7 @@ func NewServer(opts ...ServerOption) *Server {
 	}
 	s := &Server{
 		IRouter: r,
-		Match:   newServerMatcher(),
+		Match:   matcher,
 		Config:  c,
 		server: &fasthttp.Server{
 			Concurrency:                   c.Concurrency,
@@ -134,6 +140,27 @@ func (s *Server) Use(middleware ...HandlerFunc) IRouter {
 	return s.IRouter
 }
 
+func (s *Server) Static(relativePath, root string) IRouter {
+	if root == "" {
+		panic("static root cannot be empty")
+	}
+	return s.StaticFS(relativePath, http.Dir(root))
+}
+
+func (s *Server) StaticFS(relativePath string, fs http.FileSystem) IRouter {
+	CheckPathValid(relativePath)
+	if fs == nil {
+		panic("filesystem is nil")
+	}
+
+	handler := s.createStaticHandler(fs)
+	absolutePath := JoinPaths(relativePath, "/*filepath")
+
+	s.GET(absolutePath, handler)
+	s.HEAD(absolutePath, handler)
+	return s.IRouter
+}
+
 func (s *Server) addRoute(method, path string, handlers ...HandlerFunc) {
 	if method == "" {
 		panic("HTTP method cannot be empty")
@@ -142,7 +169,7 @@ func (s *Server) addRoute(method, path string, handlers ...HandlerFunc) {
 		panic("there must be at least one handler")
 	}
 	CheckPathValid(path)
-	s.logger.Infof("add route %s %s", method, path)
+	s.logger.Debugf("add route %s %s", method, path)
 	if err := s.AddRoute(method, path, handlers...); err != nil {
 		panic(err)
 	}
@@ -152,6 +179,7 @@ func (s *Server) FastHandler(ctx *fasthttp.RequestCtx) {
 	// Get Context from pool
 	gctx := ctxPool.Get().(*Context)
 	gctx.fastCtx = ctx
+	gctx.logger = s.logger
 
 	// Get ResponseWriter from pool
 	writer := respWriterPool.Get().(*respWriter)
@@ -169,11 +197,20 @@ func (s *Server) FastHandler(ctx *fasthttp.RequestCtx) {
 
 	// Determine route path
 	method := string(ctx.Method())
-	routePath := path.Clean(string(ctx.Path()))
-	if s.UseRawPath {
-		if raw := ctx.URI().PathOriginal(); len(raw) > 0 {
-			routePath = string(raw)
-		}
+	routePath := string(ctx.URI().PathOriginal())
+	if routePath == "" {
+		routePath = string(ctx.Path())
+	}
+	if !s.UseRawPath && routePath != "" && !strings.Contains(routePath, "..") {
+		routePath = path.Clean(routePath)
+	}
+	if routePath == "" {
+		routePath = "/"
+	}
+
+	if strings.Contains(string(ctx.RequestURI()), "..") {
+		s.handleBadRequest(gctx)
+		return
 	}
 
 	// Find matching route
@@ -216,8 +253,38 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	writeFastResponseToHTTP(w, &fastCtx.Response)
 }
 
+func (s *Server) createStaticHandler(fs http.FileSystem) HandlerFunc {
+	return func(ctx *Context) {
+		filepath := strings.TrimSpace(ctx.Param("filepath"))
+		if filepath == "" {
+			filepath = "."
+		} else {
+			filepath = path.Clean("/" + filepath)
+			filepath = strings.TrimPrefix(filepath, "/")
+		}
+
+		if strings.Contains(filepath, "..") {
+			ctx.Status(http.StatusBadRequest)
+			return
+		}
+
+		req := buildHTTPRequestFromFast(ctx.fastCtx)
+		if req == nil || ctx.Writer == nil {
+			return
+		}
+
+		if !serveFileFromFS(ctx, req, fs, filepath) && !ctx.Writer.Written() {
+			ctx.Status(http.StatusNotFound)
+		}
+	}
+}
+
 func (s *Server) handleNotFound(ctx *Context) {
 	ctx.Writer.WriteHeader(http.StatusNotFound)
+}
+
+func (s *Server) handleBadRequest(ctx *Context) {
+	ctx.Writer.WriteHeader(http.StatusBadRequest)
 }
 
 func copyHTTPRequestToFast(dst *fasthttp.Request, src *http.Request) error {
@@ -345,4 +412,82 @@ func writeFastResponseToHTTP(w http.ResponseWriter, resp *fasthttp.Response) {
 	if len(body) > 0 {
 		_, _ = w.Write(body)
 	}
+}
+
+func buildHTTPRequestFromFast(ctx *fasthttp.RequestCtx) *http.Request {
+	if ctx == nil {
+		return nil
+	}
+
+	req := &http.Request{
+		Method: string(ctx.Method()),
+		Header: make(http.Header),
+		Host:   string(ctx.Host()),
+		URL: &url.URL{
+			Path:     string(ctx.Path()),
+			RawQuery: string(ctx.URI().QueryString()),
+		},
+	}
+
+	ctx.Request.Header.VisitAll(func(k, v []byte) {
+		req.Header.Add(string(k), string(v))
+	})
+	return req
+}
+
+func serveFileFromFS(ctx *Context, req *http.Request, fs http.FileSystem, filepath string) bool {
+	file, info, err := openStaticFile(fs, filepath)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+
+	if req.URL != nil {
+		servedPath := "/" + strings.TrimPrefix(filepath, "/")
+		if servedPath == "/." {
+			servedPath = "/"
+		}
+		req.URL.Path = servedPath
+	}
+
+	http.ServeContent(ctx.Writer, req, info.Name(), info.ModTime(), file)
+	return true
+}
+
+func openStaticFile(fs http.FileSystem, name string) (http.File, os.FileInfo, error) {
+	if name == "" {
+		name = "."
+	}
+
+	f, err := fs.Open(name)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, nil, err
+	}
+
+	if info.IsDir() {
+		_ = f.Close()
+		indexPath := path.Join(name, "index.html")
+		indexFile, err := fs.Open(indexPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		indexInfo, err := indexFile.Stat()
+		if err != nil {
+			_ = indexFile.Close()
+			return nil, nil, err
+		}
+		if indexInfo.IsDir() {
+			_ = indexFile.Close()
+			return nil, nil, os.ErrNotExist
+		}
+		return indexFile, indexInfo, nil
+	}
+
+	return f, info, nil
 }

@@ -25,6 +25,7 @@ Always respond in Chinese-simplified
 
 - Location: alongside code as `*_test.go`.
 - Scope: unit tests near behavior changes; table‑driven where it fits.
+- Unless explicitly required, only execute unit tests related to the changes, rather than all unit tests.
 - Run locally: `go test ./...`
 
 ## PR & Commit Guidelines

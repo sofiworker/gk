@@ -1,221 +1,112 @@
 package gserver
 
 import (
-	"fmt"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/valyala/fasthttp"
 )
 
-func TestName(t *testing.T) {
+func TestServerServeHTTP_PathAndQuery(t *testing.T) {
 	server := NewServer()
-	noop := func(c *Context) {
-		fmt.Println(1)
-	}
-	server.GET("/", noop).GET("/ttttt", noop)
-	server.Run()
-}
-
-func TestStd(t *testing.T) {
-	newServer := NewServer()
-	newServer.GET("", func(c *Context) {
-
-	})
-	err := http.ListenAndServe(":8080", newServer)
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
-//func TestNew(t *testing.T) {
-//	server := NewServer()
-//	noop := func(*Context) {}
-//
-//	group := server.Group("/v1")
-//	group.GET("/v1/test", noop)
-//	group.POST("/v1/test2", noop)
-//
-//	group2 := group.Group("/v1.1/test")
-//	group2.GET("/v1/v1.1/test/test", noop)
-//
-//	group3 := group2.Group("/v1.12/test")
-//	group3.POST("/v1/v1.1/test/v1.12/test/test/:id", noop)
-//	group3.POST("/v1/v1.1/test/v1.12/test/test/*id", noop)
-//
-//	server.GET("/test/:name/:last_name/*wild", noop)
-//
-//	testCases := []struct {
-//		method     string
-//		path       string
-//		wantPath   string
-//		wantParams map[string]string
-//	}{
-//		{"GET", "/v1/test", "/v1/test", nil},
-//		{"POST", "/v1/test2", "/v1/test2", nil},
-//		{"GET", "/v1/v1.1/test/test", "/v1/v1.1/test/test", nil},
-//		{"POST", "/v1/v1.1/test/v1.12/test/test/42", "/v1/v1.1/test/v1.12/test/test/:id", map[string]string{"id": "42"}},
-//		{"POST", "/v1/v1.1/test/v1.12/test/test/static/path", "/v1/v1.1/test/v1.12/test/test/*id", map[string]string{"id": "static/path"}},
-//		{"GET", "/test/john/doe/more/info", "/test/:name/:last_name/*wild", map[string]string{"name": "john", "last_name": "doe", "wild": "more/info"}},
-//	}
-//
-//	for _, tc := range testCases {
-//		result := server.matcher.Match(tc.method, tc.path)
-//		if result == nil {
-//			t.Fatalf("expected %s %s to match", tc.method, tc.path)
-//		}
-//		if result.Path != tc.wantPath {
-//			t.Fatalf("expected pattern %s, got %s", tc.wantPath, result.Path)
-//		}
-//		if len(tc.wantParams) == 0 {
-//			if len(result.PathParams) != 0 {
-//				t.Fatalf("expected no params for %s %s, got %+v", tc.method, tc.path, result.PathParams)
-//			}
-//			continue
-//		}
-//		for k, v := range tc.wantParams {
-//			if result.PathParams[k] != v {
-//				t.Fatalf("expected param %s=%s, got %s", k, v, result.PathParams[k])
-//			}
-//		}
-//	}
-//
-//	if result := server.matcher.Match("DELETE", "/v1/test"); result != nil {
-//		t.Fatal("unexpected match for DELETE /v1/test")
-//	}
-//	if result := server.matcher.Match("GET", "/unknown"); result != nil {
-//		t.Fatal("unexpected match for GET /unknown")
-//	}
-//}
-//
-//func TestRoute(t *testing.T) {
-//	// Test routes
-//	routes := []string{
-//		"/test",
-//		"/test/",
-//		"/simple",
-//		"/project/:name",
-//		"/",
-//		"/news/home",
-//		"/news",
-//		"/simple-two/one",
-//		"/simple-two/one-two",
-//		"/project/:name/build/*params",
-//		"/project/:name/bui",
-//		"/user/:id/status",
-//		"/user/:id",
-//		"/user/:id/profile",
-//		"/a/b/c/d/e/f/g/h/i/j/k",
-//		"/a/b/c/d/e/f/g/h/i/j/k/:id",
-//		"/a/b/c/d/e/f/g/h/i/j/k/:id/*params",
-//		"/a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p/q/r/s/t/u/v/w/x/y/z",
-//		"/a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p/q/r/s/t/u/v/w/x/y/z/:id",
-//		"/a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p/q/r/s/t/u/v/w/x/y/z/:id/*params",
-//		"/a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a",
-//		"/a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/:a/*params",
-//		"/ffff?query=string",
-//		"/ffff/?query=string",
-//		"/ffff/static?query=string",
-//		"/ffff/static/?query=string",
-//		"/complex/:param1/static/*param2?query=string",
-//		"/complex/:param1/static/?query=string",
-//		"/complex/static/*param2?query=string",
-//		"/complex/static/?query=string",
-//		"/complex/static/path?query=string&another=param&&&test",
-//		"/complex/static/path/?query=string&another=param&&&test",
-//		"/complex/:param1/static/path?query=string&another=param&test=1",
-//	}
-//	matcher := newServerMatcher()
-//	for _, route := range routes {
-//		err := matcher.AddRoute("GET", route, func(c *Context) {})
-//		if err != nil {
-//			t.Errorf("Failed to add route %s: %v", route, err)
-//		}
-//	}
-//
-//	for _, route := range routes {
-//		matchResult := matcher.Lookup("GET", route)
-//		bs, _ := json.Marshal(matchResult)
-//		fmt.Println(string(bs))
-//	}
-//}
-//
-//func TestServerServeHTTP_PathAndQueryParameters(t *testing.T) {
-//	server := NewServer()
-//	var (
-//		called     bool
-//		gotID      string
-//		gotFoo     string
-//		gotDefault string
-//		gotArr     []string
-//	)
-//
-//	server.GET("/users/:id", func(c *Context) {
-//		called = true
-//		gotID = c.Param("id")
-//		gotFoo = c.Query("foo")
-//		gotDefault = c.DefaultQuery("missing", "fallback")
-//		gotArr = c.QueryArray("arr")
-//		c.Writer.WriteHeader(http.StatusCreated)
-//		_, _ = c.Writer.Write([]byte("ok"))
-//	})
-//
-//	req := httptest.NewRequest(http.MethodGet, "/users/42?foo=bar&arr=a&arr=b", nil)
-//	resp := httptest.NewRecorder()
-//	server.ServeHTTP(resp, req)
-//
-//	if !called {
-//		t.Fatal("expected handler to be called")
-//	}
-//	if gotID != "42" {
-//		t.Fatalf("expected id=42, got %q", gotID)
-//	}
-//	if gotFoo != "bar" {
-//		t.Fatalf("expected foo=bar, got %q", gotFoo)
-//	}
-//	if gotDefault != "fallback" {
-//		t.Fatalf("expected missing query default fallback, got %q", gotDefault)
-//	}
-//	if !reflect.DeepEqual(gotArr, []string{"a", "b"}) {
-//		t.Fatalf("unexpected arr values: %+v", gotArr)
-//	}
-//	if resp.Code != http.StatusCreated {
-//		t.Fatalf("expected status %d, got %d", http.StatusCreated, resp.Code)
-//	}
-//	if body := resp.Body.String(); body != "ok" {
-//		t.Fatalf("expected body 'ok', got %q", body)
-//	}
-//}
-
-func TestServerServeHTTP_DefaultContentType(t *testing.T) {
-	server := NewServer()
-	var called bool
-	server.GET("/ping", func(c *Context) {
-		called = true
-		_, _ = c.Writer.Write([]byte("hello world"))
+	var (
+		gotID   string
+		gotRole string
+		arr     []string
+	)
+	server.GET("/users/:id", func(c *Context) {
+		gotID = c.Param("id")
+		gotRole = c.QueryDefault("role", "none")
+		arr = c.QueryArray("role")
+		c.JSON(http.StatusCreated, map[string]string{
+			"id":   gotID,
+			"role": gotRole,
+		})
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	req := httptest.NewRequest(http.MethodGet, "/users/42?role=admin&role=viewer", nil)
 	resp := httptest.NewRecorder()
 	server.ServeHTTP(resp, req)
 
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", resp.Code)
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d", resp.Code)
 	}
-	if !called {
-		t.Fatal("expected handler to be executed")
+	if gotID != "42" || gotRole != "admin" {
+		t.Fatalf("unexpected params id=%s role=%s", gotID, gotRole)
 	}
-	if body := resp.Body.String(); body != "hello world" {
-		t.Fatalf("unexpected body %q", body)
+	if !reflect.DeepEqual(arr, []string{"admin", "viewer"}) {
+		t.Fatalf("unexpected array values %v", arr)
 	}
-	if got := resp.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
-		t.Fatalf("expected default content type, got %q", got)
+
+	var payload map[string]string
+	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload["id"] != "42" || payload["role"] != "admin" {
+		t.Fatalf("unexpected body %+v", payload)
+	}
+	if ct := resp.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Fatalf("unexpected content type %q", ct)
 	}
 }
 
-//
-//func TestServer(t *testing.T) {
-//	s := NewServer()
-//	s.GET("/test", func(ctx *Context) {
-//	})
-//	s.Start()
-//}
+func TestServerMiddlewareOrder(t *testing.T) {
+	server := NewServer()
+	var order []string
+
+	server.Use(func(c *Context) {
+		order = append(order, "m1-before")
+		c.Next()
+		order = append(order, "m1-after")
+	})
+	server.GET("/ping", func(c *Context) {
+		order = append(order, "handler")
+		c.String(http.StatusOK, "pong")
+	})
+
+	resp := httptest.NewRecorder()
+	server.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/ping", nil))
+
+	if resp.Code != http.StatusOK || resp.Body.String() != "pong" {
+		t.Fatalf("unexpected response code=%d body=%q", resp.Code, resp.Body.String())
+	}
+	expected := []string{"m1-before", "handler", "m1-after"}
+	if !reflect.DeepEqual(order, expected) {
+		t.Fatalf("unexpected middleware order %v", order)
+	}
+}
+
+func TestServerNotFound(t *testing.T) {
+	server := NewServer()
+	resp := httptest.NewRecorder()
+	server.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/not-found", nil))
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", resp.Code)
+	}
+}
+
+func BenchmarkServerFastHandler(b *testing.B) {
+	server := NewServer()
+	server.GET("/bench/:id", func(c *Context) {
+		c.String(http.StatusOK, "%s", c.Param("id"))
+	})
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		req := fasthttp.AcquireRequest()
+		req.Header.SetMethod("GET")
+		req.SetRequestURI("/bench/123")
+
+		var ctx fasthttp.RequestCtx
+		ctx.Init(req, resolveRemoteAddr("127.0.0.1:1234"), nil)
+		server.FastHandler(&ctx)
+
+		fasthttp.ReleaseRequest(req)
+	}
+}

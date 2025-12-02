@@ -2,27 +2,51 @@ package gsql
 
 import (
 	"context"
-	"database/sql"
+	"fmt"
 
 	"github.com/jmoiron/sqlx"
 )
 
+// NestedStrategy 定义嵌套事务的处理方式。
+type NestedStrategy int
+
+const (
+	// NestedSavepoint 使用 SAVEPOINT/RELEASE 来实现可回滚的嵌套事务。
+	NestedSavepoint NestedStrategy = iota
+	// NestedReuse 复用当前事务，不做额外隔离（错误会影响最外层）。
+	NestedReuse
+	// NestedError 禁止嵌套事务。
+	NestedError
+	// NestedDialect 按当前 dialect 能力选择：支持 savepoint 则使用 Savepoint，否则报错。
+	NestedDialect
+)
+
+type savepointNamer func(level int) string
+
 type Tx struct {
 	*sqlx.Tx
-	db    *DB
-	level int // Transaction nesting level
+	db     *DB
+	nested NestedStrategy
+	level  int // Transaction nesting层级，0 为最外层
+	namer  savepointNamer
 }
 
-func (tx *Tx) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
-	return tx.Tx.ExecContext(ctx, query, args...)
+func newTx(txx *sqlx.Tx, db *DB, level int, opts TxOptions) *Tx {
+	namer := opts.SavepointNamer
+	if namer == nil {
+		namer = defaultSavepointNamer
+	}
+	return &Tx{
+		Tx:     txx,
+		db:     db,
+		nested: opts.Nested,
+		level:  level,
+		namer:  namer,
+	}
 }
 
-func (tx *Tx) GetContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
-	return tx.Tx.GetContext(ctx, dest, query, args...)
-}
-
-func (tx *Tx) SelectContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
-	return tx.Tx.SelectContext(ctx, dest, query, args...)
+func defaultSavepointNamer(level int) string {
+	return fmt.Sprintf("gsql_sp_%d", level)
 }
 
 func (tx *Tx) Builder() *Builder {
@@ -32,23 +56,89 @@ func (tx *Tx) Builder() *Builder {
 	}
 }
 
-// NestedTx begins a nested transaction or returns the existing transaction if already in one
-func (tx *Tx) NestedTx(fn func(*Tx) error, opts ...TxOption) (err error) {
-	// Increment nesting level for the new transaction
-	newLevel := tx.level + 1
+// NestedTx 在当前事务中创建嵌套事务。
+func (tx *Tx) NestedTx(fn func(*Tx) error, opts ...TxOption) error {
+	return tx.NestedTxContext(context.Background(), fn, opts...)
+}
 
-	// For nested transactions, we reuse the existing transaction
-	// but wrap it in a new Tx struct with incremented level
-	nestedTx := &Tx{
-		Tx:    tx.Tx,
-		db:    tx.db,
-		level: newLevel,
+func (tx *Tx) NestedTxContext(ctx context.Context, fn func(*Tx) error, _ ...TxOption) error {
+	nestedLevel := tx.level + 1
+	nested := newTx(tx.Tx, tx.db, nestedLevel, TxOptions{
+		Nested:         tx.nested,
+		SavepointNamer: tx.namer,
+	})
+
+	switch tx.effectiveStrategy() {
+	case NestedReuse:
+		return fn(nested)
+	case NestedError:
+		return fmt.Errorf("gsql: nested transaction is disabled for driver %s", tx.db.driverName)
+	case NestedSavepoint:
+		// continue with savepoint
+	default:
+		return fmt.Errorf("gsql: unknown nested strategy")
 	}
 
-	// Execute the function with the nested transaction
-	err = fn(nestedTx)
+	spName := tx.namer(nestedLevel)
+	if err := tx.execSavepoint(ctx, spName); err != nil {
+		return fmt.Errorf("create savepoint failed: %w", err)
+	}
 
-	// For nested transactions, we don't commit or rollback
-	// The top-level transaction will handle that
+	defer func() {
+		if p := recover(); p != nil {
+			_ = tx.execRollbackTo(ctx, spName)
+			panic(p)
+		}
+	}()
+
+	if err := fn(nested); err != nil {
+		_ = tx.execRollbackTo(ctx, spName)
+		return err
+	}
+
+	if err := tx.execRelease(ctx, spName); err != nil {
+		return fmt.Errorf("release savepoint failed: %w", err)
+	}
+	return nil
+}
+
+func (tx *Tx) execSavepoint(ctx context.Context, name string) error {
+	_, err := tx.ExecContext(ctx, "SAVEPOINT "+name)
 	return err
+}
+
+func (tx *Tx) execRollbackTo(ctx context.Context, name string) error {
+	_, err := tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT "+name)
+	return err
+}
+
+func (tx *Tx) execRelease(ctx context.Context, name string) error {
+	_, err := tx.ExecContext(ctx, "RELEASE SAVEPOINT "+name)
+	return err
+}
+
+// Commit 仅允许最外层事务调用。
+func (tx *Tx) Commit() error {
+	if tx.level > 0 {
+		return fmt.Errorf("gsql: cannot commit nested transaction")
+	}
+	return tx.Tx.Commit()
+}
+
+// Rollback 仅允许最外层事务调用。
+func (tx *Tx) Rollback() error {
+	if tx.level > 0 {
+		return fmt.Errorf("gsql: cannot rollback nested transaction")
+	}
+	return tx.Tx.Rollback()
+}
+
+func (tx *Tx) effectiveStrategy() NestedStrategy {
+	if tx.nested == NestedDialect {
+		if tx.db.dialect.SupportsSavepoint() {
+			return NestedSavepoint
+		}
+		return NestedError
+	}
+	return tx.nested
 }

@@ -14,6 +14,8 @@ type Dialect interface {
 	PlaceholderSQL(sql string) string
 	// Placeholder returns the placeholder for a given index.
 	Placeholder(index int) string
+	// SupportsSavepoint indicates whether the dialect supports SAVEPOINT/RELEASE/ROLLBACK TO.
+	SupportsSavepoint() bool
 	// DataTypeOf returns the database-specific data type for a given Go type.
 	DataTypeOf(typ reflect.Type) string
 	// AutoIncrement returns the database-specific auto-increment keyword.
@@ -39,7 +41,8 @@ func newDialect(driverName string) Dialect {
 type mysqlDialect struct{}
 
 func (d *mysqlDialect) PlaceholderSQL(sql string) string { return sql }
-func (d *mysqlDialect) Placeholder(index int) string    { return "?" }
+func (d *mysqlDialect) Placeholder(index int) string     { return "?" }
+func (d *mysqlDialect) SupportsSavepoint() bool          { return true }
 func (d *mysqlDialect) DataTypeOf(typ reflect.Type) string {
 	switch typ.Kind() {
 	case reflect.Bool:
@@ -82,6 +85,7 @@ func (d *postgresDialect) PlaceholderSQL(sql string) string {
 	return builder.String()
 }
 func (d *postgresDialect) Placeholder(index int) string { return fmt.Sprintf("$%d", index+1) }
+func (d *postgresDialect) SupportsSavepoint() bool      { return true }
 func (d *postgresDialect) DataTypeOf(typ reflect.Type) string {
 	switch typ.Kind() {
 	case reflect.Bool:
@@ -107,7 +111,8 @@ func (d *postgresDialect) PrimaryKeyStr() string { return "VARCHAR(255)" }
 type sqliteDialect struct{}
 
 func (d *sqliteDialect) PlaceholderSQL(sql string) string { return sql }
-func (d *sqliteDialect) Placeholder(index int) string    { return "?" }
+func (d *sqliteDialect) Placeholder(index int) string     { return "?" }
+func (d *sqliteDialect) SupportsSavepoint() bool          { return true }
 func (d *sqliteDialect) DataTypeOf(typ reflect.Type) string {
 	switch typ.Kind() {
 	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Int64, reflect.Uint64:
@@ -129,7 +134,8 @@ func (d *sqliteDialect) PrimaryKeyStr() string { return "TEXT" }
 type genericDialect struct{}
 
 func (d *genericDialect) PlaceholderSQL(sql string) string { return sql }
-func (d *genericDialect) Placeholder(index int) string    { return "?" }
+func (d *genericDialect) Placeholder(index int) string     { return "?" }
+func (d *genericDialect) SupportsSavepoint() bool          { return false }
 func (d *genericDialect) DataTypeOf(typ reflect.Type) string {
 	switch typ.Kind() {
 	case reflect.Bool:

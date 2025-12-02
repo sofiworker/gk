@@ -10,6 +10,7 @@ import (
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 	_ "github.com/spf13/viper/remote" // 匿名导入以支持远程配置
+	"os"
 )
 
 // Config 是一个配置加载器，封装了 viper 的功能。
@@ -321,7 +322,9 @@ func (c *Config) Load() error {
 	// 读取本地配置文件
 	if err := v.ReadInConfig(); err != nil {
 		// 仅当错误不是 "文件未找到" 时才返回错误
-		if !errors.As(err, &viper.ConfigFileNotFoundError{}) {
+		var nfErr viper.ConfigFileNotFoundError
+		var pathErr *os.PathError
+		if !errors.As(err, &nfErr) && !errors.As(err, &pathErr) {
 			return fmt.Errorf("failed to read config file: %w", err)
 		}
 		options.Logger.Printf("Config file not found, proceeding without it. Searched in paths: %v for %s.%s", options.Paths, options.Name, options.Type)
