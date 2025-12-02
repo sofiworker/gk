@@ -1,6 +1,7 @@
 package pcap
 
 import (
+	"bufio"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -18,10 +19,12 @@ type writerConfig struct {
 	sigFigs    uint32
 	snapLen    uint32
 	network    uint32
+	bufferSize int
 }
 
 type Writer struct {
 	w         io.Writer
+	buf       *bufio.Writer
 	header    FileHeader
 	byteOrder binary.ByteOrder
 	tsUnit    time.Duration
@@ -66,6 +69,11 @@ func NewWriter(w io.Writer, opts ...WriterOption) (*Writer, error) {
 
 	if closer, ok := w.(io.Closer); ok {
 		writer.closer = closer
+	}
+
+	if cfg.bufferSize > 0 {
+		writer.buf = bufio.NewWriterSize(w, cfg.bufferSize)
+		writer.w = writer.buf
 	}
 
 	if err := writer.writeHeader(); err != nil {
@@ -129,6 +137,11 @@ func (w *Writer) WritePacketData(data []byte, ts time.Time) error {
 }
 
 func (w *Writer) Close() error {
+	if w.buf != nil {
+		if err := w.buf.Flush(); err != nil {
+			return err
+		}
+	}
 	if w.closer != nil {
 		return w.closer.Close()
 	}
@@ -176,6 +189,17 @@ func WithSnapLen(snapLen uint32) WriterOption {
 func WithLinkType(linkType uint32) WriterOption {
 	return func(cfg *writerConfig) error {
 		cfg.network = linkType
+		return nil
+	}
+}
+
+// WithBuffer 启用带缓冲写入以减少系统调用。
+func WithBuffer(size int) WriterOption {
+	return func(cfg *writerConfig) error {
+		if size <= 0 {
+			return fmt.Errorf("pcap: buffer size must be positive")
+		}
+		cfg.bufferSize = size
 		return nil
 	}
 }

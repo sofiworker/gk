@@ -7,4 +7,3 @@ var (
 	ErrInvalidFileHeader   = errors.New("pcap: invalid file header")
 	ErrInvalidPacketHeader = errors.New("pcap: invalid packet header")
 )
-

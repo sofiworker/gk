@@ -31,9 +31,3 @@ type PcapWriter interface {
 	WritePacket(*Packet) error
 	Close() error
 }
-
-type PlatformSpecific interface {
-	SetRingBuffer(size int, blockSize int, numBlocks int) error
-	EnableXDP(program []byte, options map[string]interface{}) error
-	SetKernelBufferSize(size int) error
-}

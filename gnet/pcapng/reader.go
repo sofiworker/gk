@@ -44,6 +44,15 @@ func (r *Reader) CurrentSection() *SectionHeaderBlock {
 	return r.section
 }
 
+// InterfaceInfo 返回接口的基本信息（linktype、snaplen、时间精度）。
+func (r *Reader) InterfaceInfo(id uint32) (linkType uint16, snapLen uint32, tsRes time.Duration, ok bool) {
+	info, exists := r.interfaces[id]
+	if !exists || info == nil || info.block == nil {
+		return 0, 0, 0, false
+	}
+	return info.block.LinkType, info.block.SnapLen, info.tsRes, true
+}
+
 func (r *Reader) NextBlock() (Block, error) {
 	var hdr [8]byte
 	if _, err := io.ReadFull(r.r, hdr[:]); err != nil {

@@ -1,4 +1,4 @@
-package gnet
+package forward
 
 import (
 	"encoding/binary"
@@ -15,6 +15,7 @@ type ProtocolAwareBridge struct {
 	remoteConn net.Conn
 	bufferSize int
 	logger     *log.Logger
+	timeout    time.Duration
 	mu         sync.Mutex
 	closed     bool
 
@@ -55,12 +56,17 @@ type ByteOrderConfig struct {
 
 // NewProtocolAwareBridge 创建协议感知的桥接
 func NewProtocolAwareBridge(localConn, remoteConn net.Conn, config TCPConfig, byteOrderConfig *ByteOrderConfig) *ProtocolAwareBridge {
+	bufSize := config.BufferSize
+	if bufSize <= 0 {
+		bufSize = 4096
+	}
 	bridge := &ProtocolAwareBridge{
 		localConn:  localConn,
 		remoteConn: remoteConn,
-		bufferSize: config.BufferSize,
+		bufferSize: bufSize,
 		logger:     config.Logger,
 		byteOrder:  binary.BigEndian, // 默认大端序
+		timeout:    config.Timeout,
 	}
 
 	if byteOrderConfig != nil {
@@ -175,6 +181,9 @@ func (b *ProtocolAwareBridge) forwardWithProtocol(src, dst net.Conn, direction D
 	buffer := make([]byte, b.bufferSize)
 
 	for {
+		if b.timeout > 0 {
+			_ = src.SetReadDeadline(time.Now().Add(b.timeout))
+		}
 		b.mu.Lock()
 		if b.closed {
 			b.mu.Unlock()
@@ -184,7 +193,10 @@ func (b *ProtocolAwareBridge) forwardWithProtocol(src, dst net.Conn, direction D
 
 		n, err := src.Read(buffer)
 		if err != nil {
-			if err != io.EOF {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				continue
+			}
+			if err != io.EOF && !b.closed {
 				b.logger.Printf("Read error: %v", err)
 			}
 			break
