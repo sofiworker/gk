@@ -53,6 +53,8 @@ func nextLayer(layer Layer) (LayerType, []byte, bool) {
 			return LayerTypeTCP, l.Payload(), true
 		case ProtocolUDP:
 			return LayerTypeUDP, l.Payload(), true
+		case ProtocolICMP:
+			return LayerTypeICMP, l.Payload(), true
 		default:
 			return 0, nil, false
 		}
@@ -62,6 +64,8 @@ func nextLayer(layer Layer) (LayerType, []byte, bool) {
 			return LayerTypeTCP, l.Payload(), true
 		case ProtocolUDP:
 			return LayerTypeUDP, l.Payload(), true
+		case ProtocolICMP:
+			return LayerTypeICMP, l.Payload(), true
 		default:
 			return 0, nil, false
 		}

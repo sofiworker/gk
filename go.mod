@@ -14,6 +14,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/valkey-io/valkey-go v1.0.67
 	github.com/valyala/fasthttp v1.64.0
+	github.com/vishvananda/netlink v1.3.1
 	go.opentelemetry.io/otel v1.38.0
 	go.opentelemetry.io/otel/metric v1.38.0
 	go.opentelemetry.io/otel/trace v1.38.0
@@ -82,6 +83,7 @@ require (
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
+	github.com/vishvananda/netns v0.0.5 // indirect
 	go.etcd.io/etcd/api/v3 v3.6.4 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.6.4 // indirect
 	go.etcd.io/etcd/client/v2 v2.305.22 // indirect

@@ -12,6 +12,14 @@ Always respond in Chinese-simplified
 - Logging: keep logs concise, actionable, and consistent with existing patterns.
 - Public API/flags: changing behavior or flags requires README updates and tests.
 - Context: First parameter for blocking operations
+- Use `go mod tidy` to check or add dependencies
+- Function definitions should be relatively independent to facilitate unit testing 
+- Each function needs to have corresponding unit tests written 
+- Prefer system calls over writing command executions 
+- Implementations for different platforms rely on Golang build tags
+- Expose constants or errors as much as possible to facilitate user-side judgment
+- Prefer defining small interfaces and then composing them, rather than directly defining complete interfaces.
+- Most configurations in config can be set via WithFunc.
 
 ## Tests
 

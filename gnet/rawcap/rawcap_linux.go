@@ -7,6 +7,7 @@ import (
 	"net"
 	"sync"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
@@ -20,6 +21,20 @@ type LinuxHandle struct {
 	mu      sync.Mutex
 	closed  bool
 	recvBuf []byte
+
+	ring *tpacketRing
+}
+
+type tpacketRing struct {
+	data      []byte
+	blockSize int
+	blockNum  int
+	frameSize int
+
+	blockIdx    int
+	pktOffset   uint32
+	pktCount    uint32
+	blockHeader *unix.TpacketHdrV1
 }
 
 func openLive(interfaceName string, cfg Config) (Handle, error) {
@@ -56,6 +71,12 @@ func (h *LinuxHandle) configure() error {
 		return fmt.Errorf("rawcap: bind: %w", err)
 	}
 
+	if h.cfg.TPacketV3 {
+		if err := h.enableTPacketV3(); err != nil {
+			return err
+		}
+	}
+
 	if h.cfg.BufferSize > 0 {
 		if err := unix.SetsockoptInt(h.fd, unix.SOL_SOCKET, unix.SO_RCVBUF, h.cfg.BufferSize); err != nil {
 			return fmt.Errorf("rawcap: set buffer size: %w", err)
@@ -85,6 +106,10 @@ func (h *LinuxHandle) configure() error {
 func (h *LinuxHandle) ReadPacket() (*Packet, error) {
 	if h.isClosed() {
 		return nil, ErrHandleClosed
+	}
+
+	if h.ring != nil {
+		return h.readTPacket()
 	}
 
 	for {
@@ -137,10 +162,6 @@ func (h *LinuxHandle) WritePacketData(data []byte) error {
 	return err
 }
 
-func (h *LinuxHandle) SetFilter(filter string) error {
-	return ErrFilterNotSupported
-}
-
 func (h *LinuxHandle) RawHandle() (interface{}, error) {
 	if h.isClosed() {
 		return nil, ErrHandleClosed
@@ -174,6 +195,10 @@ func (h *LinuxHandle) Close() error {
 		_ = unix.SetsockoptPacketMreq(h.fd, unix.SOL_PACKET, unix.PACKET_DROP_MEMBERSHIP, mreq)
 	}
 
+	if h.ring != nil {
+		_ = unix.Munmap(h.ring.data)
+	}
+
 	return unix.Close(h.fd)
 }
 
@@ -185,4 +210,120 @@ func (h *LinuxHandle) isClosed() bool {
 
 func hostToNetwork16(i uint16) uint16 {
 	return (i<<8)&0xff00 | i>>8
+}
+
+func (h *LinuxHandle) enableTPacketV3() error {
+	if err := unix.SetsockoptInt(h.fd, unix.SOL_PACKET, unix.PACKET_VERSION, unix.TPACKET_V3); err != nil {
+		return fmt.Errorf("rawcap: set tpacket v3: %w", err)
+	}
+
+	req := &unix.TpacketReq3{
+		Block_size:       uint32(h.cfg.BlockSize),
+		Block_nr:         uint32(h.cfg.NumBlocks),
+		Frame_size:       uint32(h.cfg.FrameSize),
+		Frame_nr:         uint32(h.cfg.BlockSize/h.cfg.FrameSize) * uint32(h.cfg.NumBlocks),
+		Retire_blk_tov:   64, // ms
+		Feature_req_word: 0,
+	}
+	if err := unix.SetsockoptTpacketReq3(h.fd, unix.SOL_PACKET, unix.PACKET_RX_RING, req); err != nil {
+		return fmt.Errorf("rawcap: set tpacket req3: %w", err)
+	}
+
+	data, err := unix.Mmap(h.fd, 0, int(req.Block_size*req.Block_nr), unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED)
+	if err != nil {
+		return fmt.Errorf("rawcap: mmap ring: %w", err)
+	}
+
+	h.ring = &tpacketRing{
+		data:      data,
+		blockSize: int(req.Block_size),
+		blockNum:  int(req.Block_nr),
+		frameSize: int(req.Frame_size),
+		blockIdx:  0,
+	}
+	return nil
+}
+
+func (h *LinuxHandle) readTPacket() (*Packet, error) {
+	r := h.ring
+	for {
+		// Ensure we have a block with data
+		if r.blockHeader == nil || r.pktOffset == 0 || r.pktOffset >= uint32(r.blockSize) {
+			if err := h.nextBlock(); err != nil {
+				if err == unix.EAGAIN {
+					continue
+				}
+				return nil, err
+			}
+		}
+
+		// packet pointer within block
+		blockStart := r.blockIdx * r.blockSize
+		ptr := uintptr(unsafe.Pointer(&r.data[blockStart])) + uintptr(r.pktOffset)
+		pktHdr := (*unix.Tpacket3Hdr)(unsafe.Pointer(ptr))
+
+		if pktHdr.Status&unix.TP_STATUS_USER == 0 {
+			// should not happen, retry
+			r.blockHeader = nil
+			continue
+		}
+
+		start := blockStart + int(pktHdr.Mac)
+		end := start + int(pktHdr.Snaplen)
+		if end > len(r.data) {
+			// corrupted, drop block
+			r.blockHeader.Block_status = unix.TP_STATUS_KERNEL
+			r.blockHeader = nil
+			continue
+		}
+		payload := make([]byte, pktHdr.Snaplen)
+		copy(payload, r.data[start:end])
+
+		ts := time.Unix(int64(pktHdr.Sec), int64(pktHdr.Nsec)).UTC()
+		info := &PacketInfo{
+			Timestamp:      ts,
+			CaptureLength:  int(pktHdr.Snaplen),
+			Length:         int(pktHdr.Len),
+			InterfaceIndex: h.iface.Index,
+		}
+		h.stats.PacketsReceived++
+
+		// Move to next packet in block
+		if pktHdr.Next_offset == 0 {
+			r.pktOffset = uint32(r.blockSize)
+		} else {
+			r.pktOffset += pktHdr.Next_offset
+		}
+		r.pktCount++
+		if r.pktCount >= r.blockHeader.Num_pkts || r.pktOffset >= uint32(r.blockSize) {
+			r.blockHeader.Block_status = unix.TP_STATUS_KERNEL
+			r.blockHeader = nil
+			r.pktOffset = 0
+			r.pktCount = 0
+			r.blockIdx = (r.blockIdx + 1) % r.blockNum
+		}
+
+		return &Packet{
+			Data: payload,
+			Info: info,
+		}, nil
+	}
+}
+
+func (h *LinuxHandle) nextBlock() error {
+	r := h.ring
+	for i := 0; i < r.blockNum; i++ {
+		blockStart := r.blockIdx * r.blockSize
+		desc := (*unix.TpacketBlockDesc)(unsafe.Pointer(&r.data[blockStart]))
+		hdr := (*unix.TpacketHdrV1)(unsafe.Pointer(&desc.Hdr[0]))
+		if hdr.Block_status&unix.TP_STATUS_USER == 0 {
+			r.blockIdx = (r.blockIdx + 1) % r.blockNum
+			continue
+		}
+		r.blockHeader = hdr
+		r.pktOffset = hdr.Offset_to_first_pkt
+		r.pktCount = 0
+		return nil
+	}
+	return unix.EAGAIN
 }
