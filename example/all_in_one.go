@@ -1,13 +1,14 @@
+//go:build ignore
+// +build ignore
+
 package main
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/sofiworker/gk/gcache"
 	"github.com/sofiworker/gk/gcompress"
-	"github.com/sofiworker/gk/gconfig"
 	"github.com/sofiworker/gk/glog"
 	"github.com/sofiworker/gk/gretry"
 )
@@ -26,7 +27,7 @@ func main() {
 	// Create a dummy config file
 	// ... (In real app, this would be a file)
 	// Here we just rely on defaults or env
-	
+
 	// 3. Use Cache
 	cache := gcache.NewMemoryCache(time.Minute)
 	ctx := context.Background()
@@ -39,12 +40,15 @@ func main() {
 		gretry.WithMaxRetries(3),
 		gretry.WithRetryDelay(100*time.Millisecond),
 	)
-	
+	gretry.Do(ctx, func() error {
+		return nil
+	}, opts)
+
 	err := gretry.DoWithDefault(ctx, func() error {
 		glog.Info("Doing some work...")
 		return nil
 	}).Error
-	
+
 	if err != nil {
 		glog.Errorf("Work failed: %v", err)
 	}

@@ -9,6 +9,7 @@ type Config struct {
 	codec      *CodecFactory
 	logger     Logger
 	UseRawPath bool
+	render     Render
 
 	// The fields below are all fasthttp, so we will expose them
 	Concurrency                   int
@@ -63,5 +64,13 @@ func WithLogger(logger Logger) ServerOption {
 func WithUseRawPath(use bool) ServerOption {
 	return func(c *Config) {
 		c.UseRawPath = use
+	}
+}
+
+func WithRender(r Render) ServerOption {
+	return func(c *Config) {
+		if r != nil {
+			c.render = r
+		}
 	}
 }

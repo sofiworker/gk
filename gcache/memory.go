@@ -2,9 +2,14 @@ package gcache
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"sync"
 	"time"
+)
+
+var (
+	ErrNotSupported = errors.New("gcache: operation not supported by MemoryCache")
 )
 
 type memoryItem struct {
@@ -12,7 +17,6 @@ type memoryItem struct {
 	expiresAt time.Time
 }
 
-// MemoryCache 为最小核心能力的内存实现
 type MemoryCache struct {
 	mu              sync.RWMutex
 	items           map[string]*memoryItem
@@ -21,33 +25,40 @@ type MemoryCache struct {
 	once            sync.Once
 }
 
-// NewMemoryCache 创建内存缓存，cleanupInterval<=0 时默认 1 分钟清理一次
-func NewMemoryCache(cleanupInterval time.Duration) *MemoryCache {
-	if cleanupInterval <= 0 {
-		cleanupInterval = time.Minute
+func NewMemoryCache(opts ...Option) (*MemoryCache, error) {
+	options := &Options{
+		CleanupInterval: time.Minute, // Default cleanup interval
 	}
+	for _, o := range opts {
+		o(options)
+	}
+
 	cache := &MemoryCache{
 		items:           make(map[string]*memoryItem),
-		cleanupInterval: cleanupInterval,
+		cleanupInterval: options.CleanupInterval,
 		stopCleanup:     make(chan struct{}),
 	}
 	go cache.cleanupLoop()
-	return cache
+	return cache, nil
 }
 
-func (m *MemoryCache) Get(ctx context.Context, key string) ([]byte, error) {
+func (m *MemoryCache) GetWithContext(ctx context.Context, key string) ([]byte, error) {
 	m.mu.RLock()
 	item, ok := m.items[key]
 	m.mu.RUnlock()
 
 	if !ok || m.isExpired(item) {
-		m.Delete(ctx, key) // 清理过期数据
+		m.DeleteWithContext(ctx, key)
 		return nil, ErrCacheMiss
 	}
 	return cloneBytes(item.value), nil
 }
 
-func (m *MemoryCache) Set(_ context.Context, key string, value []byte, expiration time.Duration) error {
+func (m *MemoryCache) Get(key string) ([]byte, error) {
+	return m.GetWithContext(context.Background(), key)
+}
+
+func (m *MemoryCache) SetWithContext(_ context.Context, key string, value []byte, expiration time.Duration) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -61,14 +72,22 @@ func (m *MemoryCache) Set(_ context.Context, key string, value []byte, expiratio
 	return nil
 }
 
-func (m *MemoryCache) Delete(_ context.Context, key string) error {
+func (m *MemoryCache) Set(key string, value []byte, expiration time.Duration) error {
+	return m.SetWithContext(context.Background(), key, value, expiration)
+}
+
+func (m *MemoryCache) DeleteWithContext(_ context.Context, key string) error {
 	m.mu.Lock()
 	delete(m.items, key)
 	m.mu.Unlock()
 	return nil
 }
 
-func (m *MemoryCache) Exists(_ context.Context, key string) (bool, error) {
+func (m *MemoryCache) Delete(key string) error {
+	return m.DeleteWithContext(context.Background(), key)
+}
+
+func (m *MemoryCache) ExistsWithContext(_ context.Context, key string) (bool, error) {
 	m.mu.RLock()
 	item, ok := m.items[key]
 	m.mu.RUnlock()
@@ -78,7 +97,11 @@ func (m *MemoryCache) Exists(_ context.Context, key string) (bool, error) {
 	return true, nil
 }
 
-func (m *MemoryCache) Expire(_ context.Context, key string, expiration time.Duration) error {
+func (m *MemoryCache) Exists(key string) (bool, error) {
+	return m.ExistsWithContext(context.Background(), key)
+}
+
+func (m *MemoryCache) ExpireWithContext(_ context.Context, key string, expiration time.Duration) error {
 	if expiration <= 0 {
 		return nil
 	}
@@ -95,7 +118,11 @@ func (m *MemoryCache) Expire(_ context.Context, key string, expiration time.Dura
 	return nil
 }
 
-func (m *MemoryCache) TTL(_ context.Context, key string) (time.Duration, error) {
+func (m *MemoryCache) Expire(key string, expiration time.Duration) error {
+	return m.ExpireWithContext(context.Background(), key, expiration)
+}
+
+func (m *MemoryCache) TTLWithContext(_ context.Context, key string) (time.Duration, error) {
 	m.mu.RLock()
 	item, ok := m.items[key]
 	m.mu.RUnlock()
@@ -109,12 +136,24 @@ func (m *MemoryCache) TTL(_ context.Context, key string) (time.Duration, error) 
 	return time.Until(item.expiresAt), nil
 }
 
-func (m *MemoryCache) Increment(ctx context.Context, key string, value int64) (int64, error) {
+func (m *MemoryCache) TTL(key string) (time.Duration, error) {
+	return m.TTLWithContext(context.Background(), key)
+}
+
+func (m *MemoryCache) IncrementWithContext(ctx context.Context, key string, value int64) (int64, error) {
 	return m.add(ctx, key, value)
 }
 
-func (m *MemoryCache) Decrement(ctx context.Context, key string, value int64) (int64, error) {
+func (m *MemoryCache) Increment(key string, value int64) (int64, error) {
+	return m.IncrementWithContext(context.Background(), key, value)
+}
+
+func (m *MemoryCache) DecrementWithContext(ctx context.Context, key string, value int64) (int64, error) {
 	return m.add(ctx, key, -value)
+}
+
+func (m *MemoryCache) Decrement(key string, value int64) (int64, error) {
+	return m.DecrementWithContext(context.Background(), key, value)
 }
 
 func (m *MemoryCache) add(_ context.Context, key string, delta int64) (int64, error) {
@@ -151,8 +190,12 @@ func (m *MemoryCache) Close() error {
 	return nil
 }
 
-func (m *MemoryCache) Ping(context.Context) error {
+func (m *MemoryCache) PingWithContext(context.Context) error {
 	return nil
+}
+
+func (m *MemoryCache) Ping() error {
+	return m.PingWithContext(context.Background())
 }
 
 func (m *MemoryCache) cleanupLoop() {
@@ -199,6 +242,69 @@ func cloneBytes(b []byte) []byte {
 	return cp
 }
 
+// Stubs for unsupported operations
+func (m *MemoryCache) HashSetWithContext(ctx context.Context, key string, field string, value []byte) error {
+	return ErrNotSupported
+}
+func (m *MemoryCache) HashSet(key string, field string, value []byte) error {
+	return ErrNotSupported
+}
+func (m *MemoryCache) HashGetWithContext(ctx context.Context, key string, field string) ([]byte, error) {
+	return nil, ErrNotSupported
+}
+func (m *MemoryCache) HashGet(key string, field string) ([]byte, error) {
+	return nil, ErrNotSupported
+}
+func (m *MemoryCache) HashGetAllWithContext(ctx context.Context, key string) (map[string][]byte, error) {
+	return nil, ErrNotSupported
+}
+func (m *MemoryCache) HashGetAll(key string) (map[string][]byte, error) {
+	return nil, ErrNotSupported
+}
+func (m *MemoryCache) HashDeleteWithContext(ctx context.Context, key string, fields ...string) error {
+	return ErrNotSupported
+}
+func (m *MemoryCache) HashDelete(key string, fields ...string) error {
+	return ErrNotSupported
+}
+func (m *MemoryCache) ListPushWithContext(ctx context.Context, key string, values ...[]byte) error {
+	return ErrNotSupported
+}
+func (m *MemoryCache) ListPush(key string, values ...[]byte) error {
+	return ErrNotSupported
+}
+func (m *MemoryCache) ListPopWithContext(ctx context.Context, key string) ([]byte, error) {
+	return nil, ErrNotSupported
+}
+func (m *MemoryCache) ListPop(key string) ([]byte, error) {
+	return nil, ErrNotSupported
+}
+func (m *MemoryCache) ListRangeWithContext(ctx context.Context, key string, start, stop int64) ([][]byte, error) {
+	return nil, ErrNotSupported
+}
+func (m *MemoryCache) ListRange(key string, start, stop int64) ([][]byte, error) {
+	return nil, ErrNotSupported
+}
+func (m *MemoryCache) SetAddWithContext(ctx context.Context, key string, members ...[]byte) error {
+	return ErrNotSupported
+}
+func (m *MemoryCache) SetAdd(key string, members ...[]byte) error {
+	return ErrNotSupported
+}
+func (m *MemoryCache) SetMembersWithContext(ctx context.Context, key string) ([][]byte, error) {
+	return nil, ErrNotSupported
+}
+func (m *MemoryCache) SetMembers(key string) ([][]byte, error) {
+	return nil, ErrNotSupported
+}
+func (m *MemoryCache) SetIsMemberWithContext(ctx context.Context, key string, member []byte) (bool, error) {
+	return false, ErrNotSupported
+}
+func (m *MemoryCache) SetIsMember(key string, member []byte) (bool, error) {
+	return false, ErrNotSupported
+}
+
 var (
-	_ BasicCache = (*MemoryCache)(nil)
+	_ Cache            = (*MemoryCache)(nil)
+	_ CacheWithContext = (*MemoryCache)(nil)
 )

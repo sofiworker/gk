@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/url"
 	"strings"
@@ -37,6 +38,8 @@ type Context struct {
 	handlerIndex int
 
 	codec *CodecFactory
+
+	render Render
 }
 
 func (c *Context) Reset() {
@@ -357,4 +360,19 @@ func (c *Context) IsWebsocket() bool {
 // StatusCode returns the response status code
 func (c *Context) StatusCode() int {
 	return c.Writer.Status()
+}
+
+func (c *Context) Render(data interface{}) {
+	reader, err := c.render.Render(data)
+	if err != nil {
+		panic(err)
+	}
+	for {
+		bs := make([]byte, 1024)
+		n, err := reader.Read(bs)
+		if err != nil && err != io.EOF {
+			break
+		}
+		_, _ = c.Writer.Write(bs[:n])
+	}
 }
