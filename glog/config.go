@@ -52,7 +52,7 @@ func DefaultConfig() *Config {
 		DisableCaller:     false,
 		DisableStacktrace: false,
 		InitialFields:     make(map[string]interface{}),
-		TimeFormat:        "2006-01-02 15:04:05.000",
+		TimeFormat:        "2006-01-02 15:04:05",
 		RotationConfig: &RotationConfig{
 			MaxSize:    100,
 			MaxAge:     30,
