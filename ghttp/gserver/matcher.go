@@ -62,17 +62,10 @@ func newRouteEntry(path string, handlers []HandlerFunc) *routeEntry {
 }
 
 func (r *routeEntry) toResult(params map[string]string) *MatchResult {
-	var paramCopy map[string]string
-	if len(params) > 0 {
-		paramCopy = make(map[string]string, len(params))
-		for k, v := range params {
-			paramCopy[k] = v
-		}
-	}
 	return &MatchResult{
 		Path:       r.path,
 		Handlers:   r.handlers,
-		PathParams: paramCopy,
+		PathParams: params,
 	}
 }
 
@@ -112,6 +105,22 @@ func (s *serverMatcher) Lookup(method, path string) *MatchResult {
 	}
 	result := methodRouter.match(path)
 	return result
+}
+
+// LookupInto is a fast-path lookup that writes path params into dstParams.
+// It avoids per-request map allocations by reusing the provided map.
+func (s *serverMatcher) LookupInto(method, path string, dstParams map[string]string) (handlers []HandlerFunc, fullPath string, ok bool) {
+	s.mu.RLock()
+	methodRouter := s.methodMatcher[method]
+	s.mu.RUnlock()
+	if methodRouter == nil {
+		return nil, "", false
+	}
+	entry := methodRouter.matchInto(path, dstParams)
+	if entry == nil {
+		return nil, "", false
+	}
+	return entry.handlers, entry.path, true
 }
 
 func (s *serverMatcher) AddRoute(method, path string, handler ...HandlerFunc) error {

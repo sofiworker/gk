@@ -90,8 +90,8 @@ func (mr *MethodMatcher) match(path string) *MatchResult {
 	}
 
 	// 段数匹配（例如 /user/:id）
-	segments := splitPathSegments(path)
-	if entries, ok := mr.segmentIndex[len(segments)]; ok {
+	segCnt := pathSegmentCount(path)
+	if entries, ok := mr.segmentIndex[segCnt]; ok {
 		result := entries.search(path)
 		if result != nil {
 			return result
@@ -100,6 +100,57 @@ func (mr *MethodMatcher) match(path string) *MatchResult {
 
 	// 最后走通配树匹配
 	return mr.radixTree.search(path)
+}
+
+func (mr *MethodMatcher) matchInto(path string, params map[string]string) *routeEntry {
+	mr.mu.RLock()
+	defer mr.mu.RUnlock()
+
+	if len(params) != 0 {
+		for k := range params {
+			delete(params, k)
+		}
+	}
+
+	// Static match
+	if entry, ok := mr.staticGroup[path]; ok {
+		return entry
+	}
+
+	// Segment match
+	segCnt := pathSegmentCount(path)
+	if entries, ok := mr.segmentIndex[segCnt]; ok {
+		if entry := entries.searchInto(path, params); entry != nil {
+			return entry
+		}
+	}
+
+	// Wildcard match
+	return mr.radixTree.searchInto(path, params)
+}
+
+func pathSegmentCount(path string) int {
+	if path == "" {
+		return 0
+	}
+	i := 0
+	j := len(path)
+	for i < j && path[i] == '/' {
+		i++
+	}
+	for j > i && path[j-1] == '/' {
+		j--
+	}
+	if i >= j {
+		return 0
+	}
+	count := 1
+	for k := i; k < j; k++ {
+		if path[k] == '/' {
+			count++
+		}
+	}
+	return count
 }
 
 func (mr *MethodMatcher) removeRoute(path string) error {

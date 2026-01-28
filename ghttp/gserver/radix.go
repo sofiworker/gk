@@ -194,6 +194,21 @@ func (crt *CompressedRadixTree) search(path string) *MatchResult {
 	return entry.toResult(params)
 }
 
+// searchInto matches path and writes params into dstParams.
+// dstParams must be non-nil and is treated as scratch space.
+func (crt *CompressedRadixTree) searchInto(path string, dstParams map[string]string) *routeEntry {
+	crt.mu.RLock()
+	defer crt.mu.RUnlock()
+
+	if crt.root == nil {
+		return nil
+	}
+
+	segments := splitPathSegments(path)
+	params := dstParams
+	return crt.root.find(segments, &params)
+}
+
 func (n *CompressedRadixNode) find(segments []string, params *map[string]string) *routeEntry {
 	if len(segments) == 0 {
 		if n.entry != nil {
