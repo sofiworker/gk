@@ -1,6 +1,7 @@
 package gserver
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net"
@@ -17,7 +18,8 @@ import (
 )
 
 var (
-	ctxPool = sync.Pool{
+	traversalDotDot = []byte("..")
+	ctxPool         = sync.Pool{
 		New: func() interface{} {
 			return &Context{
 				handlerIndex: -1,
@@ -186,6 +188,7 @@ func (s *Server) FastHandler(ctx *fasthttp.RequestCtx) {
 	writer.ctx = ctx
 	gctx.Writer = writer // Direct assignment instead of wrapping for better performance
 	gctx.codec = s.codec
+	gctx.render = s.render
 
 	// Defer cleanup and return objects to pools
 	defer func() {
@@ -208,27 +211,38 @@ func (s *Server) FastHandler(ctx *fasthttp.RequestCtx) {
 		routePath = "/"
 	}
 
-	if strings.Contains(string(ctx.RequestURI()), "..") {
+	if bytes.Contains(ctx.RequestURI(), traversalDotDot) {
 		s.handleBadRequest(gctx)
 		return
 	}
 
 	// Find matching route
-	matchResult := s.Lookup(method, routePath)
-	if matchResult == nil {
-		s.handleNotFound(gctx)
-		return
-	}
-
-	// Apply route handlers
-	if len(matchResult.Handlers) > 0 {
-		gctx.handlers = append(gctx.handlers, matchResult.Handlers...)
-	}
-
-	// Apply path parameters
-	if len(matchResult.PathParams) > 0 {
-		for k, v := range matchResult.PathParams {
-			gctx.AddParam(k, v)
+	if fm, ok := s.Match.(interface {
+		LookupInto(method, path string, dstParams map[string]string) (handlers []HandlerFunc, fullPath string, ok bool)
+	}); ok {
+		handlers, fullPath, ok := fm.LookupInto(method, routePath, gctx.pathParams)
+		if !ok {
+			s.handleNotFound(gctx)
+			return
+		}
+		gctx.fullPath = fullPath
+		if len(handlers) > 0 {
+			gctx.handlers = append(gctx.handlers, handlers...)
+		}
+	} else {
+		matchResult := s.Lookup(method, routePath)
+		if matchResult == nil {
+			s.handleNotFound(gctx)
+			return
+		}
+		gctx.fullPath = matchResult.Path
+		if len(matchResult.Handlers) > 0 {
+			gctx.handlers = append(gctx.handlers, matchResult.Handlers...)
+		}
+		if len(matchResult.PathParams) > 0 {
+			for k, v := range matchResult.PathParams {
+				gctx.pathParams[k] = v
+			}
 		}
 	}
 

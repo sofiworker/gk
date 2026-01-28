@@ -152,9 +152,6 @@ func (r *respWriter) WriteHeader(statusCode int) {
 
 	// Directly set headers to fasthttp context without intermediate storage when possible
 	if r.header != nil && len(r.header) > 0 {
-		// Reset fasthttp response headers
-		r.ctx.Response.Header.Reset()
-
 		// Copy headers directly to fasthttp response
 		for k, values := range r.header {
 			for _, v := range values {
