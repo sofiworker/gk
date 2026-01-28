@@ -10,9 +10,12 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/valyala/fasthttp"
 )
+
+var renderBufPool = sync.Pool{New: func() interface{} { return make([]byte, 8*1024) }}
 
 type noCopy struct{}
 
@@ -24,15 +27,15 @@ type Context struct {
 
 	Writer ResponseWriter
 
-	fastCtx *fasthttp.RequestCtx
-
-	pathMutex  sync.RWMutex
+	fastCtx    *fasthttp.RequestCtx
 	pathParams map[string]string
+	fullPath   string
 
 	queryCache url.Values
 	logger     Logger
 
-	valueCtx context.Context
+	reqCtx context.Context
+	values map[interface{}]interface{}
 
 	handlers     []HandlerFunc
 	handlerIndex int
@@ -49,8 +52,11 @@ func (c *Context) Reset() {
 	c.handlers = c.handlers[:0]
 	c.handlerIndex = -1
 	c.queryCache = nil
-	c.valueCtx = context.Background()
+	c.reqCtx = context.Background()
 	c.logger = nil
+	c.codec = nil
+	c.render = nil
+	c.fullPath = ""
 
 	// Optimize pathParams reset for better performance
 	// Instead of recreating the map, clear it to reduce allocations
@@ -61,6 +67,12 @@ func (c *Context) Reset() {
 		}
 	} else {
 		c.pathParams = make(map[string]string)
+	}
+
+	if c.values != nil {
+		for k := range c.values {
+			delete(c.values, k)
+		}
 	}
 }
 
@@ -78,6 +90,16 @@ func (c *Context) Abort() {
 	c.handlerIndex = len(c.handlers)
 }
 
+func (c *Context) AbortWithStatus(code int) {
+	c.Status(code)
+	c.Abort()
+}
+
+func (c *Context) AbortWithStatusJSON(code int, obj interface{}) {
+	c.JSON(code, obj)
+	c.Abort()
+}
+
 func (c *Context) IsAborted() bool {
 	return c.handlerIndex >= len(c.handlers)
 }
@@ -87,8 +109,6 @@ func (c *Context) HandlerCount() int {
 }
 
 func (c *Context) AddParam(k, v string) {
-	c.pathMutex.Lock()
-	defer c.pathMutex.Unlock()
 	c.pathParams[k] = v
 }
 
@@ -97,19 +117,32 @@ func (c *Context) Logger() Logger {
 }
 
 func (c *Context) Param(key string) string {
-	c.pathMutex.RLock()
-	defer c.pathMutex.RUnlock()
 	return c.pathParams[key]
 }
 
 func (c *Context) Params() map[string]string {
-	c.pathMutex.RLock()
-	defer c.pathMutex.RUnlock()
 	return c.pathParams
+}
+
+func (c *Context) FullPath() string {
+	return c.fullPath
 }
 
 func (c *Context) Query(key string) string {
 	return string(c.fastCtx.QueryArgs().Peek(key))
+}
+
+func (c *Context) GetQuery(key string) (string, bool) {
+	b, ok := c.GetQueryBytes(key)
+	if !ok {
+		return "", false
+	}
+	return string(b), true
+}
+
+func (c *Context) GetQueryBytes(key string) ([]byte, bool) {
+	b := c.fastCtx.QueryArgs().Peek(key)
+	return b, b != nil
 }
 
 func (c *Context) QueryDefault(key, defaultValue string) string {
@@ -177,11 +210,62 @@ func (c *Context) FastContext() *fasthttp.RequestCtx {
 }
 
 func (c *Context) SetValue(key, value interface{}) {
-	c.valueCtx = context.WithValue(c.valueCtx, key, value)
+	if c.values == nil {
+		c.values = make(map[interface{}]interface{}, 8)
+	}
+	c.values[key] = value
+}
+
+func (c *Context) Set(key, value interface{}) {
+	c.SetValue(key, value)
 }
 
 func (c *Context) Value(key interface{}) interface{} {
-	return c.valueCtx.Value(key)
+	if c.values != nil {
+		if v, ok := c.values[key]; ok {
+			return v
+		}
+	}
+	if c.reqCtx != nil {
+		return c.reqCtx.Value(key)
+	}
+	return nil
+}
+
+func (c *Context) GetValue(key interface{}) (interface{}, bool) {
+	if c.values == nil {
+		return nil, false
+	}
+	v, ok := c.values[key]
+	return v, ok
+}
+
+// Context returns the request context for cancellation/deadlines.
+func (c *Context) Context() context.Context {
+	if c.reqCtx == nil {
+		return context.Background()
+	}
+	return c.reqCtx
+}
+
+// SetContext sets the request context. A nil ctx resets to Background.
+func (c *Context) SetContext(ctx context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c.reqCtx = ctx
+}
+
+func (c *Context) Deadline() (time.Time, bool) {
+	return c.Context().Deadline()
+}
+
+func (c *Context) Done() <-chan struct{} {
+	return c.Context().Done()
+}
+
+func (c *Context) Err() error {
+	return c.Context().Err()
 }
 
 func (c *Context) SetCookie(cookie *fasthttp.Cookie) {
@@ -195,6 +279,19 @@ func (c *Context) Cookie(key string) string {
 // PostForm returns the specified key from a POST form request
 func (c *Context) PostForm(key string) string {
 	return string(c.fastCtx.PostArgs().Peek(key))
+}
+
+func (c *Context) GetPostForm(key string) (string, bool) {
+	b, ok := c.GetPostFormBytes(key)
+	if !ok {
+		return "", false
+	}
+	return string(b), true
+}
+
+func (c *Context) GetPostFormBytes(key string) ([]byte, bool) {
+	b := c.fastCtx.PostArgs().Peek(key)
+	return b, b != nil
 }
 
 // PostFormDefault returns the specified key from a POST form request or a default value
@@ -326,8 +423,20 @@ func (c *Context) Data(code int, contentType string, data []byte) {
 func (c *Context) HTML(code int, name string, obj interface{}) {
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.Status(code)
-	// For now, we just write the name as a placeholder
-	// In a real implementation, this would render a template
+	if c.render == nil || obj == nil {
+		_, _ = c.Writer.WriteString(name)
+		return
+	}
+	if hr, ok := c.render.(interface {
+		RenderHTML(name string, data interface{}) (io.Reader, error)
+	}); ok {
+		reader, err := hr.RenderHTML(name, obj)
+		if err != nil {
+			panic(err)
+		}
+		c.writeFromReader(reader)
+		return
+	}
 	_, _ = c.Writer.WriteString(name)
 }
 
@@ -363,16 +472,43 @@ func (c *Context) StatusCode() int {
 }
 
 func (c *Context) Render(data interface{}) {
+	if c.render == nil {
+		panic("render is nil")
+	}
 	reader, err := c.render.Render(data)
 	if err != nil {
 		panic(err)
 	}
-	for {
-		bs := make([]byte, 1024)
-		n, err := reader.Read(bs)
-		if err != nil && err != io.EOF {
-			break
-		}
-		_, _ = c.Writer.Write(bs[:n])
+	c.writeFromReader(reader)
+}
+
+func (c *Context) writeFromReader(r io.Reader) {
+	if r == nil {
+		panic("render returned nil reader")
 	}
+	buf := renderBufPool.Get().([]byte)
+	defer renderBufPool.Put(buf)
+	if _, err := io.CopyBuffer(c.Writer, r, buf); err != nil {
+		panic(err)
+	}
+}
+
+func (c *Context) QueryBytes(key string) []byte {
+	return c.fastCtx.QueryArgs().Peek(key)
+}
+
+func (c *Context) PostFormBytes(key string) []byte {
+	return c.fastCtx.PostArgs().Peek(key)
+}
+
+func (c *Context) HeaderBytes(key string) []byte {
+	return c.fastCtx.Request.Header.Peek(key)
+}
+
+func (c *Context) CookieBytes(key string) []byte {
+	return c.fastCtx.Request.Header.Cookie(key)
+}
+
+func (c *Context) BodyBytes() []byte {
+	return c.fastCtx.Request.Body()
 }
