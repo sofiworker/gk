@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -44,7 +46,22 @@ type Client struct {
 	requestMiddlewares  []RequestMiddleware
 	responseMiddlewares []ResponseMiddleware
 
-	defaultHeaders http.Header
+	defaultHeaders        http.Header
+	queryParams           url.Values
+	formData              url.Values
+	pathParams            map[string]string
+	ctx                   context.Context
+	timeout               time.Duration
+	authToken             string
+	authScheme            string
+	basicAuthUser         string
+	basicAuthPass         string
+	authHeaderKey         string
+	resultError           interface{}
+	responseUnwrapper     ResponseUnwrapper
+	responseStatusChecker ResponseStatusChecker
+	responseDir           string
+	saveToFile            bool
 
 	cookies      []*http.Cookie
 	cookieMu     sync.RWMutex
@@ -60,6 +77,13 @@ func NewClient(opts ...ClientOption) *Client {
 	client := &Client{
 		config:              cfg,
 		defaultHeaders:      make(http.Header),
+		queryParams:         make(url.Values),
+		formData:            make(url.Values),
+		pathParams:          make(map[string]string),
+		ctx:                 context.Background(),
+		timeout:             cfg.Timeout,
+		authScheme:          "Bearer",
+		authHeaderKey:       "Authorization",
 		bufferPool:          NewMultiSizeBufferPool(),
 		retryConfig:         cfg.RetryConfig,
 		logger:              newClientLogger(),
@@ -118,6 +142,8 @@ func (c *Client) init() {
 	} else if c.httpClient == nil {
 		if hc, ok := c.executor.(*http.Client); ok {
 			c.httpClient = hc
+		} else {
+			c.httpClient = c.buildHTTPClient()
 		}
 	}
 
@@ -205,7 +231,7 @@ func (c *Client) Name() string {
 	return c.name
 }
 
-func (c *Client) SetBaseUrl(baseURL string) *Client {
+func (c *Client) SetBaseURL(baseURL string) *Client {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.baseURLRaw = baseURL
@@ -219,7 +245,7 @@ func (c *Client) SetBaseUrl(baseURL string) *Client {
 	return c
 }
 
-func (c *Client) BaseUrl() string {
+func (c *Client) BaseURL() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.baseURLRaw
@@ -264,6 +290,184 @@ func (c *Client) SetRetryConfig(cfg *RetryConfig) *Client {
 		copyCfg.RetryConditions = append([]RetryCondition(nil), cfg.RetryConditions...)
 		c.retryConfig = &copyCfg
 	}
+	return c
+}
+
+func (c *Client) SetHeader(key, value string) *Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.defaultHeaders.Set(key, value)
+	return c
+}
+
+func (c *Client) SetHeaders(headers map[string]string) *Client {
+	for k, v := range headers {
+		c.SetHeader(k, v)
+	}
+	return c
+}
+
+func (c *Client) SetHeaderValues(headers map[string][]string) *Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k, values := range headers {
+		c.defaultHeaders[k] = append([]string(nil), values...)
+	}
+	return c
+}
+
+func (c *Client) SetUserAgent(userAgent string) *Client {
+	return c.SetHeader("User-Agent", userAgent)
+}
+
+func (c *Client) SetAccept(accept string) *Client {
+	return c.SetHeader("Accept", accept)
+}
+
+func (c *Client) SetContext(ctx context.Context) *Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c.ctx = ctx
+	return c
+}
+
+func (c *Client) SetTimeout(timeout time.Duration) *Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.timeout = timeout
+	if c.httpClient != nil && timeout > 0 {
+		c.httpClient.Timeout = timeout
+	}
+	return c
+}
+
+func (c *Client) SetCookie(cookie *http.Cookie) *Client {
+	c.AddCookie(cookie)
+	return c
+}
+
+func (c *Client) SetCookies(cookies []*http.Cookie) *Client {
+	for _, cookie := range cookies {
+		c.AddCookie(cookie)
+	}
+	return c
+}
+
+func (c *Client) SetQueryParam(key, value string) *Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.queryParams.Set(key, value)
+	return c
+}
+
+func (c *Client) SetQueryParams(params map[string]string) *Client {
+	for k, v := range params {
+		c.SetQueryParam(k, v)
+	}
+	return c
+}
+
+func (c *Client) AddQueryParamsFromValues(values url.Values) *Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for key, items := range values {
+		for _, item := range items {
+			c.queryParams.Add(key, item)
+		}
+	}
+	return c
+}
+
+func (c *Client) SetFormData(data map[string]string) *Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k, v := range data {
+		c.formData.Set(k, v)
+	}
+	return c
+}
+
+func (c *Client) SetFormDataFromValues(values url.Values) *Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for key, items := range values {
+		for _, item := range items {
+			c.formData.Add(key, item)
+		}
+	}
+	return c
+}
+
+func (c *Client) SetPathParam(key, value string) *Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.pathParams[key] = value
+	return c
+}
+
+func (c *Client) SetPathParams(params map[string]string) *Client {
+	for k, v := range params {
+		c.SetPathParam(k, v)
+	}
+	return c
+}
+
+func (c *Client) SetBasicAuth(username, password string) *Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.basicAuthUser = username
+	c.basicAuthPass = password
+	return c
+}
+
+func (c *Client) SetAuthToken(token string) *Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.authToken = token
+	return c
+}
+
+func (c *Client) SetAuthScheme(scheme string) *Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if strings.TrimSpace(scheme) == "" {
+		scheme = "Bearer"
+	}
+	c.authScheme = scheme
+	return c
+}
+
+func (c *Client) SetHeaderAuthorizationKey(key string) *Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if strings.TrimSpace(key) == "" {
+		key = "Authorization"
+	}
+	c.authHeaderKey = key
+	return c
+}
+
+func (c *Client) SetResultError(result interface{}) *Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.resultError = result
+	return c
+}
+
+func (c *Client) SetResponseSaveDirectory(dir string) *Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.responseDir = dir
+	return c
+}
+
+func (c *Client) SetResponseSaveToFile(save bool) *Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.saveToFile = save
 	return c
 }
 
@@ -323,7 +527,231 @@ func (c *Client) cookiesSnapshot() []*http.Cookie {
 }
 
 func (c *Client) R() *Request {
-	return newRequest(c)
+	req := newRequest(c)
+
+	c.mu.RLock()
+	req.Header = c.cloneDefaultHeaders()
+	req.QueryParams = CloneURLValues(c.queryParams)
+	req.FormData = CloneURLValues(c.formData)
+	req.ctx = c.ctx
+	req.timeout = c.timeout
+	req.AuthToken = c.authToken
+	req.AuthScheme = c.authScheme
+	req.basicAuthUser = c.basicAuthUser
+	req.basicAuthPass = c.basicAuthPass
+	req.HeaderAuthorizationKey = c.authHeaderKey
+	req.ResultError = c.resultError
+	req.responseUnwrapper = c.responseUnwrapper
+	req.responseStatusChecker = c.responseStatusChecker
+	req.responseSaveDirectory = c.responseDir
+	req.isResponseSaveToFile = c.saveToFile
+	for k, v := range c.pathParams {
+		req.PathParams[k] = v
+	}
+	c.mu.RUnlock()
+
+	req.Cookies = c.cookiesSnapshot()
+	return req
+}
+
+func (c *Client) NewRequest() *Request {
+	return c.R()
+}
+
+func (c *Client) HTTPClient() *http.Client {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.httpClient
+}
+
+func (c *Client) Clone() *Client {
+	if c == nil {
+		return nil
+	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	clone := &Client{
+		name:                  c.name,
+		baseURLRaw:            c.baseURLRaw,
+		config:                c.config,
+		httpClient:            c.httpClient,
+		executor:              c.executor,
+		logger:                c.logger,
+		tracer:                c.tracer,
+		cache:                 c.cache,
+		retryConfig:           c.retryConfig,
+		requestMiddlewares:    append([]RequestMiddleware(nil), c.requestMiddlewares...),
+		responseMiddlewares:   append([]ResponseMiddleware(nil), c.responseMiddlewares...),
+		defaultHeaders:        c.defaultHeaders.Clone(),
+		queryParams:           CloneURLValues(c.queryParams),
+		formData:              CloneURLValues(c.formData),
+		pathParams:            cloneStringMap(c.pathParams),
+		ctx:                   c.ctx,
+		timeout:               c.timeout,
+		authToken:             c.authToken,
+		authScheme:            c.authScheme,
+		basicAuthUser:         c.basicAuthUser,
+		basicAuthPass:         c.basicAuthPass,
+		authHeaderKey:         c.authHeaderKey,
+		resultError:           c.resultError,
+		responseUnwrapper:     c.responseUnwrapper,
+		responseStatusChecker: c.responseStatusChecker,
+		responseDir:           c.responseDir,
+		saveToFile:            c.saveToFile,
+		bufferPool:            c.bufferPool,
+		codecManager:          c.codecManager,
+		debug:                 c.debug,
+	}
+
+	if c.baseURL != nil {
+		baseCopy := *c.baseURL
+		clone.baseURL = &baseCopy
+	}
+	clone.cookies = c.cookiesSnapshot()
+	return clone
+}
+
+func (c *Client) SubClient(steps ...RequestStep) *Client {
+	clone := c.Clone()
+	if clone == nil {
+		return nil
+	}
+	if len(steps) == 0 {
+		return clone
+	}
+	req := clone.R()
+	if err := req.Apply(steps...); err != nil {
+		return clone
+	}
+
+	clone.mu.Lock()
+	clone.defaultHeaders = req.Header.Clone()
+	clone.queryParams = CloneURLValues(req.QueryParams)
+	clone.formData = CloneURLValues(req.FormData)
+	clone.pathParams = cloneStringMap(req.PathParams)
+	clone.ctx = req.Context()
+	clone.timeout = req.timeout
+	clone.authToken = req.AuthToken
+	clone.authScheme = req.AuthScheme
+	clone.basicAuthUser = req.basicAuthUser
+	clone.basicAuthPass = req.basicAuthPass
+	clone.authHeaderKey = req.HeaderAuthorizationKey
+	clone.resultError = req.ResultError
+	clone.responseUnwrapper = req.responseUnwrapper
+	clone.responseStatusChecker = req.responseStatusChecker
+	clone.responseDir = req.responseSaveDirectory
+	clone.saveToFile = req.isResponseSaveToFile
+	clone.mu.Unlock()
+
+	clone.cookieMu.Lock()
+	clone.cookies = append([]*http.Cookie(nil), req.Cookies...)
+	clone.cookieMu.Unlock()
+
+	return clone
+}
+
+func (c *Client) Executor() HTTPExecutor {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.executor
+}
+
+func (c *Client) Execute(method, rawURL string) (*Response, error) {
+	return c.R().Execute(method, rawURL)
+}
+
+func (c *Client) Do(httpReq *http.Request) (*Response, error) {
+	if httpReq == nil {
+		return nil, errors.New("http request is nil")
+	}
+	req := c.R().FromHTTPRequest(httpReq)
+	return c.execute(req)
+}
+
+func (c *Client) Get(rawURL string) (*Response, error) {
+	return c.R().Get(rawURL)
+}
+
+func (c *Client) MustGet(rawURL string) *Response {
+	resp, err := c.Get(rawURL)
+	if err != nil {
+		panic(err)
+	}
+	return resp
+}
+
+func (c *Client) Post(rawURL string) (*Response, error) {
+	return c.R().Post(rawURL)
+}
+
+func (c *Client) MustPost(rawURL string) *Response {
+	resp, err := c.Post(rawURL)
+	if err != nil {
+		panic(err)
+	}
+	return resp
+}
+
+func (c *Client) Put(rawURL string) (*Response, error) {
+	return c.R().Put(rawURL)
+}
+
+func (c *Client) MustPut(rawURL string) *Response {
+	resp, err := c.Put(rawURL)
+	if err != nil {
+		panic(err)
+	}
+	return resp
+}
+
+func (c *Client) Delete(rawURL string) (*Response, error) {
+	return c.R().Delete(rawURL)
+}
+
+func (c *Client) MustDelete(rawURL string) *Response {
+	resp, err := c.Delete(rawURL)
+	if err != nil {
+		panic(err)
+	}
+	return resp
+}
+
+func (c *Client) Patch(rawURL string) (*Response, error) {
+	return c.R().Patch(rawURL)
+}
+
+func (c *Client) MustPatch(rawURL string) *Response {
+	resp, err := c.Patch(rawURL)
+	if err != nil {
+		panic(err)
+	}
+	return resp
+}
+
+func (c *Client) Head(rawURL string) (*Response, error) {
+	return c.R().Head(rawURL)
+}
+
+func (c *Client) MustHead(rawURL string) *Response {
+	resp, err := c.Head(rawURL)
+	if err != nil {
+		panic(err)
+	}
+	return resp
+}
+
+func (c *Client) Options(rawURL string) (*Response, error) {
+	return c.R().Options(rawURL)
+}
+
+func (c *Client) MustOptions(rawURL string) *Response {
+	resp, err := c.Options(rawURL)
+	if err != nil {
+		panic(err)
+	}
+	return resp
 }
 
 func (c *Client) execute(r *Request) (*Response, error) {
@@ -348,6 +776,7 @@ func (c *Client) execute(r *Request) (*Response, error) {
 	}
 
 	builder := newHTTPRequestBuilder(r, c)
+	executor := c.effectiveExecutorForRequest(r)
 
 	attempt := 0
 	start := time.Now()
@@ -359,6 +788,15 @@ func (c *Client) execute(r *Request) (*Response, error) {
 		if err != nil {
 			return nil, err
 		}
+		r.RawRequest = httpReq
+
+		if c.logger != nil && c.config.DumpConfig != nil && c.config.DumpConfig.DumpRequest {
+			if dump, dumpErr := dumpHTTPRequest(httpReq); dumpErr == nil {
+				c.logger.Debugf("request dump\n%s", dump)
+			} else {
+				c.logger.Warnf("dump request failed: %v", dumpErr)
+			}
+		}
 
 		ctx := httpReq.Context()
 		if ctx == nil {
@@ -366,16 +804,30 @@ func (c *Client) execute(r *Request) (*Response, error) {
 			httpReq = httpReq.WithContext(ctx)
 		}
 
-		var spanEnd func()
-		if c.tracer != nil {
-			traceCtx, end := c.tracer.StartSpan(ctx)
-			httpReq = httpReq.WithContext(traceCtx)
-			spanEnd = end
-			c.tracer.SetAttribute("http.method", httpReq.Method)
-			c.tracer.SetAttribute("http.url", httpReq.URL.String())
+		tracer := c.tracer
+		if r.tracer != nil {
+			tracer = r.tracer
 		}
 
-		httpResp, execErr := c.executor.Do(httpReq)
+		var spanEnd func()
+		if tracer != nil {
+			traceCtx, end := tracer.StartSpan(ctx)
+			httpReq = httpReq.WithContext(traceCtx)
+			spanEnd = end
+			tracer.SetAttribute("http.method", httpReq.Method)
+			tracer.SetAttribute("http.url", httpReq.URL.String())
+		}
+
+		var cancel context.CancelFunc
+		if r.timeout > 0 {
+			ctx, cancel = context.WithTimeout(httpReq.Context(), r.timeout)
+			httpReq = httpReq.WithContext(ctx)
+		}
+
+		httpResp, execErr := executor.Do(httpReq)
+		if cancel != nil {
+			cancel()
+		}
 		if spanEnd != nil {
 			spanEnd()
 		}
@@ -503,6 +955,7 @@ func (c *Client) buildResponse(r *Request, httpResp *http.Response, duration tim
 	response := &Response{
 		client:      c,
 		Request:     r,
+		RawResponse: httpResp,
 		StatusCode:  httpResp.StatusCode,
 		Status:      httpResp.Status,
 		Header:      httpResp.Header.Clone(),
@@ -513,10 +966,125 @@ func (c *Client) buildResponse(r *Request, httpResp *http.Response, duration tim
 	}
 
 	if c.logger != nil && c.config.DumpConfig != nil && c.config.DumpConfig.DumpResponse {
-		c.logger.Debugf("response %s %s -> %d (%s)", r.Method, r.URL, response.StatusCode, duration)
+		c.logger.Debugf("response dump\n%s", response.Dump())
+	}
+
+	if err := response.bindResult(); err != nil {
+		return response, err
+	}
+	if err := c.maybeSaveResponseToFile(response); err != nil {
+		return response, err
 	}
 
 	return response, nil
+}
+
+func (c *Client) effectiveExecutorForRequest(r *Request) HTTPExecutor {
+	if !requestNeedsHTTPClientOverride(r) {
+		return c.executor
+	}
+	if c.executor != nil && c.executor != c.httpClient {
+		return c.executor
+	}
+	if client := c.buildRequestHTTPClient(r); client != nil {
+		return client
+	}
+	return c.executor
+}
+
+func (c *Client) buildRequestHTTPClient(r *Request) *http.Client {
+	base := c.httpClient
+	if base == nil {
+		base = c.buildHTTPClient()
+	}
+
+	tmp := new(http.Client)
+	*tmp = *base
+
+	if transport, ok := base.Transport.(*http.Transport); ok && transport != nil {
+		cloned := transport.Clone()
+		switch {
+		case r.disableProxy:
+			cloned.Proxy = nil
+		case r.proxyFunc != nil:
+			cloned.Proxy = r.proxyFunc
+		case strings.TrimSpace(r.proxyURL) != "":
+			if parsed, err := url.Parse(r.proxyURL); err == nil {
+				cloned.Proxy = http.ProxyURL(parsed)
+			}
+		}
+		tmp.Transport = cloned
+	}
+
+	c.applyRequestRedirectPolicy(tmp, r)
+
+	return tmp
+}
+
+func requestNeedsHTTPClientOverride(r *Request) bool {
+	if r == nil {
+		return false
+	}
+	return r.disableProxy ||
+		r.proxyFunc != nil ||
+		strings.TrimSpace(r.proxyURL) != "" ||
+		r.followRedirects != nil ||
+		r.maxRedirects > 0 ||
+		len(r.redirectHandlers) > 0
+}
+
+func (c *Client) applyRequestRedirectPolicy(httpClient *http.Client, r *Request) {
+	if httpClient == nil || r == nil {
+		return
+	}
+
+	follow := true
+	max := 10
+	var handlers []func(*Response) bool
+
+	if c.config != nil && c.config.RedirectConfig != nil {
+		follow = c.config.RedirectConfig.FollowRedirects
+		if c.config.RedirectConfig.MaxRedirects > 0 {
+			max = c.config.RedirectConfig.MaxRedirects
+		}
+		handlers = append(handlers, c.config.RedirectConfig.RedirectHandlers...)
+	}
+	if r.followRedirects != nil {
+		follow = *r.followRedirects
+	}
+	if r.maxRedirects > 0 {
+		max = r.maxRedirects
+	}
+	if len(r.redirectHandlers) > 0 {
+		handlers = append(handlers, r.redirectHandlers...)
+	}
+
+	if !follow {
+		httpClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+		return
+	}
+
+	if max <= 0 {
+		max = 10
+	}
+	if max > 0 || len(handlers) > 0 {
+		httpClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			if len(via) >= max {
+				return http.ErrUseLastResponse
+			}
+			if len(handlers) > 0 && req.Response != nil {
+				resp := c.buildRedirectResponse(req.Response)
+				for _, handler := range handlers {
+					if handler != nil && !handler(resp) {
+						return http.ErrUseLastResponse
+					}
+				}
+			}
+			return nil
+		}
+	}
 }
 
 func (c *Client) tryCacheHit(r *Request) (*Response, bool, error) {
@@ -637,6 +1205,63 @@ func WithTracer(tracer Tracer) ClientOption {
 			c.tracer = tracer
 		}
 	}
+}
+
+func (c *Client) maybeSaveResponseToFile(resp *Response) error {
+	if resp == nil || resp.Request == nil || !resp.Request.isResponseSaveToFile {
+		return nil
+	}
+
+	target := resp.Request.responseSaveFileName
+	if strings.TrimSpace(target) == "" {
+		target = inferResponseFilename(resp)
+		if dir := strings.TrimSpace(resp.Request.responseSaveDirectory); dir != "" {
+			target = filepath.Join(dir, target)
+		}
+	}
+
+	if dir := filepath.Dir(target); dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+
+	return os.WriteFile(target, resp.Body, 0o644)
+}
+
+func inferResponseFilename(resp *Response) string {
+	if resp == nil || resp.Request == nil {
+		return "response.body"
+	}
+	if disposition := resp.HeaderGet("Content-Disposition"); disposition != "" {
+		if idx := strings.Index(strings.ToLower(disposition), "filename="); idx >= 0 {
+			name := strings.TrimSpace(disposition[idx+len("filename="):])
+			name = strings.Trim(name, `"`)
+			if name != "" {
+				return name
+			}
+		}
+	}
+	if raw := resp.Request.URL; raw != "" {
+		if parsed, err := url.Parse(raw); err == nil {
+			base := filepath.Base(parsed.Path)
+			if base != "" && base != "." && base != "/" {
+				return base
+			}
+		}
+	}
+	return "response.body"
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
 
 func WithCache(cache Cache) ClientOption {

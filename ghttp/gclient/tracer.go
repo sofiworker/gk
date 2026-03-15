@@ -2,25 +2,26 @@ package gclient
 
 import (
 	"context"
+	"fmt"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
 
-// Tracer 定义通用的追踪器接口，支持多种不同的otel库
+// Tracer 定义通用追踪接口。
 type Tracer interface {
 	StartSpan(ctx context.Context) (context.Context, func())
 	SpanName() string
 	SetAttribute(key string, value interface{})
 }
 
-// OpenTelemetryTracer OpenTelemetry实现
+// OpenTelemetryTracer 是基于 OpenTelemetry 的追踪实现。
 type OpenTelemetryTracer struct {
 	span trace.Span
 }
 
-// StartSpan 启动一个新的span
+// StartSpan 启动一个新的 span。
 func (o *OpenTelemetryTracer) StartSpan(ctx context.Context) (context.Context, func()) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -30,13 +31,12 @@ func (o *OpenTelemetryTracer) StartSpan(ctx context.Context) (context.Context, f
 	return ctx, func() { span.End() }
 }
 
-// SetAttribute 设置span属性
+// SetAttribute 设置 span 属性。
 func (o *OpenTelemetryTracer) SetAttribute(key string, value interface{}) {
 	if o.span == nil {
 		return
 	}
 
-	// 根据值的类型设置不同的attribute
 	switch v := value.(type) {
 	case string:
 		o.span.SetAttributes(attribute.String(key, v))
@@ -49,51 +49,43 @@ func (o *OpenTelemetryTracer) SetAttribute(key string, value interface{}) {
 	case bool:
 		o.span.SetAttributes(attribute.Bool(key, v))
 	default:
-		o.span.SetAttributes(attribute.String(key, v.(string)))
+		o.span.SetAttributes(attribute.String(key, fmt.Sprint(value)))
 	}
 }
 
-// SpanName 返回span名称
+// SpanName 返回默认 span 名称。
 func (o *OpenTelemetryTracer) SpanName() string {
 	return "ghttp_request"
 }
 
-// JaegerTracer Jaeger实现示例（需要根据实际Jaeger SDK调整）
-type JaegerTracer struct {
-	// Jaeger特定的字段
-}
+// JaegerTracer 是 Jaeger 的占位实现，便于后续接入具体 SDK。
+type JaegerTracer struct{}
 
-// StartSpan Jaeger实现
+// StartSpan 启动 Jaeger span。
 func (j *JaegerTracer) StartSpan(ctx context.Context) (context.Context, func()) {
-	// Jaeger实现逻辑
-	// 这里仅作示例，实际需要根据Jaeger SDK实现
 	return ctx, func() {}
 }
 
-// SetAttribute Jaeger实现
-func (j *JaegerTracer) SetAttribute(key string, value interface{}) {
-	// Jaeger设置属性逻辑
-}
+// SetAttribute 设置 Jaeger span 属性。
+func (j *JaegerTracer) SetAttribute(key string, value interface{}) {}
 
-// SpanName Jaeger实现
+// SpanName 返回默认 span 名称。
 func (j *JaegerTracer) SpanName() string {
 	return "ghttp_request"
 }
 
-// NoopTracer 空实现，用于禁用追踪
+// NoopTracer 是空实现，用于禁用追踪。
 type NoopTracer struct{}
 
-// StartSpan 空实现
+// StartSpan 直接返回原始 context。
 func (n *NoopTracer) StartSpan(ctx context.Context) (context.Context, func()) {
 	return ctx, func() {}
 }
 
-// SetAttribute 空实现
-func (n *NoopTracer) SetAttribute(key string, value interface{}) {
-	// 空实现
-}
+// SetAttribute 是空操作。
+func (n *NoopTracer) SetAttribute(key string, value interface{}) {}
 
-// SpanName 空实现
+// SpanName 返回默认 span 名称。
 func (n *NoopTracer) SpanName() string {
 	return "ghttp_request"
 }

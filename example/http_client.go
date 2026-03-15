@@ -11,7 +11,7 @@ import (
 
 func main() {
 	client := gclient.NewClient()
-	client.SetBaseUrl("http://127.0.0.1:8080")
+	client.SetBaseURL("http://127.0.0.1:8080")
 
 	response, err := client.R().
 		SetBody(map[string]interface{}{
