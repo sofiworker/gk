@@ -155,6 +155,45 @@ func TestRegisterInvalidPath(t *testing.T) {
 	}
 }
 
+func TestRegisterInvalidWildcardPaths(t *testing.T) {
+	s := httpserver.NewServer()
+	h := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+
+	cases := []struct {
+		name string
+		path string
+	}{
+		{
+			name: "named param missing",
+			path: "/:",
+		},
+		{
+			name: "wildcard missing",
+			path: "/*",
+		},
+		{
+			name: "wildcard not at end",
+			path: "/a/*x/b",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if p := recover(); p != nil {
+					t.Fatalf("Register should not panic, panic=%v", p)
+				}
+			}()
+
+			err := Register(s, tc.path, h)
+			if !errors.Is(err, ErrInvalidPath) {
+				t.Fatalf("expected ErrInvalidPath, got %v", err)
+			}
+		})
+	}
+}
+
 func TestRegisterRequestProjection(t *testing.T) {
 	s := httpserver.NewServer()
 

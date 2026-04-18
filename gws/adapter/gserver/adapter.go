@@ -38,10 +38,12 @@ func Register(s *httpserver.Server, path string, h http.Handler) error {
 		return err
 	}
 
-	s.ANY(path, func(ctx *httpserver.Context) {
+	if err := registerAny(s, path, func(ctx *httpserver.Context) {
 		req := buildRequest(ctx)
 		h.ServeHTTP(ctx.Writer, req)
-	})
+	}); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -109,4 +111,14 @@ func parseProtoVersion(proto string) (int, int) {
 		return 0, 0
 	}
 	return major, minor
+}
+
+func registerAny(s *httpserver.Server, path string, handler httpserver.HandlerFunc) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = ErrInvalidPath
+		}
+	}()
+	s.ANY(path, handler)
+	return nil
 }
