@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<wsdl:definitions
+    xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+    xmlns:tns="urn:choice/wsdl"
+    targetNamespace="urn:choice/wsdl">
+    <wsdl:types>
+        <xsd:schema targetNamespace="urn:choice/wsdl" elementFormDefault="qualified">
+            <xsd:complexType name="Payload">
+                <xsd:choice>
+                    <xsd:element name="a" type="xsd:string"/>
+                    <xsd:element name="b" type="xsd:string"/>
+                </xsd:choice>
+            </xsd:complexType>
+            <xsd:element name="Root" type="tns:Payload"/>
+        </xsd:schema>
+    </wsdl:types>
+</wsdl:definitions>

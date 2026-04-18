@@ -95,22 +95,9 @@ func TestParseEchoWSDL(t *testing.T) {
 }
 
 func TestRejectUnsupportedChoice(t *testing.T) {
-	data := []byte(`<?xml version="1.0" encoding="UTF-8"?>
-<wsdl:definitions xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:tns="urn:test" targetNamespace="urn:test">
-  <wsdl:types>
-    <xsd:schema targetNamespace="urn:test">
-      <xsd:complexType name="Payload">
-        <xsd:choice>
-          <xsd:element name="a" type="xsd:string"/>
-          <xsd:element name="b" type="xsd:string"/>
-        </xsd:choice>
-      </xsd:complexType>
-      <xsd:element name="Root" type="tns:Payload"/>
-    </xsd:schema>
-  </wsdl:types>
-</wsdl:definitions>`)
+	data := loadFixture(t, "choice.wsdl")
 
-	_, err := Parse(data, t.TempDir())
+	_, err := Parse(data, fixturePath(t, ""))
 	if err == nil {
 		t.Fatal("expected Parse to fail")
 	}
