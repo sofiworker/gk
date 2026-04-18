@@ -3,6 +3,7 @@ package gws
 import (
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"testing"
 )
 
@@ -10,8 +11,9 @@ func TestRequestBuildHTTPRequest(t *testing.T) {
 	req := newRequest(operationOptions{
 		endpoint: "http://example.com/ws",
 		operation: Operation{
-			Name:   "Echo",
-			Action: "urn:Echo",
+			Name:           "Echo",
+			Action:         "urn:Echo",
+			RequestWrapper: xml.Name{Space: "urn:test", Local: "Echo"},
 		},
 	})
 	req.SetBody(struct {
@@ -39,6 +41,30 @@ func TestRequestBuildHTTPRequest(t *testing.T) {
 
 	if got := httpReq.Header.Get("X-Trace-ID"); got != "trace-1" {
 		t.Fatalf("unexpected custom header: %q", got)
+	}
+}
+
+func TestRequestWrapperMismatch(t *testing.T) {
+	req := newRequest(operationOptions{
+		endpoint: "http://example.com/ws",
+		operation: Operation{
+			Name:           "Echo",
+			Action:         "urn:Echo",
+			RequestWrapper: xml.Name{Space: "urn:test", Local: "Another"},
+		},
+	})
+	req.SetBody(struct {
+		XMLName xml.Name `xml:"urn:test Echo"`
+		Value   string   `xml:"value"`
+	}{Value: "hello"})
+
+	_, err := req.BuildHTTPRequest()
+	if err == nil {
+		t.Fatal("BuildHTTPRequest should fail when request wrapper mismatched")
+	}
+
+	if !errors.Is(err, ErrRequestWrapperMismatch) {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

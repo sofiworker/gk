@@ -12,6 +12,7 @@ import (
 
 var ErrEmptyEndpoint = errors.New("empty endpoint")
 var ErrUnsupportedSOAPVersion = errors.New("unsupported SOAP version")
+var ErrRequestWrapperMismatch = errors.New("request wrapper mismatch")
 
 type operationOptions struct {
 	ctx        context.Context
@@ -93,6 +94,10 @@ func (r *Request) SetBody(v any) *Request {
 func (r *Request) XMLBytes() ([]byte, error) {
 	if r == nil {
 		return nil, ErrNilRequest
+	}
+
+	if err := validateRequestWrapper(r.operation.RequestWrapper, r.body); err != nil {
+		return nil, err
 	}
 
 	soapEnv, err := resolveSOAPEnvelopeNamespace(r.operation.SOAPVersion)
@@ -189,4 +194,39 @@ func resolveSOAPEnvelopeNamespace(version SOAPVersion) (string, error) {
 	}
 
 	return soapEnv, nil
+}
+
+func validateRequestWrapper(expectWrapper xml.Name, body any) error {
+	if isZeroXMLName(expectWrapper) {
+		return nil
+	}
+
+	actualWrapper, err := requestBodyWrapperName(body)
+	if err != nil {
+		return err
+	}
+
+	if expectWrapper == actualWrapper {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"%w: want=%s got=%s",
+		ErrRequestWrapperMismatch,
+		formatXMLName(expectWrapper),
+		formatXMLName(actualWrapper),
+	)
+}
+
+func requestBodyWrapperName(v any) (xml.Name, error) {
+	if v == nil {
+		return xml.Name{}, nil
+	}
+
+	data, err := xml.Marshal(v)
+	if err != nil {
+		return xml.Name{}, err
+	}
+
+	return firstElementName(data)
 }
