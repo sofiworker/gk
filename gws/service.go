@@ -10,6 +10,7 @@ import (
 var ErrNilServiceDesc = errors.New("nil service desc")
 var ErrOperationNotFound = errors.New("operation not found")
 var ErrOperationInvokerNotFound = errors.New("operation invoker not found")
+var ErrMissingRequestFactory = errors.New("missing request factory")
 
 type WSDLAssetSet struct {
 	Main []byte

@@ -103,7 +103,13 @@ func (h *Handler) servePOST(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req := op.buildRequest()
-	if req != nil && len(bytes.TrimSpace(payload)) > 0 {
+	hasPayload := len(bytes.TrimSpace(payload)) > 0
+	if hasPayload && req == nil {
+		h.writeClientFault(w, ErrMissingRequestFactory)
+		return
+	}
+
+	if req != nil && hasPayload {
 		if err := xml.Unmarshal(payload, req); err != nil {
 			h.writeClientFault(w, fmt.Errorf("decode operation request: %w", err))
 			return
@@ -116,14 +122,18 @@ func (h *Handler) servePOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.writeOperationResponse(w, op.Operation.SOAPVersion, resp); err != nil {
+	if err := h.writeOperationResponse(w, op.Operation, resp); err != nil {
 		h.writeServerFault(w, fmt.Errorf("encode operation response: %w", err), op.Operation.SOAPVersion)
 		return
 	}
 }
 
-func (h *Handler) writeOperationResponse(w http.ResponseWriter, version SOAPVersion, resp any) error {
-	soapEnv, err := h.resolveSOAPEnvelope(version)
+func (h *Handler) writeOperationResponse(w http.ResponseWriter, operation Operation, resp any) error {
+	if err := validateOperationResponseWrapper(operation.ResponseWrapper, resp); err != nil {
+		return err
+	}
+
+	soapEnv, err := h.resolveSOAPEnvelope(operation.SOAPVersion)
 	if err != nil {
 		return err
 	}
@@ -139,6 +149,19 @@ func (h *Handler) writeOperationResponse(w http.ResponseWriter, version SOAPVers
 	}
 
 	writeXML(w, http.StatusOK, data)
+	return nil
+}
+
+func validateOperationResponseWrapper(expectWrapper xml.Name, resp any) error {
+	actualWrapper, err := requestBodyWrapperName(resp)
+	if err != nil {
+		return err
+	}
+
+	if err := checkResponseWrapper(expectWrapper, actualWrapper); err != nil {
+		return err
+	}
+
 	return nil
 }
 

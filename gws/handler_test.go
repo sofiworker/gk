@@ -237,3 +237,101 @@ func TestHandlerMethodNotAllowed(t *testing.T) {
 		t.Fatalf("unexpected status: %d", resp.Code)
 	}
 }
+
+func TestHandlerResponseWrapperMismatch(t *testing.T) {
+	h, err := NewHandler(&ServiceDesc{
+		Operations: []OperationDesc{{
+			Operation: Operation{
+				Name:            "Echo",
+				RequestWrapper:  xml.Name{Space: "urn:test", Local: "Echo"},
+				ResponseWrapper: xml.Name{Space: "urn:test", Local: "EchoResponse"},
+			},
+			NewRequest: func() any {
+				return &struct {
+					XMLName xml.Name `xml:"urn:test Echo"`
+				}{}
+			},
+		}},
+	}, mockInvoker(func(ctx context.Context, operation string, req any) (any, error) {
+		return &struct {
+			XMLName xml.Name `xml:"urn:test WrongResponse"`
+			Value   string   `xml:"value"`
+		}{Value: "bad"}, nil
+	}))
+	if err != nil {
+		t.Fatalf("NewHandler failed: %v", err)
+	}
+
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, httptest.NewRequest(http.MethodPost, "/ws", strings.NewReader(soapRequestXML)))
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("unexpected status: %d", resp.Code)
+	}
+	if strings.Contains(resp.Body.String(), "<WrongResponse") {
+		t.Fatalf("should not write successful payload on mismatch: %s", resp.Body.String())
+	}
+	if !strings.Contains(resp.Body.String(), ErrResponseWrapperMismatch.Error()) {
+		t.Fatalf("unexpected fault body: %s", resp.Body.String())
+	}
+}
+
+func TestHandlerMissingRequestFactory(t *testing.T) {
+	called := false
+	h, err := NewHandler(&ServiceDesc{
+		Operations: []OperationDesc{{
+			Operation: Operation{
+				Name:           "Echo",
+				RequestWrapper: xml.Name{Space: "urn:test", Local: "Echo"},
+			},
+			NewRequest: nil,
+		}},
+	}, mockInvoker(func(ctx context.Context, operation string, req any) (any, error) {
+		called = true
+		return &struct {
+			XMLName xml.Name `xml:"urn:test EchoResponse"`
+		}{}, nil
+	}))
+	if err != nil {
+		t.Fatalf("NewHandler failed: %v", err)
+	}
+
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, httptest.NewRequest(http.MethodPost, "/ws", strings.NewReader(soapRequestXML)))
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("unexpected status: %d", resp.Code)
+	}
+	if called {
+		t.Fatal("business invoker should not be called without request factory")
+	}
+	if !strings.Contains(resp.Body.String(), ErrMissingRequestFactory.Error()) {
+		t.Fatalf("unexpected fault body: %s", resp.Body.String())
+	}
+}
+
+func TestHandlerMissingOperationInvoker(t *testing.T) {
+	h, err := NewHandler(&ServiceDesc{
+		Operations: []OperationDesc{{
+			Operation: Operation{
+				Name:           "Echo",
+				RequestWrapper: xml.Name{Space: "urn:test", Local: "Echo"},
+			},
+			NewRequest: func() any {
+				return &struct {
+					XMLName xml.Name `xml:"urn:test Echo"`
+				}{}
+			},
+		}},
+	}, struct{}{})
+	if err != nil {
+		t.Fatalf("NewHandler failed: %v", err)
+	}
+
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, httptest.NewRequest(http.MethodPost, "/ws", strings.NewReader(soapRequestXML)))
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("unexpected status: %d", resp.Code)
+	}
+	if !strings.Contains(resp.Body.String(), ErrOperationInvokerNotFound.Error()) {
+		t.Fatalf("unexpected fault body: %s", resp.Body.String())
+	}
+}
