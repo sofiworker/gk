@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -27,8 +28,9 @@ func TestClientDoOK(t *testing.T) {
 	req := newRequest(operationOptions{
 		endpoint: srv.URL,
 		operation: Operation{
-			Name:   "Echo",
-			Action: "urn:Echo",
+			Name:            "Echo",
+			Action:          "urn:Echo",
+			ResponseWrapper: xml.Name{Space: "urn:test", Local: "EchoResponse"},
 		},
 	})
 	req.SetBody(struct {
@@ -49,6 +51,44 @@ func TestClientDoOK(t *testing.T) {
 
 	if out.Value != "ok" {
 		t.Fatalf("unexpected response value: %q", out.Value)
+	}
+}
+
+func TestClientDoResponseWrapperMismatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/xml; charset=utf-8")
+		_, _ = w.Write([]byte(`<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+			<soapenv:Body>
+				<AnotherResponse xmlns="urn:test">
+					<value>ok</value>
+				</AnotherResponse>
+			</soapenv:Body>
+		</soapenv:Envelope>`))
+	}))
+	defer srv.Close()
+
+	req := newRequest(operationOptions{
+		endpoint: srv.URL,
+		operation: Operation{
+			Name:            "Echo",
+			Action:          "urn:Echo",
+			ResponseWrapper: xml.Name{Space: "urn:test", Local: "EchoResponse"},
+		},
+	})
+	req.SetBody(struct {
+		XMLName xml.Name `xml:"urn:test Echo"`
+		Value   string   `xml:"value"`
+	}{Value: "hello"})
+
+	client := NewClient()
+	client.httpClient = srv.Client()
+	err := client.Do(req, &struct{}{})
+	if err == nil {
+		t.Fatal("Do should fail when response wrapper mismatched")
+	}
+
+	if !errors.Is(err, ErrResponseWrapperMismatch) {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -100,5 +140,39 @@ func TestClientDoFault(t *testing.T) {
 
 	if faultErr.Fault.String != "boom" {
 		t.Fatalf("unexpected fault string: %q", faultErr.Fault.String)
+	}
+}
+
+func TestClientOptionDefaultSOAPVersion(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("request should not be sent when SOAP version unsupported")
+	}))
+	defer srv.Close()
+
+	req := newRequest(operationOptions{
+		endpoint: srv.URL,
+		operation: Operation{
+			Name:   "Echo",
+			Action: "urn:Echo",
+		},
+	})
+	req.SetBody(struct {
+		XMLName xml.Name `xml:"urn:test Echo"`
+		Value   string   `xml:"value"`
+	}{Value: "hello"})
+
+	client := NewClient(WithClientSOAPVersion("custom"))
+	client.httpClient = srv.Client()
+	err := client.Do(req, &struct{}{})
+	if err == nil {
+		t.Fatal("Do should fail when client default SOAP version unsupported")
+	}
+
+	if !errors.Is(err, ErrUnsupportedSOAPVersion) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(err.Error(), "custom") {
+		t.Fatalf("error should include unsupported version, got: %v", err)
 	}
 }

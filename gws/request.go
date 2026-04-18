@@ -11,6 +11,7 @@ import (
 )
 
 var ErrEmptyEndpoint = errors.New("empty endpoint")
+var ErrUnsupportedSOAPVersion = errors.New("unsupported SOAP version")
 
 type operationOptions struct {
 	ctx        context.Context
@@ -94,9 +95,9 @@ func (r *Request) XMLBytes() ([]byte, error) {
 		return nil, ErrNilRequest
 	}
 
-	soapEnv, _ := SOAPNamespaces(r.operation.SOAPVersion)
-	if soapEnv == "" {
-		soapEnv = SOAP11EnvelopeNamespace
+	soapEnv, err := resolveSOAPEnvelopeNamespace(r.operation.SOAPVersion)
+	if err != nil {
+		return nil, err
 	}
 
 	env := requestEnvelope{
@@ -175,4 +176,17 @@ func quoteSOAPAction(action string) string {
 		return action
 	}
 	return fmt.Sprintf("%q", action)
+}
+
+func resolveSOAPEnvelopeNamespace(version SOAPVersion) (string, error) {
+	if version == "" {
+		return SOAP11EnvelopeNamespace, nil
+	}
+
+	soapEnv, _ := SOAPNamespaces(version)
+	if soapEnv == "" {
+		return "", fmt.Errorf("%w: %q", ErrUnsupportedSOAPVersion, version)
+	}
+
+	return soapEnv, nil
 }
