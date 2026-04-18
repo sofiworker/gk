@@ -120,6 +120,77 @@ func TestRegisterHandler(t *testing.T) {
 	})
 }
 
+func TestRegisterInvalidPath(t *testing.T) {
+	s := httpserver.NewServer()
+	h := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+
+	cases := []struct {
+		name string
+		path string
+	}{
+		{
+			name: "without leading slash",
+			path: "ws",
+		},
+		{
+			name: "contains query separator",
+			path: "/ws?x=1",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if p := recover(); p != nil {
+					t.Fatalf("Register should not panic, panic=%v", p)
+				}
+			}()
+
+			err := Register(s, tc.path, h)
+			if !errors.Is(err, ErrInvalidPath) {
+				t.Fatalf("expected ErrInvalidPath, got %v", err)
+			}
+		})
+	}
+}
+
+func TestRegisterRequestProjection(t *testing.T) {
+	s := httpserver.NewServer()
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Scheme != "http" {
+			t.Fatalf("unexpected scheme: %q", r.URL.Scheme)
+		}
+		if r.URL.Host != "example.com" {
+			t.Fatalf("unexpected url host: %q", r.URL.Host)
+		}
+		if r.Proto != "HTTP/1.1" {
+			t.Fatalf("unexpected proto: %q", r.Proto)
+		}
+		if r.ProtoMajor != 1 || r.ProtoMinor != 1 {
+			t.Fatalf("unexpected proto version: %d.%d", r.ProtoMajor, r.ProtoMinor)
+		}
+		if r.RemoteAddr != "10.0.0.1:8080" {
+			t.Fatalf("unexpected remote addr: %q", r.RemoteAddr)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	if err := Register(s, "/projection", handler); err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/projection", nil)
+	req.RemoteAddr = "10.0.0.1:8080"
+
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+}
+
 func TestRegisterServeWSDL(t *testing.T) {
 	h, err := gws.NewHandler(&gws.ServiceDesc{
 		WSDL: &gws.WSDLAssetSet{
