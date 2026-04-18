@@ -70,6 +70,9 @@ func TestQNameFields(t *testing.T) {
 	bindingQName := QName{Space: "urn:test:bindings", Local: "CalculatorBinding"}
 	typeQName := QName{Space: "urn:test:types", Local: "CalculatorPortType"}
 	elementQName := QName{Space: "urn:test:elements", Local: "AddRequest"}
+	messageQName := QName{Space: "urn:test:messages", Local: "AddInput"}
+	responseQName := QName{Space: "urn:test:messages", Local: "AddOutput"}
+	simpleBaseQName := QName{Space: "http://www.w3.org/2001/XMLSchema", Local: "string"}
 
 	m := Model{
 		Schemas: []Schema{
@@ -83,6 +86,12 @@ func TestQNameFields(t *testing.T) {
 						Fields: []Field{
 							{Name: "A", Type: QName{Space: "http://www.w3.org/2001/XMLSchema", Local: "int"}},
 						},
+					},
+				},
+				SimpleTypes: []SimpleType{
+					{
+						Name: "Token",
+						Base: simpleBaseQName,
 					},
 				},
 			},
@@ -114,7 +123,11 @@ func TestQNameFields(t *testing.T) {
 				Name: "CalculatorBinding",
 				Type: typeQName,
 				Operations: []BindingOperation{
-					{Name: "Add"},
+					{
+						Name:          "Add",
+						InputMessage:  messageQName,
+						OutputMessage: responseQName,
+					},
 				},
 			},
 		},
@@ -143,6 +156,21 @@ func TestQNameFields(t *testing.T) {
 	part := m.Messages[0].Parts[0]
 	if part.Element != elementQName {
 		t.Fatalf("unexpected message part element qname: %+v", part.Element)
+	}
+
+	if m.Schemas[0].SimpleTypes[0].Base != simpleBaseQName {
+		t.Fatalf("unexpected simple type base qname: %+v", m.Schemas[0].SimpleTypes[0].Base)
+	}
+
+	op, ok := binding.Operation("Add")
+	if !ok {
+		t.Fatal("expected operation Add to be found")
+	}
+	if op.InputMessage != messageQName {
+		t.Fatalf("unexpected input message qname: %+v", op.InputMessage)
+	}
+	if op.OutputMessage != responseQName {
+		t.Fatalf("unexpected output message qname: %+v", op.OutputMessage)
 	}
 }
 

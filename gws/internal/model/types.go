@@ -34,7 +34,7 @@ type ComplexType struct {
 
 type SimpleType struct {
 	Name       string
-	Base       string
+	Base       QName
 	Enums      []string
 	Pattern    string
 	MinLength  *int
@@ -75,8 +75,8 @@ type BindingOperation struct {
 	Name           string
 	Action         string
 	Style          string
-	InputMessage   string
-	OutputMessage  string
+	InputMessage   QName
+	OutputMessage  QName
 	InputUse       string
 	OutputUse      string
 	InputNamespace string
