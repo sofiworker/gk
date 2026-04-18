@@ -1,0 +1,87 @@
+package model
+
+type Model struct {
+	TargetNamespace string
+	Schemas         []Schema
+	Messages        []Message
+	Bindings        []Binding
+	Services        []Service
+}
+
+type Schema struct {
+	TargetNamespace string
+	Elements        []Element
+	ComplexTypes    []ComplexType
+	SimpleTypes     []SimpleType
+}
+
+type Element struct {
+	Name string
+	Type string
+}
+
+type ComplexType struct {
+	Name   string
+	Fields []Field
+}
+
+type SimpleType struct {
+	Name       string
+	Base       string
+	Enums      []string
+	Pattern    string
+	MinLength  *int
+	MaxLength  *int
+	MinValue   *int64
+	MaxValue   *int64
+	IsListType bool
+}
+
+type Field struct {
+	Name      string
+	Type      string
+	MinOccurs int
+	MaxOccurs int
+	Nillable  bool
+}
+
+type Message struct {
+	Name  string
+	Parts []MessagePart
+}
+
+type MessagePart struct {
+	Name    string
+	Element string
+	Type    string
+}
+
+type Binding struct {
+	Name       string
+	Type       string
+	Transport  string
+	Style      string
+	Operations []BindingOperation
+}
+
+type BindingOperation struct {
+	Name           string
+	Action         string
+	Style          string
+	InputMessage   string
+	OutputMessage  string
+	InputUse       string
+	OutputUse      string
+	InputNamespace string
+}
+
+type Service struct {
+	Name  string
+	Ports []Port
+}
+
+type Port struct {
+	Name    string
+	Binding string
+	Address string
+}
