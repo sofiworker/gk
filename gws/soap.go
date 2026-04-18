@@ -17,6 +17,6 @@ func SOAPNamespaces(version SOAPVersion) (envelopeNamespace string, encodingName
 	case SOAP11, "":
 		return SOAP11EnvelopeNamespace, SOAP11EncodingNamespace
 	default:
-		return SOAP11EnvelopeNamespace, SOAP11EncodingNamespace
+		return "", ""
 	}
 }

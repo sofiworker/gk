@@ -1,30 +1,30 @@
 package gws
 
-type ClientOption func(*ClientOptions)
-type ServiceOption func(*ServiceOptions)
+type ClientOption func(*clientOptions)
+type ServiceOption func(*serviceOptions)
 
-type ClientOptions struct {
+type clientOptions struct {
 	SOAPVersion SOAPVersion
 }
 
-type ServiceOptions struct {
+type serviceOptions struct {
 	SOAPVersion SOAPVersion
 }
 
-func DefaultClientOptions() ClientOptions {
-	return ClientOptions{
+func defaultClientOptions() clientOptions {
+	return clientOptions{
 		SOAPVersion: SOAP11,
 	}
 }
 
-func DefaultServiceOptions() ServiceOptions {
-	return ServiceOptions{
+func defaultServiceOptions() serviceOptions {
+	return serviceOptions{
 		SOAPVersion: SOAP11,
 	}
 }
 
-func NewClientOptions(opts ...ClientOption) ClientOptions {
-	options := DefaultClientOptions()
+func applyClientOptions(opts ...ClientOption) clientOptions {
+	options := defaultClientOptions()
 	for _, opt := range opts {
 		if opt == nil {
 			continue
@@ -34,8 +34,8 @@ func NewClientOptions(opts ...ClientOption) ClientOptions {
 	return options
 }
 
-func NewServiceOptions(opts ...ServiceOption) ServiceOptions {
-	options := DefaultServiceOptions()
+func applyServiceOptions(opts ...ServiceOption) serviceOptions {
+	options := defaultServiceOptions()
 	for _, opt := range opts {
 		if opt == nil {
 			continue
@@ -46,13 +46,13 @@ func NewServiceOptions(opts ...ServiceOption) ServiceOptions {
 }
 
 func WithClientSOAPVersion(version SOAPVersion) ClientOption {
-	return func(options *ClientOptions) {
+	return func(options *clientOptions) {
 		options.SOAPVersion = version
 	}
 }
 
 func WithServiceSOAPVersion(version SOAPVersion) ServiceOption {
-	return func(options *ServiceOptions) {
+	return func(options *serviceOptions) {
 		options.SOAPVersion = version
 	}
 }
