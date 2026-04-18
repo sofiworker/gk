@@ -1,5 +1,12 @@
 package model
 
+const MaxOccursUnbounded = -1
+
+type QName struct {
+	Space string
+	Local string
+}
+
 type Model struct {
 	TargetNamespace string
 	Schemas         []Schema
@@ -17,7 +24,7 @@ type Schema struct {
 
 type Element struct {
 	Name string
-	Type string
+	Type QName
 }
 
 type ComplexType struct {
@@ -39,7 +46,7 @@ type SimpleType struct {
 
 type Field struct {
 	Name      string
-	Type      string
+	Type      QName
 	MinOccurs int
 	MaxOccurs int
 	Nillable  bool
@@ -52,13 +59,13 @@ type Message struct {
 
 type MessagePart struct {
 	Name    string
-	Element string
-	Type    string
+	Element QName
+	Type    QName
 }
 
 type Binding struct {
 	Name       string
-	Type       string
+	Type       QName
 	Transport  string
 	Style      string
 	Operations []BindingOperation
@@ -82,6 +89,6 @@ type Service struct {
 
 type Port struct {
 	Name    string
-	Binding string
+	Binding QName
 	Address string
 }
