@@ -215,6 +215,9 @@ func WithOnFailed(onFailed func(attempts int, elapsed time.Duration, err error))
 func NewErrorHandlingOptions(opts ...Option) ErrorHandlingOptions {
 	options := DefaultErrorHandlingOptions
 	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
 		opt(&options)
 	}
 	return options
@@ -224,6 +227,11 @@ func NewErrorHandlingOptions(opts ...Option) ErrorHandlingOptions {
 func Do(ctx context.Context, fn func() error, options ErrorHandlingOptions) *RetryResult {
 	startTime := time.Now()
 	var lastErr error
+	attempts := 0
+
+	if options.ShouldRetry == nil {
+		options.ShouldRetry = DefaultErrorHandlingOptions.ShouldRetry
+	}
 
 	// 如果设置了超时，则创建带超时的上下文
 	if options.Timeout > 0 {
@@ -251,18 +259,22 @@ func Do(ctx context.Context, fn func() error, options ErrorHandlingOptions) *Ret
 		}
 
 		// 执行操作
-		err := fn()
+		attempts++
+		err := runAttempt(ctx, fn)
+		if err == nil && ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		if err == nil {
 			// 成功
 			elapsed := time.Since(startTime)
 			result := &RetryResult{
-				Attempts: attempt,
+				Attempts: attempts,
 				Elapsed:  elapsed,
 				Error:    nil,
 				Success:  true,
 			}
 			if options.OnSuccess != nil {
-				options.OnSuccess(attempt, elapsed)
+				options.OnSuccess(attempts, elapsed)
 			}
 			return result
 		}
@@ -279,7 +291,7 @@ func Do(ctx context.Context, fn func() error, options ErrorHandlingOptions) *Ret
 
 		// 调用重试回调
 		if options.OnRetry != nil {
-			options.OnRetry(attempt+1, delay, err)
+			options.OnRetry(attempts, delay, err)
 		}
 
 		// 等待延迟或上下文取消
@@ -289,13 +301,13 @@ func Do(ctx context.Context, fn func() error, options ErrorHandlingOptions) *Ret
 			timer.Stop()
 			elapsed := time.Since(startTime)
 			result := &RetryResult{
-				Attempts: attempt + 1,
+				Attempts: attempts,
 				Elapsed:  elapsed,
 				Error:    ctx.Err(),
 				Success:  false,
 			}
 			if options.OnFailed != nil {
-				options.OnFailed(attempt+1, elapsed, ctx.Err())
+				options.OnFailed(attempts, elapsed, ctx.Err())
 			}
 			return result
 		case <-timer.C:
@@ -306,16 +318,37 @@ func Do(ctx context.Context, fn func() error, options ErrorHandlingOptions) *Ret
 
 	// 最终失败
 	elapsed := time.Since(startTime)
+	finalErr := lastErr
+	if ctx.Err() != nil {
+		finalErr = ctx.Err()
+	}
+	if finalErr == nil {
+		finalErr = fmt.Errorf("retry failed")
+	}
 	result := &RetryResult{
-		Attempts: options.MaxRetries + 1,
+		Attempts: attempts,
 		Elapsed:  elapsed,
-		Error:    fmt.Errorf("operation failed after %d attempts: %w", options.MaxRetries+1, lastErr),
+		Error:    finalErr,
 		Success:  false,
 	}
 	if options.OnFailed != nil {
-		options.OnFailed(options.MaxRetries+1, elapsed, result.Error)
+		options.OnFailed(attempts, elapsed, result.Error)
 	}
 	return result
+}
+
+func runAttempt(ctx context.Context, fn func() error) error {
+	resultCh := make(chan error, 1)
+	go func() {
+		resultCh <- fn()
+	}()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-resultCh:
+		return err
+	}
 }
 
 // DoWithDefault 使用默认配置执行带重试的操作

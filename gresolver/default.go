@@ -22,6 +22,9 @@ func NewDefaultResolver(opts ...Option) *DefaultResolver {
 		Attempts:    2,
 	}
 	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
 		opt(config)
 	}
 	config.Validate()
@@ -86,6 +89,7 @@ func (r *DefaultResolver) LookupHost(ctx context.Context, host string) ([]string
 }
 
 func (r *DefaultResolver) LookupCNAME(ctx context.Context, host string) (string, error) {
+	host = ToDNSQueryFormat(host)
 	name, err := dnsmessage.NewName(host)
 	if err != nil {
 		return "", fmt.Errorf("invalid domain name: %v", err)

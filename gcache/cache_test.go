@@ -15,8 +15,8 @@ func TestJSONSerializer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Serialize failed: %v", err)
 	}
-	if data != nil {
-		t.Fatalf("expected nil bytes, got %v", data)
+	if string(data) != `{"foo":"bar"}` {
+		t.Fatalf("unexpected serialized bytes: %s", data)
 	}
 
 	// Test Deserialize
