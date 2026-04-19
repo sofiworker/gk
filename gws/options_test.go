@@ -1,6 +1,9 @@
 package gws
 
-import "testing"
+import (
+	"net/http"
+	"testing"
+)
 
 func TestDefaultClientOptions(t *testing.T) {
 	opts := defaultClientOptions()
@@ -10,12 +13,17 @@ func TestDefaultClientOptions(t *testing.T) {
 }
 
 func TestClientOptionsApply(t *testing.T) {
+	httpClient := &http.Client{}
 	opts := applyClientOptions(
 		nil,
 		WithClientSOAPVersion("custom"),
+		WithHTTPClient(httpClient),
 	)
 	if opts.SOAPVersion != "custom" {
 		t.Fatalf("client option not applied, got=%q", opts.SOAPVersion)
+	}
+	if opts.HTTPClient != httpClient {
+		t.Fatal("http client option not applied")
 	}
 }
 

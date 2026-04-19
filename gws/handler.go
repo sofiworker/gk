@@ -10,12 +10,15 @@ import (
 	"strings"
 )
 
+// Handler exposes a SOAP service through the standard net/http.Handler
+// interface.
 type Handler struct {
 	desc    *ServiceDesc
 	impl    any
 	options serviceOptions
 }
 
+// Error implements the error interface for Fault values.
 func (f *Fault) Error() string {
 	if f == nil {
 		return "soap fault: <nil>"
@@ -26,6 +29,8 @@ func (f *Fault) Error() string {
 	return fmt.Sprintf("soap fault (code=%s): %s", f.Code, f.String)
 }
 
+// NewHandler builds a standard net/http SOAP handler from a service
+// description and implementation object.
 func NewHandler(desc *ServiceDesc, impl any, opts ...ServiceOption) (*Handler, error) {
 	if desc == nil {
 		return nil, ErrNilServiceDesc
@@ -43,6 +48,7 @@ func NewHandler(desc *ServiceDesc, impl any, opts ...ServiceOption) (*Handler, e
 	}, nil
 }
 
+// ServeHTTP serves SOAP POST requests and optional WSDL/XSD GET endpoints.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -87,7 +93,7 @@ func (h *Handler) servePOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payload, wrapper, err := decodeSOAPBodyPayload(data)
+	payload, wrapper, err := DecodeBodyPayload(data)
 	if err != nil {
 		h.writeClientFault(w, fmt.Errorf("decode soap body: %w", err))
 		return
@@ -138,9 +144,9 @@ func (h *Handler) writeOperationResponse(w http.ResponseWriter, operation Operat
 		return err
 	}
 
-	data, err := marshalEnvelope(envelope{
-		SoapEnv: soapEnv,
-		Body: body{
+	data, err := MarshalEnvelope(Envelope{
+		Namespace: soapEnv,
+		Body: Body{
 			Content: resp,
 		},
 	})
@@ -209,49 +215,17 @@ func (h *Handler) writeFault(w http.ResponseWriter, fault Fault, version SOAPVer
 		fault.String = "internal error"
 	}
 
-	soapEnv, err := h.resolveSOAPEnvelope(version)
-	if err != nil {
-		soapEnv = SOAP11EnvelopeNamespace
+	if _, err := h.resolveSOAPEnvelope(version); err != nil {
+		version = SOAP11
 	}
 
-	envFault := &envelopeFault{
-		Code:   fault.Code,
-		String: fault.String,
-		Actor:  fault.Actor,
-	}
-	if detail := marshalFaultDetail(fault.Detail); detail != "" {
-		envFault.Detail = &faultDetail{InnerXML: detail}
-	}
-
-	data, err := marshalEnvelope(envelope{
-		SoapEnv: soapEnv,
-		Body: body{
-			Fault: envFault,
-		},
-	})
+	data, err := MarshalFaultEnvelope(fault, version)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	writeXML(w, http.StatusInternalServerError, data)
-}
-
-func marshalFaultDetail(v any) string {
-	switch detail := v.(type) {
-	case nil:
-		return ""
-	case string:
-		return strings.TrimSpace(detail)
-	case []byte:
-		return strings.TrimSpace(string(detail))
-	default:
-		data, err := xml.Marshal(detail)
-		if err != nil {
-			return ""
-		}
-		return strings.TrimSpace(string(data))
-	}
 }
 
 func writeXML(w http.ResponseWriter, statusCode int, data []byte) {

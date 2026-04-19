@@ -10,8 +10,16 @@ import (
 	"strings"
 )
 
+// ErrEmptyEndpoint indicates that a request was built without a target
+// endpoint.
 var ErrEmptyEndpoint = errors.New("empty endpoint")
+
+// ErrUnsupportedSOAPVersion indicates that the selected SOAP version is not
+// supported by the runtime.
 var ErrUnsupportedSOAPVersion = errors.New("unsupported SOAP version")
+
+// ErrRequestWrapperMismatch indicates that the marshaled request body root
+// element does not match the operation contract.
 var ErrRequestWrapperMismatch = errors.New("request wrapper mismatch")
 
 type operationOptions struct {
@@ -23,6 +31,8 @@ type operationOptions struct {
 	body       any
 }
 
+// Request represents an outbound SOAP call that can be configured either at
+// the logical body level or with a fully constructed envelope.
 type Request struct {
 	ctx        context.Context
 	endpoint   string
@@ -30,6 +40,16 @@ type Request struct {
 	header     http.Header
 	soapHeader any
 	body       any
+	envelope   *Envelope
+}
+
+// NewRequest creates a SOAP request bound to an endpoint and operation.
+func NewRequest(ctx context.Context, endpoint string, operation Operation) *Request {
+	return newRequest(operationOptions{
+		ctx:       ctx,
+		endpoint:  endpoint,
+		operation: operation,
+	})
 }
 
 func newRequest(opts operationOptions) *Request {
@@ -56,6 +76,63 @@ func newRequest(opts operationOptions) *Request {
 	return req
 }
 
+// Context returns the request context used when building the outbound
+// http.Request.
+func (r *Request) Context() context.Context {
+	if r == nil {
+		return nil
+	}
+	return r.ctx
+}
+
+// Endpoint returns the current target endpoint.
+func (r *Request) Endpoint() string {
+	if r == nil {
+		return ""
+	}
+	return r.endpoint
+}
+
+// Operation returns the SOAP operation metadata associated with the request.
+func (r *Request) Operation() Operation {
+	if r == nil {
+		return Operation{}
+	}
+	return r.operation
+}
+
+// Headers returns a copy of the HTTP headers configured on the request.
+func (r *Request) Headers() http.Header {
+	if r == nil {
+		return nil
+	}
+
+	cloned := make(http.Header, len(r.header))
+	for key, values := range r.header {
+		copied := make([]string, len(values))
+		copy(copied, values)
+		cloned[key] = copied
+	}
+	return cloned
+}
+
+// SOAPHeader returns the currently configured SOAP header payload.
+func (r *Request) SOAPHeader() any {
+	if r == nil {
+		return nil
+	}
+	return r.soapHeader
+}
+
+// Body returns the currently configured SOAP body payload.
+func (r *Request) Body() any {
+	if r == nil {
+		return nil
+	}
+	return r.body
+}
+
+// SetHeader sets an HTTP header on the outbound request.
 func (r *Request) SetHeader(key, value string) *Request {
 	if r == nil {
 		return nil
@@ -67,6 +144,8 @@ func (r *Request) SetHeader(key, value string) *Request {
 	return r
 }
 
+// SetSOAPHeader sets the SOAP header payload that will be marshaled into the
+// request envelope.
 func (r *Request) SetSOAPHeader(v any) *Request {
 	if r == nil {
 		return nil
@@ -75,6 +154,8 @@ func (r *Request) SetSOAPHeader(v any) *Request {
 	return r
 }
 
+// SetEndpoint overrides the target endpoint used when building the outbound
+// HTTP request.
 func (r *Request) SetEndpoint(endpoint string) *Request {
 	if r == nil {
 		return nil
@@ -83,46 +164,90 @@ func (r *Request) SetEndpoint(endpoint string) *Request {
 	return r
 }
 
+// SetBody sets the logical SOAP body payload and clears any previously pinned
+// low-level envelope.
 func (r *Request) SetBody(v any) *Request {
 	if r == nil {
 		return nil
 	}
 	r.body = v
+	r.envelope = nil
 	return r
 }
 
-func (r *Request) XMLBytes() ([]byte, error) {
+// SetEnvelope pins a fully constructed low-level SOAP envelope for this
+// request.
+func (r *Request) SetEnvelope(env Envelope) *Request {
 	if r == nil {
-		return nil, ErrNilRequest
+		return nil
+	}
+	envCopy := env
+	r.envelope = &envCopy
+	return r
+}
+
+// Envelope returns the low-level SOAP envelope that will be marshaled for the
+// request.
+func (r *Request) Envelope() (Envelope, error) {
+	if r == nil {
+		return Envelope{}, ErrNilRequest
+	}
+
+	if r.envelope != nil {
+		env := *r.envelope
+		if env.Namespace == "" {
+			soapEnv, err := resolveSOAPEnvelopeNamespace(r.operation.SOAPVersion)
+			if err != nil {
+				return Envelope{}, err
+			}
+			env.Namespace = soapEnv
+		}
+		return env, nil
 	}
 
 	if err := validateRequestWrapper(r.operation.RequestWrapper, r.body); err != nil {
-		return nil, err
+		return Envelope{}, err
 	}
 
 	soapEnv, err := resolveSOAPEnvelopeNamespace(r.operation.SOAPVersion)
 	if err != nil {
-		return nil, err
+		return Envelope{}, err
 	}
 
-	env := requestEnvelope{
-		SoapEnv: soapEnv,
-		Body: requestEnvelopeBody{
+	env := Envelope{
+		Namespace: soapEnv,
+		Body: Body{
 			Content: r.body,
 		},
 	}
 
 	if r.soapHeader != nil {
-		env.Header = &requestEnvelopeHeader{Content: r.soapHeader}
+		env.Header = &Header{Content: r.soapHeader}
 	}
 
-	data, err := xml.Marshal(env)
+	return env, nil
+}
+
+// XMLBytes marshals the request into raw SOAP XML.
+func (r *Request) XMLBytes() ([]byte, error) {
+	if r == nil {
+		return nil, ErrNilRequest
+	}
+
+	env, err := r.Envelope()
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := MarshalEnvelope(env)
 	if err != nil {
 		return nil, err
 	}
 	return data, nil
 }
 
+// BuildHTTPRequest builds the outbound POST request with SOAP headers and
+// marshaled XML body.
 func (r *Request) BuildHTTPRequest() (*http.Request, error) {
 	if r == nil {
 		return nil, ErrNilRequest
@@ -159,21 +284,6 @@ func (r *Request) BuildHTTPRequest() (*http.Request, error) {
 	}
 
 	return httpReq, nil
-}
-
-type requestEnvelope struct {
-	XMLName xml.Name               `xml:"soapenv:Envelope"`
-	SoapEnv string                 `xml:"xmlns:soapenv,attr"`
-	Header  *requestEnvelopeHeader `xml:"soapenv:Header,omitempty"`
-	Body    requestEnvelopeBody    `xml:"soapenv:Body"`
-}
-
-type requestEnvelopeHeader struct {
-	Content any `xml:",any,omitempty"`
-}
-
-type requestEnvelopeBody struct {
-	Content any `xml:",any,omitempty"`
 }
 
 func quoteSOAPAction(action string) string {

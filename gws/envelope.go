@@ -4,48 +4,58 @@ import (
 	"bytes"
 	"encoding/xml"
 	"errors"
+	"strings"
 )
 
+// ErrEmptyEnvelopeData indicates that envelope decoding was attempted on an
+// empty payload.
 var ErrEmptyEnvelopeData = errors.New("empty SOAP envelope data")
 
-type envelope struct {
-	XMLName xml.Name `xml:"soapenv:Envelope"`
-	SoapEnv string   `xml:"xmlns:soapenv,attr"`
-	Header  *header  `xml:"soapenv:Header,omitempty"`
-	Body    body     `xml:"soapenv:Body"`
+// Envelope is the low-level SOAP envelope model exposed for direct library use.
+type Envelope struct {
+	XMLName   xml.Name `xml:"soapenv:Envelope"`
+	Namespace string   `xml:"xmlns:soapenv,attr"`
+	Header    *Header  `xml:"soapenv:Header,omitempty"`
+	Body      Body     `xml:"soapenv:Body"`
 }
 
-type header struct{}
+// Header is the SOAP header container.
+type Header struct {
+	Content any `xml:",any,omitempty"`
+}
 
-type body struct {
+// Body is the SOAP body container.
+type Body struct {
 	Content any            `xml:",any,omitempty"`
-	Fault   *envelopeFault `xml:"soapenv:Fault,omitempty"`
+	Fault   *EnvelopeFault `xml:"soapenv:Fault,omitempty"`
 }
 
-type envelopeFault struct {
+// EnvelopeFault is the wire-level SOAP fault shape used inside an envelope.
+type EnvelopeFault struct {
 	Code   string       `xml:"faultcode"`
 	String string       `xml:"faultstring"`
 	Actor  string       `xml:"faultactor,omitempty"`
-	Detail *faultDetail `xml:"detail,omitempty"`
+	Detail *FaultDetail `xml:"detail,omitempty"`
 }
 
-type faultDetail struct {
+// FaultDetail preserves raw inner XML for SOAP fault details.
+type FaultDetail struct {
 	InnerXML string `xml:",innerxml"`
 }
 
 type envelopeForDecode struct {
 	XMLName xml.Name      `xml:"Envelope"`
-	SoapEnv string        `xml:"xmlns:soapenv,attr"`
 	Body    bodyForDecode `xml:"Body"`
 }
 
 type bodyForDecode struct {
-	Fault *envelopeFault `xml:"Fault"`
+	Fault *EnvelopeFault `xml:"Fault"`
 }
 
-func marshalEnvelope(v envelope) ([]byte, error) {
-	if v.SoapEnv == "" {
-		v.SoapEnv, _ = SOAPNamespaces(SOAP11)
+// MarshalEnvelope marshals a low-level SOAP envelope.
+func MarshalEnvelope(v Envelope) ([]byte, error) {
+	if v.Namespace == "" {
+		v.Namespace, _ = SOAPNamespaces(SOAP11)
 	}
 
 	data, err := xml.Marshal(v)
@@ -55,7 +65,8 @@ func marshalEnvelope(v envelope) ([]byte, error) {
 	return data, nil
 }
 
-func unmarshalEnvelope(data []byte) (*envelope, error) {
+// UnmarshalEnvelope unmarshals a SOAP envelope and extracts the fault section when present.
+func UnmarshalEnvelope(data []byte) (*Envelope, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return nil, ErrEmptyEnvelopeData
 	}
@@ -65,17 +76,65 @@ func unmarshalEnvelope(data []byte) (*envelope, error) {
 		return nil, err
 	}
 
-	env := &envelope{
-		XMLName: decoded.XMLName,
-		SoapEnv: decoded.SoapEnv,
-		Body: body{
+	env := &Envelope{
+		XMLName:   decoded.XMLName,
+		Namespace: decoded.XMLName.Space,
+		Body: Body{
 			Fault: decoded.Body.Fault,
 		},
 	}
 
-	if env.SoapEnv == "" {
-		env.SoapEnv = env.XMLName.Space
+	if env.Namespace == "" {
+		env.Namespace = SOAP11EnvelopeNamespace
 	}
 
 	return env, nil
+}
+
+// MarshalFaultEnvelope encodes a logical SOAP fault as a SOAP envelope.
+func MarshalFaultEnvelope(fault Fault, version SOAPVersion) ([]byte, error) {
+	if fault.Code == "" {
+		fault.Code = "soap:Server"
+	}
+	if fault.String == "" {
+		fault.String = "internal error"
+	}
+
+	namespace, err := resolveSOAPEnvelopeNamespace(version)
+	if err != nil {
+		return nil, err
+	}
+
+	envFault := &EnvelopeFault{
+		Code:   fault.Code,
+		String: fault.String,
+		Actor:  fault.Actor,
+	}
+	if detail := marshalFaultDetailValue(fault.Detail); detail != "" {
+		envFault.Detail = &FaultDetail{InnerXML: detail}
+	}
+
+	return MarshalEnvelope(Envelope{
+		Namespace: namespace,
+		Body: Body{
+			Fault: envFault,
+		},
+	})
+}
+
+func marshalFaultDetailValue(v any) string {
+	switch detail := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(detail)
+	case []byte:
+		return strings.TrimSpace(string(detail))
+	default:
+		data, err := xml.Marshal(detail)
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(data))
+	}
 }

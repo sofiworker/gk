@@ -1,6 +1,7 @@
 package gws
 
 import (
+	"encoding/xml"
 	"strings"
 	"testing"
 )
@@ -17,13 +18,13 @@ func TestExtractFault(t *testing.T) {
 		</soapenv:Body>
 	</soapenv:Envelope>`)
 
-	fault, err := extractFault(data)
+	fault, err := ExtractFault(data)
 	if err != nil {
-		t.Fatalf("extractFault failed: %v", err)
+		t.Fatalf("ExtractFault failed: %v", err)
 	}
 
 	if fault == nil {
-		t.Fatal("extractFault returned nil fault")
+		t.Fatal("ExtractFault returned nil fault")
 	}
 
 	if fault.Code != "soap:Server" {
@@ -55,12 +56,51 @@ func TestExtractFaultNotFound(t *testing.T) {
 		</soapenv:Body>
 	</soapenv:Envelope>`)
 
-	_, err := extractFault(data)
+	_, err := ExtractFault(data)
 	if err == nil {
-		t.Fatal("extractFault should fail when fault is absent")
+		t.Fatal("ExtractFault should fail when fault is absent")
 	}
 
 	if err != ErrFaultNotFound {
 		t.Fatalf("error = %v, want %v", err, ErrFaultNotFound)
+	}
+}
+
+func TestDecodeBodyPayload(t *testing.T) {
+	data := []byte(`<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+		<soapenv:Body>
+			<m:EchoResponse xmlns:m="urn:test"><m:value>ok</m:value></m:EchoResponse>
+		</soapenv:Body>
+	</soapenv:Envelope>`)
+
+	payload, wrapper, err := DecodeBodyPayload(data)
+	if err != nil {
+		t.Fatalf("DecodeBodyPayload failed: %v", err)
+	}
+	if wrapper.Space != "urn:test" || wrapper.Local != "EchoResponse" {
+		t.Fatalf("unexpected wrapper: %+v", wrapper)
+	}
+	if !strings.Contains(string(payload), "ok") {
+		t.Fatalf("unexpected payload: %s", payload)
+	}
+}
+
+func TestUnmarshalBody(t *testing.T) {
+	data := []byte(`<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+		<soapenv:Body>
+			<m:EchoResponse xmlns:m="urn:test"><m:value>ok</m:value></m:EchoResponse>
+		</soapenv:Body>
+	</soapenv:Envelope>`)
+
+	var out struct {
+		XMLName xml.Name `xml:"urn:test EchoResponse"`
+		Value   string   `xml:"value"`
+	}
+
+	if err := UnmarshalBody(data, xml.Name{Space: "urn:test", Local: "EchoResponse"}, &out); err != nil {
+		t.Fatalf("UnmarshalBody failed: %v", err)
+	}
+	if out.Value != "ok" {
+		t.Fatalf("unexpected value: %q", out.Value)
 	}
 }

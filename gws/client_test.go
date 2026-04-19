@@ -176,3 +176,75 @@ func TestClientOptionDefaultSOAPVersion(t *testing.T) {
 		t.Fatalf("error should include unsupported version, got: %v", err)
 	}
 }
+
+func TestClientDoRaw(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/xml; charset=utf-8")
+		_, _ = w.Write([]byte(`<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+			<soapenv:Body>
+				<EchoResponse xmlns="urn:test">
+					<value>ok</value>
+				</EchoResponse>
+			</soapenv:Body>
+		</soapenv:Envelope>`))
+	}))
+	defer srv.Close()
+
+	req := NewRequest(nil, srv.URL, Operation{Name: "Echo", Action: "urn:Echo"})
+	req.SetEnvelope(Envelope{
+		Namespace: SOAP11EnvelopeNamespace,
+		Body: Body{
+			Content: struct {
+				XMLName xml.Name `xml:"urn:test Echo"`
+				Value   string   `xml:"value"`
+			}{Value: "hello"},
+		},
+	})
+
+	client := NewClient()
+	client.httpClient = srv.Client()
+	data, err := client.DoRaw(req)
+	if err != nil {
+		t.Fatalf("DoRaw failed: %v", err)
+	}
+	if !strings.Contains(string(data), "EchoResponse") {
+		t.Fatalf("unexpected raw response: %s", data)
+	}
+}
+
+func TestClientWithHTTPClientOption(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/xml; charset=utf-8")
+		_, _ = w.Write([]byte(`<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+			<soapenv:Body>
+				<EchoResponse xmlns="urn:test">
+					<value>ok</value>
+				</EchoResponse>
+			</soapenv:Body>
+		</soapenv:Envelope>`))
+	}))
+	defer srv.Close()
+
+	req := NewRequest(nil, srv.URL, Operation{
+		Name:            "Echo",
+		Action:          "urn:Echo",
+		ResponseWrapper: xml.Name{Space: "urn:test", Local: "EchoResponse"},
+	})
+	req.SetBody(struct {
+		XMLName xml.Name `xml:"urn:test Echo"`
+		Value   string   `xml:"value"`
+	}{Value: "hello"})
+
+	var out struct {
+		XMLName xml.Name `xml:"urn:test EchoResponse"`
+		Value   string   `xml:"value"`
+	}
+
+	client := NewClient(WithHTTPClient(srv.Client()))
+	if err := client.Do(req, &out); err != nil {
+		t.Fatalf("Do failed: %v", err)
+	}
+	if out.Value != "ok" {
+		t.Fatalf("unexpected response value: %q", out.Value)
+	}
+}

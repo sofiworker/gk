@@ -2,6 +2,8 @@ package gws
 
 import "fmt"
 
+// Fault is the logical SOAP fault model exposed to callers and service
+// implementations.
 type Fault struct {
 	Code   string
 	String string
@@ -9,11 +11,14 @@ type Fault struct {
 	Detail any
 }
 
+// FaultError wraps a SOAP fault returned from a remote endpoint together with
+// the HTTP status code when available.
 type FaultError struct {
 	StatusCode int
 	Fault      Fault
 }
 
+// Error implements the error interface.
 func (e *FaultError) Error() string {
 	if e == nil {
 		return "soap fault: <nil>"

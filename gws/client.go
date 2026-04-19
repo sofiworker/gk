@@ -1,34 +1,43 @@
 package gws
 
 import (
-	"bytes"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 )
 
 var (
-	ErrNilRequest              = errors.New("nil request")
-	ErrNilHTTPRequest          = errors.New("nil http request")
+	// ErrNilRequest indicates that a nil Request was passed to Client.
+	ErrNilRequest = errors.New("nil request")
+	// ErrNilHTTPRequest indicates that a nil http.Request was passed to a low-level client API.
+	ErrNilHTTPRequest = errors.New("nil http request")
+	// ErrResponseWrapperMismatch indicates that the SOAP response body root
+	// element does not match the expected operation wrapper.
 	ErrResponseWrapperMismatch = errors.New("response wrapper mismatch")
 )
 
+// Client executes SOAP requests over HTTP.
 type Client struct {
 	httpClient *http.Client
 	options    clientOptions
 }
 
+// NewClient creates a SOAP client runtime.
 func NewClient(opts ...ClientOption) *Client {
 	options := applyClientOptions(opts...)
+	httpClient := options.HTTPClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
 	return &Client{
-		httpClient: http.DefaultClient,
+		httpClient: httpClient,
 		options:    options,
 	}
 }
 
+// Do sends a typed SOAP request and unmarshals the response body into out.
 func (c *Client) Do(req *Request, out any) error {
 	if req == nil {
 		return ErrNilRequest
@@ -54,37 +63,37 @@ func (c *Client) Do(req *Request, out any) error {
 	return c.DoHTTP(httpReq, op, out)
 }
 
-func (c *Client) DoHTTP(req *http.Request, op Operation, out any) error {
+// DoRaw sends a typed SOAP request and returns the raw SOAP response XML.
+func (c *Client) DoRaw(req *Request) ([]byte, error) {
 	if req == nil {
-		return ErrNilHTTPRequest
+		return nil, ErrNilRequest
 	}
 
-	httpClient := c.httpClient
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("read response body: %w", err)
-	}
-
-	fault, err := extractFault(data)
-	if err == nil {
-		return &FaultError{
-			StatusCode: resp.StatusCode,
-			Fault:      *fault,
+	op := req.operation
+	if op.SOAPVersion == "" {
+		defaultVersion := c.options.SOAPVersion
+		if defaultVersion == "" {
+			defaultVersion = SOAP11
 		}
+		op.SOAPVersion = defaultVersion
 	}
 
-	if !errors.Is(err, ErrFaultNotFound) {
-		return fmt.Errorf("extract fault: %w", err)
+	sendReq := *req
+	sendReq.operation = op
+
+	httpReq, err := sendReq.BuildHTTPRequest()
+	if err != nil {
+		return nil, err
+	}
+
+	return c.DoHTTPRaw(httpReq, op)
+}
+
+// DoHTTP sends a prebuilt HTTP request and unmarshals the SOAP body into out.
+func (c *Client) DoHTTP(req *http.Request, op Operation, out any) error {
+	data, err := c.DoHTTPRaw(req, op)
+	if err != nil {
+		return err
 	}
 
 	if out == nil {
@@ -101,6 +110,44 @@ func (c *Client) DoHTTP(req *http.Request, op Operation, out any) error {
 	return nil
 }
 
+// DoHTTPRaw sends a prebuilt HTTP request and returns the raw SOAP response
+// XML.
+func (c *Client) DoHTTPRaw(req *http.Request, op Operation) ([]byte, error) {
+	if req == nil {
+		return nil, ErrNilHTTPRequest
+	}
+
+	httpClient := c.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response body: %w", err)
+	}
+
+	fault, err := ExtractFault(data)
+	if err == nil {
+		return nil, &FaultError{
+			StatusCode: resp.StatusCode,
+			Fault:      *fault,
+		}
+	}
+
+	if !errors.Is(err, ErrFaultNotFound) {
+		return nil, fmt.Errorf("extract fault: %w", err)
+	}
+
+	return data, nil
+}
+
 type responseEnvelope struct {
 	Body responseBody `xml:"Body"`
 }
@@ -110,20 +157,7 @@ type responseBody struct {
 }
 
 func unmarshalSOAPBody(data []byte, expectWrapper xml.Name, out any) error {
-	payload, actualWrapper, err := decodeSOAPBodyPayload(data)
-	if err != nil {
-		return err
-	}
-
-	if err := checkResponseWrapper(expectWrapper, actualWrapper); err != nil {
-		return err
-	}
-
-	if len(payload) == 0 {
-		return nil
-	}
-
-	return xml.Unmarshal(payload, out)
+	return UnmarshalBody(data, expectWrapper, out)
 }
 
 func validateResponseWrapper(data []byte, expectWrapper xml.Name) error {
@@ -131,81 +165,10 @@ func validateResponseWrapper(data []byte, expectWrapper xml.Name) error {
 		return nil
 	}
 
-	_, actualWrapper, err := decodeSOAPBodyPayload(data)
+	_, actualWrapper, err := DecodeBodyPayload(data)
 	if err != nil {
 		return err
 	}
 
 	return checkResponseWrapper(expectWrapper, actualWrapper)
-}
-
-func decodeSOAPBodyPayload(data []byte) ([]byte, xml.Name, error) {
-	if len(bytes.TrimSpace(data)) == 0 {
-		return nil, xml.Name{}, nil
-	}
-
-	var env responseEnvelope
-	if err := xml.Unmarshal(data, &env); err != nil {
-		return nil, xml.Name{}, err
-	}
-
-	payload := strings.TrimSpace(env.Body.InnerXML)
-	if payload == "" {
-		return nil, xml.Name{}, nil
-	}
-
-	name, err := firstElementName([]byte(payload))
-	if err != nil {
-		return nil, xml.Name{}, err
-	}
-
-	return []byte(payload), name, nil
-}
-
-func firstElementName(data []byte) (xml.Name, error) {
-	decoder := xml.NewDecoder(bytes.NewReader(data))
-	for {
-		token, err := decoder.Token()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return xml.Name{}, nil
-			}
-			return xml.Name{}, err
-		}
-
-		if start, ok := token.(xml.StartElement); ok {
-			return start.Name, nil
-		}
-	}
-}
-
-func checkResponseWrapper(expectWrapper, actualWrapper xml.Name) error {
-	if isZeroXMLName(expectWrapper) {
-		return nil
-	}
-
-	if expectWrapper == actualWrapper {
-		return nil
-	}
-
-	return fmt.Errorf(
-		"%w: want=%s got=%s",
-		ErrResponseWrapperMismatch,
-		formatXMLName(expectWrapper),
-		formatXMLName(actualWrapper),
-	)
-}
-
-func isZeroXMLName(name xml.Name) bool {
-	return name.Local == "" && name.Space == ""
-}
-
-func formatXMLName(name xml.Name) string {
-	if isZeroXMLName(name) {
-		return "<empty>"
-	}
-	if name.Space == "" {
-		return name.Local
-	}
-	return fmt.Sprintf("{%s}%s", name.Space, name.Local)
 }

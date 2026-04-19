@@ -1,10 +1,16 @@
 package gws
 
+import "net/http"
+
+// ClientOption customizes runtime client behavior.
 type ClientOption func(*clientOptions)
+
+// ServiceOption customizes runtime handler behavior.
 type ServiceOption func(*serviceOptions)
 
 type clientOptions struct {
 	SOAPVersion SOAPVersion
+	HTTPClient  *http.Client
 }
 
 type serviceOptions struct {
@@ -14,6 +20,7 @@ type serviceOptions struct {
 func defaultClientOptions() clientOptions {
 	return clientOptions{
 		SOAPVersion: SOAP11,
+		HTTPClient:  http.DefaultClient,
 	}
 }
 
@@ -45,12 +52,23 @@ func applyServiceOptions(opts ...ServiceOption) serviceOptions {
 	return options
 }
 
+// WithClientSOAPVersion sets the default SOAP version used by Client when a
+// request operation does not declare one explicitly.
 func WithClientSOAPVersion(version SOAPVersion) ClientOption {
 	return func(options *clientOptions) {
 		options.SOAPVersion = version
 	}
 }
 
+// WithHTTPClient injects the underlying http.Client used by Client.
+func WithHTTPClient(httpClient *http.Client) ClientOption {
+	return func(options *clientOptions) {
+		options.HTTPClient = httpClient
+	}
+}
+
+// WithServiceSOAPVersion sets the default SOAP version used by Handler when an
+// operation does not declare one explicitly.
 func WithServiceSOAPVersion(version SOAPVersion) ServiceOption {
 	return func(options *serviceOptions) {
 		options.SOAPVersion = version
