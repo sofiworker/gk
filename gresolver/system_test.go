@@ -4,7 +4,6 @@ import (
 	"context"
 	"net"
 	"testing"
-	"time"
 )
 
 func TestNewSystemResolver(t *testing.T) {
@@ -12,20 +11,22 @@ func TestNewSystemResolver(t *testing.T) {
 	if r == nil {
 		t.Fatal("NewSystemResolver() 返回了 nil")
 	}
-	if got := r.Scheme(); got != "default" {
-		t.Errorf("Scheme() = %v, want %v", got, "default")
+	if got := r.Scheme(); got != "system" {
+		t.Errorf("Scheme() = %v, want %v", got, "system")
 	}
 }
 
 func TestSystemResolver_LookupMethods(t *testing.T) {
+	server := newTestDNSServer(t)
+	server.answerA("google.com.", [4]byte{8, 8, 8, 8})
+	server.answerCNAME("google.com.", "dns.google.")
+
 	resolver := &SystemResolver{
 		Resolver: &net.Resolver{
 			PreferGo: true,
 			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-				dialer := &net.Dialer{
-					Timeout: time.Second,
-				}
-				return dialer.DialContext(ctx, "udp", "8.8.8.8:53")
+				dialer := &net.Dialer{}
+				return dialer.DialContext(ctx, "udp", server.address())
 			},
 		},
 	}
@@ -39,8 +40,8 @@ func TestSystemResolver_LookupMethods(t *testing.T) {
 			t.Errorf("LookupIPAddr() error = %v", err)
 			return
 		}
-		if len(ips) == 0 {
-			t.Error("LookupIPAddr() 返回了空的IP列表")
+		if len(ips) == 0 || ips[0].IP.String() != "8.8.8.8" {
+			t.Errorf("LookupIPAddr() 返回错误结果: %v", ips)
 		}
 	})
 
@@ -50,8 +51,8 @@ func TestSystemResolver_LookupMethods(t *testing.T) {
 			t.Errorf("LookupHost() error = %v", err)
 			return
 		}
-		if len(hosts) == 0 {
-			t.Error("LookupHost() 返回了空的主机列表")
+		if len(hosts) == 0 || hosts[0] != "8.8.8.8" {
+			t.Errorf("LookupHost() 返回错误结果: %v", hosts)
 		}
 	})
 
@@ -61,8 +62,8 @@ func TestSystemResolver_LookupMethods(t *testing.T) {
 			t.Errorf("LookupCNAME() error = %v", err)
 			return
 		}
-		if cname == "" {
-			t.Error("LookupCNAME() 返回了空的CNAME")
+		if cname != "dns.google." {
+			t.Errorf("LookupCNAME() 返回错误结果: %v", cname)
 		}
 	})
 }

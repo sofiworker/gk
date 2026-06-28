@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<wsdl:definitions
+    xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/"
+    xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+    xmlns:tns="urn:echo/wsdl"
+    xmlns:et="urn:echo/types"
+    targetNamespace="urn:echo/wsdl">
+    <wsdl:types>
+        <xsd:schema targetNamespace="urn:echo/types">
+            <xsd:import namespace="urn:echo/types" schemaLocation="echo.xsd"/>
+        </xsd:schema>
+    </wsdl:types>
+
+    <wsdl:message name="EchoRequestMessage">
+        <wsdl:part name="parameters" element="et:EchoRequest"/>
+    </wsdl:message>
+    <wsdl:message name="EchoResponseMessage">
+        <wsdl:part name="parameters" element="et:EchoResponse"/>
+    </wsdl:message>
+
+    <wsdl:portType name="EchoPortType">
+        <wsdl:operation name="Echo">
+            <wsdl:input message="tns:EchoRequestMessage"/>
+            <wsdl:output message="tns:EchoResponseMessage"/>
+        </wsdl:operation>
+    </wsdl:portType>
+
+    <wsdl:binding name="EchoBinding" type="tns:EchoPortType">
+        <soap:binding style="document" transport="http://schemas.xmlsoap.org/soap/http"/>
+        <wsdl:operation name="Echo">
+            <soap:operation soapAction="urn:echo:Echo"/>
+            <wsdl:input>
+                <soap:body use="literal" namespace="urn:echo/types"/>
+            </wsdl:input>
+            <wsdl:output>
+                <soap:body use="literal"/>
+            </wsdl:output>
+        </wsdl:operation>
+    </wsdl:binding>
+
+    <wsdl:service name="EchoService">
+        <wsdl:port name="EchoPort" binding="tns:EchoBinding">
+            <soap:address location="http://localhost:8080/echo"/>
+        </wsdl:port>
+    </wsdl:service>
+</wsdl:definitions>

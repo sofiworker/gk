@@ -36,7 +36,7 @@ options ndots:2 timeout:2s attempts:3
 		// Only "options" is implemented.
 		// So nameservers will be empty (default).
 	}
-	
+
 	// Test Options parsing which IS implemented
 	if conf.Ndots != 2 {
 		t.Errorf("expected ndots 2, got %d", conf.Ndots)
@@ -62,25 +62,39 @@ options ndots:2 timeout:2s attempts:3
 
 func TestWithFunctions(t *testing.T) {
 	c := &DnsConfig{}
-	
+
 	WithNameservers([]string{"1.1.1.1"})(c)
-	if c.Nameservers[0] != "1.1.1.1" { t.Error("WithNameservers failed") }
+	if c.Nameservers[0] != "1.1.1.1" {
+		t.Error("WithNameservers failed")
+	}
 
 	WithSearch([]string{"local"})(c)
-	if c.Search[0] != "local" { t.Error("WithSearch failed") }
-	
+	if c.Search[0] != "local" {
+		t.Error("WithSearch failed")
+	}
+
 	WithDomain("local")(c)
-	if c.Domain != "local" { t.Error("WithDomain failed") }
-	
+	if c.Domain != "local" {
+		t.Error("WithDomain failed")
+	}
+
 	WithOptions([]string{"opt"})(c)
-	if c.Options[0] != "opt" { t.Error("WithOptions failed") }
-	
+	if c.Options[0] != "opt" {
+		t.Error("WithOptions failed")
+	}
+
 	WithNdots(5)(c)
-	if c.Ndots != 5 { t.Error("WithNdots failed") }
-	
+	if c.Ndots != 5 {
+		t.Error("WithNdots failed")
+	}
+
 	WithTimeout(time.Minute)(c)
-	if c.Timeout != time.Minute { t.Error("WithTimeout failed") }
-	
+	if c.Timeout != time.Minute {
+		t.Error("WithTimeout failed")
+	}
+
 	WithAttempts(5)(c)
-	if c.Attempts != 5 { t.Error("WithAttempts failed") }
+	if c.Attempts != 5 {
+		t.Error("WithAttempts failed")
+	}
 }

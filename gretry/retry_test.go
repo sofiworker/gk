@@ -22,14 +22,16 @@ func TestDoWithDefault(t *testing.T) {
 		},
 		{
 			name: "success on retry",
-			fn: func() error {
-				staticAttempts := 0
-				staticAttempts++
-				if staticAttempts < 3 {
-					return fmt.Errorf("error")
+			fn: func() func() error {
+				attempts := 0
+				return func() error {
+					attempts++
+					if attempts < 3 {
+						return fmt.Errorf("error")
+					}
+					return nil
 				}
-				return nil
-			},
+			}(),
 			expectSuccess: true,
 		},
 		{
@@ -48,6 +50,23 @@ func TestDoWithDefault(t *testing.T) {
 				t.Errorf("Expected success=%v, got success=%v", tt.expectSuccess, result.Success)
 			}
 		})
+	}
+}
+
+func TestDoWithDefaultRetrySuccess(t *testing.T) {
+	attempts := 0
+	result := DoWithDefault(context.Background(), func() error {
+		attempts++
+		if attempts < 3 {
+			return fmt.Errorf("error")
+		}
+		return nil
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got failure: %v", result.Error)
+	}
+	if result.Attempts != 3 {
+		t.Fatalf("Expected 3 attempts, got %d", result.Attempts)
 	}
 }
 

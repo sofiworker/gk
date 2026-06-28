@@ -88,6 +88,9 @@ func (lb *LoadBalancer) getHealthyInstances(serviceName string) ([]Instance, err
 		if err := lb.refreshInstances(serviceName); err != nil {
 			return nil, err
 		}
+		lb.mu.RLock()
+		instances = lb.instances[serviceName]
+		lb.mu.RUnlock()
 	}
 
 	// 过滤健康实例

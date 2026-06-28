@@ -20,6 +20,7 @@ A comprehensive collection of Go libraries for building robust applications.
 - [grx](grx/README.md) - Reflection extensions
 - [gsd](gsd/README.md) - Service Discovery
 - [gsql](gsql/README.md) - SQL Utilities
+- [gws](gws/README.md) - SOAP/WSDL Client, Server and Code Generation
 
 ## Installation
 

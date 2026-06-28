@@ -2,6 +2,7 @@ package gcache
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -238,9 +239,15 @@ type Serializer interface {
 type JSONSerializer struct{}
 
 func (j JSONSerializer) Serialize(v interface{}) ([]byte, error) {
-	return []byte{}, nil
+	if v == nil {
+		return nil, nil
+	}
+	return json.Marshal(v)
 }
 
 func (j JSONSerializer) Deserialize(data []byte, v interface{}) error {
-	return nil
+	if len(data) == 0 {
+		return nil
+	}
+	return json.Unmarshal(data, v)
 }
