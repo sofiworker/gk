@@ -8,7 +8,7 @@ import (
 )
 
 func TestEnvelopeDefault_Success(t *testing.T) {
-	app := New("test", "1.0.0")
+	app := New()
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/test", nil)
@@ -31,7 +31,7 @@ func TestEnvelopeDefault_Success(t *testing.T) {
 }
 
 func TestEnvelopeDefault_Error(t *testing.T) {
-	app := New("test", "1.0.0")
+	app := New()
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/test", nil)

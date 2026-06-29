@@ -120,7 +120,7 @@ func parseInput(r *http.Request, input interface{}) error {
 	if info.hasBody {
 		bodyField := v.Field(info.bodyIdx)
 
-		// Check if multipart — parse the form first
+		// Check if multipart - parse the form first
 		ct := r.Header.Get("Content-Type")
 		if strings.HasPrefix(ct, "multipart/form-data") {
 			if err := r.ParseMultipartForm(defaultMaxMemory); err != nil {

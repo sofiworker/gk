@@ -16,6 +16,7 @@ type RouteBuilder[Req, Resp any] struct {
 	reqType     reflect.Type
 	responses   []responseSpec
 	handler     HandlerFunc[Req, Resp]
+	middlewares []MiddlewareFunc
 }
 
 type responseSpec struct {
@@ -80,6 +81,16 @@ func (b *RouteBuilder[Req, Resp]) OPTIONS(subpath string) *RouteBuilder[Req, Res
 	return b
 }
 
+func (b *RouteBuilder[Req, Resp]) CONNECT(subpath string) *RouteBuilder[Req, Resp] {
+	b.methodSet(http.MethodConnect, subpath)
+	return b
+}
+
+func (b *RouteBuilder[Req, Resp]) TRACE(subpath string) *RouteBuilder[Req, Resp] {
+	b.methodSet(http.MethodTrace, subpath)
+	return b
+}
+
 // Doc sets the API documentation string.
 func (b *RouteBuilder[Req, Resp]) Doc(s string) *RouteBuilder[Req, Resp] {
 	b.doc = s
@@ -135,7 +146,19 @@ func (rb *responseSpecBuilder[Req, Resp]) End() *RouteBuilder[Req, Resp] {
 func (b *RouteBuilder[Req, Resp]) To(handler HandlerFunc[Req, Resp]) {
 	b.handler = handler
 	b.register()
-	_ = b.server.router.Register(b.method, b.path, b.buildHandler())
+	_ = b.server.router.Register(b.method, b.path, b.buildHandlerChain())
+}
+
+func (b *RouteBuilder[Req, Resp]) buildHandlerChain() http.Handler {
+	h := b.buildHandler()
+	for i := len(b.middlewares) - 1; i >= 0; i-- {
+		h = b.middlewares[i](h)
+	}
+	return h
+}
+
+func (b *RouteBuilder[Req, Resp]) addMiddlewares(mws ...MiddlewareFunc) {
+	b.middlewares = append(b.middlewares, mws...)
 }
 
 func (b *RouteBuilder[Req, Resp]) register() {
@@ -192,43 +215,51 @@ func writeError(w http.ResponseWriter, r *http.Request, s *Server, defaultCode i
 
 // Get registers a GET route.
 func Get[Req, Resp any](s *Server, path string, handler HandlerFunc[Req, Resp], opts ...RouteOption) {
-	b := &RouteBuilder[Req, Resp]{server: s, path: path, method: http.MethodGet}
-	for _, opt := range opts {
-		opt(b)
-	}
-	b.To(handler)
+	registerRoute(s, http.MethodGet, path, handler, opts...)
+}
+
+// Head registers a HEAD route.
+func Head[Req, Resp any](s *Server, path string, handler HandlerFunc[Req, Resp], opts ...RouteOption) {
+	registerRoute(s, http.MethodHead, path, handler, opts...)
 }
 
 // Post registers a POST route.
 func Post[Req, Resp any](s *Server, path string, handler HandlerFunc[Req, Resp], opts ...RouteOption) {
-	b := &RouteBuilder[Req, Resp]{server: s, path: path, method: http.MethodPost}
-	for _, opt := range opts {
-		opt(b)
-	}
-	b.To(handler)
+	registerRoute(s, http.MethodPost, path, handler, opts...)
 }
 
 // Put registers a PUT route.
 func Put[Req, Resp any](s *Server, path string, handler HandlerFunc[Req, Resp], opts ...RouteOption) {
-	b := &RouteBuilder[Req, Resp]{server: s, path: path, method: http.MethodPut}
-	for _, opt := range opts {
-		opt(b)
-	}
-	b.To(handler)
+	registerRoute(s, http.MethodPut, path, handler, opts...)
 }
 
 // Delete registers a DELETE route.
 func Delete[Req, Resp any](s *Server, path string, handler HandlerFunc[Req, Resp], opts ...RouteOption) {
-	b := &RouteBuilder[Req, Resp]{server: s, path: path, method: http.MethodDelete}
-	for _, opt := range opts {
-		opt(b)
-	}
-	b.To(handler)
+	registerRoute(s, http.MethodDelete, path, handler, opts...)
 }
 
 // Patch registers a PATCH route.
 func Patch[Req, Resp any](s *Server, path string, handler HandlerFunc[Req, Resp], opts ...RouteOption) {
-	b := &RouteBuilder[Req, Resp]{server: s, path: path, method: http.MethodPatch}
+	registerRoute(s, http.MethodPatch, path, handler, opts...)
+}
+
+// Connect registers a CONNECT route.
+func Connect[Req, Resp any](s *Server, path string, handler HandlerFunc[Req, Resp], opts ...RouteOption) {
+	registerRoute(s, http.MethodConnect, path, handler, opts...)
+}
+
+// Options registers an OPTIONS route.
+func Options[Req, Resp any](s *Server, path string, handler HandlerFunc[Req, Resp], opts ...RouteOption) {
+	registerRoute(s, http.MethodOptions, path, handler, opts...)
+}
+
+// Trace registers a TRACE route.
+func Trace[Req, Resp any](s *Server, path string, handler HandlerFunc[Req, Resp], opts ...RouteOption) {
+	registerRoute(s, http.MethodTrace, path, handler, opts...)
+}
+
+func registerRoute[Req, Resp any](s *Server, method, path string, handler HandlerFunc[Req, Resp], opts ...RouteOption) {
+	b := &RouteBuilder[Req, Resp]{server: s, path: path, method: method}
 	for _, opt := range opts {
 		opt(b)
 	}
@@ -237,3 +268,15 @@ func Patch[Req, Resp any](s *Server, path string, handler HandlerFunc[Req, Resp]
 
 // RouteOption is an option that applies to a RouteBuilder.
 type RouteOption func(interface{})
+
+type routeMiddlewareAppender interface {
+	addMiddlewares(...MiddlewareFunc)
+}
+
+func withRouteMiddlewares(mws ...MiddlewareFunc) RouteOption {
+	return func(builder interface{}) {
+		if b, ok := builder.(routeMiddlewareAppender); ok {
+			b.addMiddlewares(mws...)
+		}
+	}
+}

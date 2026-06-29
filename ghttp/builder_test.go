@@ -39,7 +39,7 @@ func testHandler(ctx context.Context, req *testInput) (*testOutput, error) {
 }
 
 func TestRouteBuilderWithPOST(t *testing.T) {
-	app := New("test", "1.0.0")
+	app := New()
 
 	Route[testInput, testOutput](app, "/users/{id}").
 		POST("").
@@ -89,7 +89,7 @@ func TestRouteBuilderWithPOST(t *testing.T) {
 }
 
 func TestShortcutPOST(t *testing.T) {
-	app := New("test", "1.0.0")
+	app := New()
 
 	Post[testInput, testOutput](app, "/users/{id}", testHandler)
 

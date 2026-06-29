@@ -2,6 +2,7 @@ package ghttp
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sync"
 )
@@ -29,8 +30,8 @@ type Server struct {
 	routed     bool
 }
 
-// New creates a new Server with the given name, version, and options.
-func New(name, version string, opts ...ServerOption) *Server {
+// New creates a new Server with the given options.
+func New(opts ...ServerOption) *Server {
 	c := &Config{
 		address: ":8080",
 	}
@@ -43,14 +44,22 @@ func New(name, version string, opts ...ServerOption) *Server {
 		config:    c,
 		codecMgr:  NewCodecManager(),
 		envelope:  DefaultEnvelope,
-		openAPI:   NewOpenAPI(name, version),
-		validator: c.validator,
+		validator: newDefaultValidator(),
+	}
+	if c.validator != nil {
+		s.validator = c.validator
+	}
+	if c.openAPIEnabled {
+		s.openAPI = NewOpenAPI(c.openAPITitle, c.openAPIVersion)
+	}
+	if c.router != nil {
+		s.router = c.router
 	}
 
 	return s
 }
 
-// ServeHTTP implements http.Handler — applies middlewares then delegates to router.
+// ServeHTTP implements http.Handler - applies middlewares then delegates to router.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.finalizeRoutes()
 	h := s.buildHandlerChain()
@@ -75,17 +84,41 @@ func (s *Server) Run(addr ...string) error {
 
 	s.finalizeRoutes()
 
-	s.httpServer = &http.Server{
+	httpServer := &http.Server{
 		Addr:    addrStr,
 		Handler: s.buildHandlerChain(),
 	}
-	return s.httpServer.ListenAndServe()
+	s.mu.Lock()
+	s.httpServer = httpServer
+	s.mu.Unlock()
+
+	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }
 
 // Shutdown gracefully shuts down the server.
-func (s *Server) Shutdown() error {
-	if s.httpServer != nil {
-		return s.httpServer.Shutdown(context.Background())
+func (s *Server) Shutdown(ctx context.Context) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
+	s.mu.Lock()
+	httpServer := s.httpServer
+	s.mu.Unlock()
+	if httpServer != nil {
+		return httpServer.Shutdown(ctx)
+	}
+	return nil
+}
+
+// Close immediately closes the server without waiting for active requests.
+func (s *Server) Close() error {
+	s.mu.Lock()
+	httpServer := s.httpServer
+	s.mu.Unlock()
+	if httpServer != nil {
+		return httpServer.Close()
 	}
 	return nil
 }
@@ -93,6 +126,20 @@ func (s *Server) Shutdown() error {
 // Use adds middleware to the server.
 func (s *Server) Use(mw MiddlewareFunc) {
 	s.middlewares = append(s.middlewares, mw)
+}
+
+// Handle registers a raw http.Handler on the server.
+func (s *Server) Handle(method, path string, handler http.Handler, mws ...MiddlewareFunc) error {
+	h := handler
+	for i := len(mws) - 1; i >= 0; i-- {
+		h = mws[i](h)
+	}
+	return s.router.Register(method, path, h)
+}
+
+// Raw registers a RawHandler on the server.
+func (s *Server) Raw(method, path string, handler RawHandler, mws ...MiddlewareFunc) error {
+	return s.Handle(method, path, http.HandlerFunc(handler), mws...)
 }
 
 func (s *Server) finalizeRoutes() {
@@ -124,11 +171,4 @@ func (s *Server) Group(prefix string, mws ...MiddlewareFunc) *Group {
 		prefix:      prefix,
 		middlewares: mws,
 	}
-}
-
-// Group holds a set of routes with a common prefix.
-type Group struct {
-	server      *Server
-	prefix      string
-	middlewares []MiddlewareFunc
 }

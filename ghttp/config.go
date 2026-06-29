@@ -2,8 +2,12 @@ package ghttp
 
 // Config holds server configuration.
 type Config struct {
-	address   string
-	validator Validator
+	address        string
+	router         Router
+	validator      Validator
+	openAPIEnabled bool
+	openAPITitle   string
+	openAPIVersion string
 }
 
 // ServerOption configures a Server.
@@ -25,7 +29,16 @@ func WithValidator(v Validator) ServerOption {
 
 // WithRouter sets a custom router.
 func WithRouter(router Router) ServerOption {
-	// Router is applied in New() after config is built.
-	// This is a placeholder; actual setting happens via a field in Config.
-	return func(c *Config) {}
+	return func(c *Config) {
+		c.router = router
+	}
+}
+
+// WithOpenAPI sets the OpenAPI document title and version.
+func WithOpenAPI(title, version string) ServerOption {
+	return func(c *Config) {
+		c.openAPIEnabled = true
+		c.openAPITitle = title
+		c.openAPIVersion = version
+	}
 }

@@ -8,7 +8,7 @@ import (
 )
 
 func TestMiddlewareOrder(t *testing.T) {
-	app := New("test", "1.0.0")
+	app := New()
 
 	var order []string
 
@@ -48,7 +48,7 @@ func TestMiddlewareOrder(t *testing.T) {
 }
 
 func TestBuiltinMiddlewareRequestID(t *testing.T) {
-	app := New("test", "1.0.0")
+	app := New()
 	app.Use(RequestID())
 
 	Route[struct{ Body struct{} }, struct{ Body struct{} }](app, "/test").GET("").To(func(ctx context.Context, req *struct{ Body struct{} }) (*struct{ Body struct{} }, error) {
@@ -65,7 +65,7 @@ func TestBuiltinMiddlewareRequestID(t *testing.T) {
 }
 
 func TestBuiltinMiddlewareRecovery(t *testing.T) {
-	app := New("test", "1.0.0")
+	app := New()
 	app.Use(Recoverer())
 
 	Route[struct{ Body struct{} }, struct{ Body struct{} }](app, "/panic").GET("").To(func(ctx context.Context, req *struct{ Body struct{} }) (*struct{ Body struct{} }, error) {

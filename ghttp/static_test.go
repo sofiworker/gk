@@ -13,7 +13,7 @@ func TestStaticServesFile(t *testing.T) {
 	testFile := filepath.Join(tmpDir, "hello.txt")
 	os.WriteFile(testFile, []byte("Hello, World!"), 0644)
 
-	app := New("test", "1.0.0")
+	app := New()
 	app.Static("/static", tmpDir)
 
 	w := httptest.NewRecorder()
@@ -33,7 +33,7 @@ func TestStaticFileSingle(t *testing.T) {
 	testFile := filepath.Join(tmpDir, "favicon.ico")
 	os.WriteFile(testFile, []byte("icon-data"), 0644)
 
-	app := New("test", "1.0.0")
+	app := New()
 	app.StaticFile("/favicon.ico", testFile)
 
 	w := httptest.NewRecorder()

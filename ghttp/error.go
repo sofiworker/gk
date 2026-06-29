@@ -6,9 +6,10 @@ import (
 )
 
 var (
-	ErrConflict = errors.New("conflict")
-	ErrNotFound = errors.New("not found")
-	ErrHandled  = errors.New("response already handled")
+	ErrConflict   = errors.New("conflict")
+	ErrNotFound   = errors.New("not found")
+	ErrHandled    = errors.New("response already handled")
+	ErrNilContext = errors.New("context is nil")
 )
 
 // HTTPError is a structured HTTP error with code and message.

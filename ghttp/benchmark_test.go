@@ -246,7 +246,7 @@ func BenchmarkEnvelope(b *testing.B) {
 }
 
 func BenchmarkFullServer(b *testing.B) {
-	s := New("bench", "1.0.0")
+	s := New()
 
 	type benchInput struct {
 		Path struct {

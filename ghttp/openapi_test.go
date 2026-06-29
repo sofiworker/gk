@@ -8,7 +8,7 @@ import (
 )
 
 func TestOpenAPIBuildsValidSpec(t *testing.T) {
-	app := New("My API", "1.0.0")
+	app := New(WithOpenAPI("My API", "1.0.0"))
 
 	type CreateUserReq struct {
 		Path struct {

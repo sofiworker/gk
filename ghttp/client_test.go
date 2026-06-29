@@ -8,7 +8,7 @@ import (
 )
 
 func TestClientBasicGet(t *testing.T) {
-	app := New("test", "1.0.0")
+	app := New()
 	type helloResp struct {
 		Body struct {
 			Message string `json:"message"`
@@ -37,7 +37,7 @@ func TestClientBasicGet(t *testing.T) {
 }
 
 func TestClientBaseURL(t *testing.T) {
-	app := New("test", "1.0.0")
+	app := New()
 	type pongResp struct {
 		Body struct{ Pong string }
 	}
@@ -70,7 +70,7 @@ type clientGreetResp struct {
 }
 
 func TestClientGenericEndpoint(t *testing.T) {
-	app := New("test", "1.0.0")
+	app := New()
 	Route[clientGreetReq, clientGreetResp](app, "/greet").POST("").To(func(ctx context.Context, req *clientGreetReq) (*clientGreetResp, error) {
 		return &clientGreetResp{Body: struct {
 			Message string `json:"message"`

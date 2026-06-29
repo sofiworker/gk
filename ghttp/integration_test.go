@@ -17,7 +17,7 @@ import (
 // ---- Integration test types ----
 
 func TestIntegration_GetUser(t *testing.T) {
-	s := New("test", "1.0.0")
+	s := New()
 
 	type input struct {
 		Path struct {
@@ -68,7 +68,7 @@ func TestIntegration_GetUser(t *testing.T) {
 }
 
 func TestIntegration_CreateUser(t *testing.T) {
-	s := New("test", "1.0.0")
+	s := New()
 
 	type input struct {
 		Path struct {
@@ -115,7 +115,7 @@ func TestIntegration_CreateUser(t *testing.T) {
 }
 
 func TestIntegration_ValidationError(t *testing.T) {
-	s := New("test", "1.0.0")
+	s := New()
 	s.validator = &mockValidator{}
 
 	Get[struct{ Body struct{} }, struct{ Body struct{} }](s, "/users/{id}",
@@ -132,12 +132,12 @@ func TestIntegration_ValidationError(t *testing.T) {
 	defer resp.Body.Close()
 
 	// Currently the validator is set on Server but the builder's buildHandler
-	// references b.server.validator — this should work if set before route registration.
+	// references b.server.validator - this should work if set before route registration.
 	// Let's check: Server.validator is set but To() already captured it.
 	// The issue: post-registration set won't affect already-built handlers.
 	// So we need to rebuild server with validator passed via New().
 	// For now skip this test as it requires design consideration.
-	t.Skip("Validator requires New() option — needs test refactor")
+	t.Skip("Validator requires New() option - needs test refactor")
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 }
 
@@ -148,7 +148,10 @@ func (m *mockValidator) Validate(ctx context.Context, i interface{}) error {
 }
 
 func TestIntegration_NotFound(t *testing.T) {
-	s := New("test", "1.0.0")
+	s := New()
+	Get[struct{}, struct{}](s, "/exists", func(ctx context.Context, req *struct{}) (*struct{}, error) {
+		return &struct{}{}, nil
+	})
 
 	ts := httptest.NewServer(s)
 	defer ts.Close()
@@ -157,12 +160,12 @@ func TestIntegration_NotFound(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	// Default RadixRouter returns 405 for unregistered method, 404 for unregistered path
+	// Default RadixRouter returns 404 when the method exists but the path does not.
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
 func TestIntegration_OpenAPIEndpoint(t *testing.T) {
-	s := New("test", "1.0.0")
+	s := New(WithOpenAPI("test", "1.0.0"))
 
 	Get[struct {
 		Path struct {
@@ -211,7 +214,7 @@ func TestIntegration_OpenAPIEndpoint(t *testing.T) {
 }
 
 func TestIntegration_ClientGetAndUnwrapEnvelope(t *testing.T) {
-	s := New("test", "1.0.0")
+	s := New()
 
 	type output struct {
 		ID   int    `json:"id"`
@@ -249,7 +252,7 @@ func TestIntegration_ClientGetAndUnwrapEnvelope(t *testing.T) {
 }
 
 func TestIntegration_ClientGetChain(t *testing.T) {
-	s := New("test", "1.0.0")
+	s := New()
 
 	type output struct {
 		ID   int    `json:"id"`
@@ -299,7 +302,7 @@ func TestIntegration_ClientGetChain(t *testing.T) {
 }
 
 func TestIntegration_GenericClientPOST(t *testing.T) {
-	s := New("test", "1.0.0")
+	s := New()
 
 	type createReq struct {
 		Path struct {
@@ -339,14 +342,14 @@ func TestIntegration_GenericClientPOST(t *testing.T) {
 	resp, err := POST[createReq, createResp](context.Background(), client, "/users?id=55", input)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-	// Path param from query won't work — the path pattern is "/users" with no {id}
+	// Path param from query won't work - the path pattern is "/users" with no {id}
 	// So ID will be 0. That's expected for this test.
 	assert.Equal(t, "GenericAlice", resp.Name)
 	assert.Equal(t, "generic", resp.Role)
 }
 
 func TestIntegration_SSE(t *testing.T) {
-	s := New("test", "1.0.0")
+	s := New()
 
 	s.SSE("/events", func(ctx Context, stream *SSEWriter) error {
 		_ = stream.WriteEvent("message", "hello")
@@ -371,7 +374,7 @@ func TestIntegration_SSE(t *testing.T) {
 }
 
 func TestIntegration_MiddlewareOrder(t *testing.T) {
-	s := New("test", "1.0.0")
+	s := New()
 
 	var order []string
 
@@ -414,7 +417,7 @@ func TestIntegration_MiddlewareOrder(t *testing.T) {
 }
 
 func TestIntegration_RouteBuilderChainWithOpenAPI(t *testing.T) {
-	s := New("test", "1.0.0")
+	s := New(WithOpenAPI("test", "1.0.0"))
 
 	type createRequest struct {
 		Body struct {
@@ -471,7 +474,7 @@ func TestIntegration_RouteBuilderChainWithOpenAPI(t *testing.T) {
 }
 
 func TestIntegration_StaticFile(t *testing.T) {
-	s := New("test", "1.0.0")
+	s := New()
 
 	s.Static("/static", "./testdata")
 
@@ -487,7 +490,7 @@ func TestIntegration_StaticFile(t *testing.T) {
 }
 
 func TestIntegration_ErrorHandling(t *testing.T) {
-	s := New("test", "1.0.0")
+	s := New()
 
 	Get[struct{ Body struct{} }, struct{ Body struct{} }](s, "/error",
 		func(ctx context.Context, req *struct{ Body struct{} }) (*struct{ Body struct{} }, error) {
@@ -520,7 +523,7 @@ func TestIntegration_CustomEnvelope(t *testing.T) {
 		Data interface{} `json:"data,omitempty"`
 	}
 
-	s := New("test", "1.0.0")
+	s := New()
 	s.WithEnvelope(func(ctx *responseContext, statusCode int, resp interface{}, err error, codecMgr *CodecManager) {
 		w := ctx.w
 		r := ctx.r
