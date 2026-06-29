@@ -1,0 +1,9 @@
+Framework,Requests/sec,Latency(avg),Throughput(MB/s)
+default,,,
+gin,,,
+chi,,,
+echo,,,
+gorestful,,,
+fasthttp,,,
+don,,,
+ghttp,,,
