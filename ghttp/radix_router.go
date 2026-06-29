@@ -107,15 +107,7 @@ func (r *RadixRouter) Register(method, path string, handler http.Handler) error 
 		m = newMethodMatcher()
 		r.methodMatchers[method] = m
 	}
-	if strings.HasPrefix(path, "/") {
-		path = strings.TrimRight(path, "/")
-		if path == "" {
-			path = "/"
-		}
-	}
-	// Convert {param} to :param for internal matching
-	path = strings.ReplaceAll(path, "{", ":")
-	path = strings.ReplaceAll(path, "}", "")
+	path = normalizeRoutePath(path)
 	m.add(path, handler)
 	return nil
 }

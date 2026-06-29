@@ -61,20 +61,18 @@ type GreetOutput struct {
 func main() {
     s := ghttp.New()
 
-    ghttp.Get[GreetInput, GreetOutput](s, "/hello/{name}", func(ctx context.Context, req *GreetInput) (*GreetOutput, error) {
-        return &GreetOutput{Message: "Hello, " + req.Name}, nil
-    })
-
     // 链式构建器（支持 OpenAPI 元数据）
-    ghttp.Route[GreetInput, GreetOutput](s, "/hello/{name}").
-        GET("获取问候").
+    if err := ghttp.Route[GreetInput, GreetOutput](s).
+        GET("/hello/{name}").
         Doc("返回个性化的问候消息").
         Reads(GreetInput{}).
         Responds(200).With(GreetOutput{}).Desc("成功").
         End().
         To(func(ctx context.Context, req *GreetInput) (*GreetOutput, error) {
             return &GreetOutput{Message: "Hello, " + req.Name}, nil
-        })
+        }); err != nil {
+        panic(err)
+    }
 
     s.Run(":8080")
 }
@@ -107,44 +105,48 @@ resp, err := ghttp.Do[GreetInput, GreetOutput](client, "POST", "/hello", input)
 
 | 函数 | 说明 |
 |------|------|
-| `Route[Req,Resp](s, path)` | 链式构建器起始 |
-| `Get[Req,Resp](s, path, handler)` | 快捷 GET |
-| `Post[Req,Resp](s, path, handler)` | 快捷 POST |
-| `Put[Req,Resp](s, path, handler)` | 快捷 PUT |
-| `Delete[Req,Resp](s, path, handler)` | 快捷 DELETE |
-| `Patch[Req,Resp](s, path, handler)` | 快捷 PATCH |
+| `Route[Req,Resp](target)` | 链式构建器起始，`target` 可以是 `*Server` 或 `*Group` |
+| `.GET(path)` | 注册 GET 路由 |
+| `.POST(path)` | 注册 POST 路由 |
+| `.PUT(path)` | 注册 PUT 路由 |
+| `.DELETE(path)` | 注册 DELETE 路由 |
+| `.PATCH(path)` | 注册 PATCH 路由 |
+| `.ANY(path)` | 注册所有标准 HTTP 方法，常用于测试或兜底 API |
+| `.CUSTOM(method, path)` | 注册自定义 HTTP 方法，`method` 必须是合法 token |
 
 ### 链式构建器方法
 
 | 方法 | 说明 |
 |------|------|
-| `.GET("摘要")` | 注册 GET 方法及摘要 |
-| `.POST("摘要")` | 注册 POST 方法及摘要 |
-| `.PUT("摘要")` | 注册 PUT 方法及摘要 |
-| `.DELETE("摘要")` | 注册 DELETE 方法及摘要 |
-| `.PATCH("摘要")` | 注册 PATCH 方法及摘要 |
+| `.GET(path)` | 设置 GET 方法和路由路径 |
+| `.POST(path)` | 设置 POST 方法和路由路径 |
+| `.PUT(path)` | 设置 PUT 方法和路由路径 |
+| `.DELETE(path)` | 设置 DELETE 方法和路由路径 |
+| `.PATCH(path)` | 设置 PATCH 方法和路由路径 |
+| `.ANY(path)` | 设置所有标准 HTTP 方法和路由路径 |
+| `.CUSTOM(method, path)` | 设置自定义 HTTP 方法和路由路径 |
 | `.Doc("描述")` | 操作描述 |
 | `.Reads(input)` | 请求体类型（用于 OpenAPI） |
 | `.Responds(code)` | 响应状态码 |
 | `.With(output)` | 响应体类型 |
 | `.Desc("说明")` | 响应说明 |
-| `.Tag("标签")` | OpenAPI 标签 |
+| `.Tags("标签")` | OpenAPI 标签 |
 | `.End()` | 结束方法声明，等待 `To()` |
-| `.To(handler)` | 注册处理函数 |
+| `.To(handler)` | 注册处理函数并返回错误 |
 
 ### 路由参数
 
-路由路径支持三种参数语法：
+路由路径推荐使用 Go 标准库和 OpenAPI 一致的 `{param}` 语法：
 
-- `{param}` — 命名参数（RadixRouter）
-- `:param` — 命名参数（StdRouter）
-- `*` — 通配符（匹配剩余路径）
+- `{param}` — 命名参数
+- `{path...}` — 通配符（匹配剩余路径）
 
 ```go
-ghttp.Get[Req, Resp](s, "/users/{id}", handler)    // RadixRouter
-ghttp.Get[Req, Resp](s, "/users/:id", handler)      // StdRouter
-ghttp.Get[Req, Resp](s, "/files/{path:.*}", handler) // 通配符
+ghttp.Route[Req, Resp](s).GET("/users/{id}").To(handler)      // RadixRouter
+ghttp.Route[Req, Resp](s).GET("/files/{path...}").To(handler)  // 通配符
 ```
+
+旧的 `:param` / `*path` 语法仍然兼容，但注册时会输出 warning；新代码应统一使用 `{param}` / `{path...}`。
 
 ### 输入结构体
 
@@ -248,7 +250,7 @@ renderer := ghttp.NewRenderer("./templates/*.html")
 s = ghttp.New(ghttp.WithRenderer(renderer))
 
 // 处理函数中
-ghttp.Get[NoInput, NoOutput](s, "/page", func(ctx context.Context, req *NoInput) (*NoOutput, error) {
+ghttp.Route[NoInput, NoOutput](s).GET("/page").To(func(ctx context.Context, req *NoInput) (*NoOutput, error) {
     s.Render(ctx, 200, "index.html", gin.H{"title": "Hello"})
     return nil, nil
 })

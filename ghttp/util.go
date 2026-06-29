@@ -1,6 +1,7 @@
 package ghttp
 
 import (
+	"log"
 	"path"
 	"strings"
 )
@@ -35,14 +36,57 @@ func pathSegmentCount(p string) int {
 	return len(strings.Split(strings.Trim(p, "/"), "/"))
 }
 
-// extractParamNames extracts :param and *wildcard names from a path.
+// extractParamNames extracts :param, {param}, and *wildcard names from a path.
 func extractParamNames(p string) []string {
 	var names []string
 	segments := splitPathSegments(p)
 	for _, seg := range segments {
 		if strings.HasPrefix(seg, ":") || strings.HasPrefix(seg, "*") {
 			names = append(names, seg[1:])
+			continue
+		}
+		if strings.HasPrefix(seg, "{") && strings.HasSuffix(seg, "}") {
+			name := strings.TrimSuffix(strings.TrimPrefix(seg, "{"), "}")
+			name = strings.TrimSuffix(name, "...")
+			names = append(names, name)
 		}
 	}
 	return names
+}
+
+func normalizeRoutePath(path string) string {
+	if strings.HasPrefix(path, "/") {
+		path = strings.TrimRight(path, "/")
+		if path == "" {
+			path = "/"
+		}
+	}
+	if containsColonParam(path) {
+		log.Printf("[ghttp] WARN route path %q uses deprecated :param syntax; use {param} syntax instead", path)
+	}
+	return convertBraceParamsToColon(path)
+}
+
+func containsColonParam(path string) bool {
+	for _, seg := range splitPathSegments(path) {
+		if strings.HasPrefix(seg, ":") && len(seg) > 1 {
+			return true
+		}
+	}
+	return false
+}
+
+func convertBraceParamsToColon(path string) string {
+	parts := strings.Split(path, "/")
+	for i, part := range parts {
+		if strings.HasPrefix(part, "{") && strings.HasSuffix(part, "}") {
+			name := strings.TrimSuffix(strings.TrimPrefix(part, "{"), "}")
+			if strings.HasSuffix(name, "...") {
+				parts[i] = "*" + strings.TrimSuffix(name, "...")
+				continue
+			}
+			parts[i] = ":" + name
+		}
+	}
+	return strings.Join(parts, "/")
 }

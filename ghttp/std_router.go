@@ -15,7 +15,7 @@ func NewStdRouter() *StdRouter {
 }
 
 func (r *StdRouter) Register(method, path string, handler http.Handler) error {
-	converted := convertPathParams(path)
+	converted := convertPathParams(normalizeRoutePath(path))
 	pattern := method + " " + converted
 	r.mux.Handle(pattern, handler)
 	return nil

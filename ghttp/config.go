@@ -4,7 +4,9 @@ package ghttp
 type Config struct {
 	address        string
 	router         Router
+	renderer       Renderer
 	validator      Validator
+	logger         Logger
 	openAPIEnabled bool
 	openAPITitle   string
 	openAPIVersion string
@@ -31,6 +33,20 @@ func WithValidator(v Validator) ServerOption {
 func WithRouter(router Router) ServerOption {
 	return func(c *Config) {
 		c.router = router
+	}
+}
+
+// WithRenderer sets the template renderer.
+func WithRenderer(renderer Renderer) ServerOption {
+	return func(c *Config) {
+		c.renderer = renderer
+	}
+}
+
+// WithLogger sets the server logger used by built-in logging middleware.
+func WithLogger(logger Logger) ServerOption {
+	return func(c *Config) {
+		c.logger = logger
 	}
 }
 

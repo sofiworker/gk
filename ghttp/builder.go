@@ -1,15 +1,35 @@
 package ghttp
 
 import (
+	"errors"
 	"net/http"
 	"reflect"
+	"strings"
+)
+
+var (
+	ErrRouteMethodRequired = errors.New("route method is required")
+	ErrRouteMethodEmpty    = errors.New("route method is empty")
+	ErrRouteMethodInvalid  = errors.New("route method is invalid")
+
+	allHTTPMethods = []string{
+		http.MethodGet,
+		http.MethodHead,
+		http.MethodPost,
+		http.MethodPut,
+		http.MethodPatch,
+		http.MethodDelete,
+		http.MethodConnect,
+		http.MethodOptions,
+		http.MethodTrace,
+	}
 )
 
 // RouteBuilder builds a route in a go-restful-style chain.
 type RouteBuilder[Req, Resp any] struct {
-	server      *Server
+	target      routeTarget
 	path        string
-	method      string
+	methods     []string
 	doc         string
 	tags        []string
 	operationID string
@@ -17,6 +37,12 @@ type RouteBuilder[Req, Resp any] struct {
 	responses   []responseSpec
 	handler     HandlerFunc[Req, Resp]
 	middlewares []MiddlewareFunc
+}
+
+type routeTarget interface {
+	handleRoute(method, path string, handler http.Handler, mws ...MiddlewareFunc) error
+	addRouteSpec(method, path, doc string, tags []string, operationID string, reqType reflect.Type, responses []responseSpec)
+	owner() *Server
 }
 
 type responseSpec struct {
@@ -31,63 +57,78 @@ type responseSpecBuilder[Req, Resp any] struct {
 	code    int
 }
 
-// Route creates a new RouteBuilder on the given path.
-// Usage: Route[CreateUserReq, UserResp](s, "/users/{id}").POST("").To(handler)
-func Route[Req, Resp any](s *Server, path string) *RouteBuilder[Req, Resp] {
+// Route creates a new RouteBuilder on the given target.
+// Usage: Route[CreateUserReq, UserResp](s).POST("/users/{id}").To(handler)
+func Route[Req, Resp any](target routeTarget) *RouteBuilder[Req, Resp] {
 	return &RouteBuilder[Req, Resp]{
-		server: s,
-		path:   path,
+		target: target,
 	}
 }
 
-func (b *RouteBuilder[Req, Resp]) methodSet(method string, subpath string) string {
-	b.method = method
-	b.path = JoinPaths(b.path, subpath)
+func (b *RouteBuilder[Req, Resp]) methodSet(method string, path string) string {
+	b.methods = []string{method}
+	b.path = path
 	return b.path
 }
 
-func (b *RouteBuilder[Req, Resp]) POST(subpath string) *RouteBuilder[Req, Resp] {
-	b.methodSet(http.MethodPost, subpath)
+func (b *RouteBuilder[Req, Resp]) methodsSet(methods []string, path string) string {
+	b.methods = append(b.methods[:0], methods...)
+	b.path = path
+	return b.path
+}
+
+func (b *RouteBuilder[Req, Resp]) POST(path string) *RouteBuilder[Req, Resp] {
+	b.methodSet(http.MethodPost, path)
 	return b
 }
 
-func (b *RouteBuilder[Req, Resp]) GET(subpath string) *RouteBuilder[Req, Resp] {
-	b.methodSet(http.MethodGet, subpath)
+func (b *RouteBuilder[Req, Resp]) GET(path string) *RouteBuilder[Req, Resp] {
+	b.methodSet(http.MethodGet, path)
 	return b
 }
 
-func (b *RouteBuilder[Req, Resp]) PUT(subpath string) *RouteBuilder[Req, Resp] {
-	b.methodSet(http.MethodPut, subpath)
+func (b *RouteBuilder[Req, Resp]) PUT(path string) *RouteBuilder[Req, Resp] {
+	b.methodSet(http.MethodPut, path)
 	return b
 }
 
-func (b *RouteBuilder[Req, Resp]) DELETE(subpath string) *RouteBuilder[Req, Resp] {
-	b.methodSet(http.MethodDelete, subpath)
+func (b *RouteBuilder[Req, Resp]) DELETE(path string) *RouteBuilder[Req, Resp] {
+	b.methodSet(http.MethodDelete, path)
 	return b
 }
 
-func (b *RouteBuilder[Req, Resp]) PATCH(subpath string) *RouteBuilder[Req, Resp] {
-	b.methodSet(http.MethodPatch, subpath)
+func (b *RouteBuilder[Req, Resp]) PATCH(path string) *RouteBuilder[Req, Resp] {
+	b.methodSet(http.MethodPatch, path)
 	return b
 }
 
-func (b *RouteBuilder[Req, Resp]) HEAD(subpath string) *RouteBuilder[Req, Resp] {
-	b.methodSet(http.MethodHead, subpath)
+func (b *RouteBuilder[Req, Resp]) HEAD(path string) *RouteBuilder[Req, Resp] {
+	b.methodSet(http.MethodHead, path)
 	return b
 }
 
-func (b *RouteBuilder[Req, Resp]) OPTIONS(subpath string) *RouteBuilder[Req, Resp] {
-	b.methodSet(http.MethodOptions, subpath)
+func (b *RouteBuilder[Req, Resp]) OPTIONS(path string) *RouteBuilder[Req, Resp] {
+	b.methodSet(http.MethodOptions, path)
 	return b
 }
 
-func (b *RouteBuilder[Req, Resp]) CONNECT(subpath string) *RouteBuilder[Req, Resp] {
-	b.methodSet(http.MethodConnect, subpath)
+func (b *RouteBuilder[Req, Resp]) CONNECT(path string) *RouteBuilder[Req, Resp] {
+	b.methodSet(http.MethodConnect, path)
 	return b
 }
 
-func (b *RouteBuilder[Req, Resp]) TRACE(subpath string) *RouteBuilder[Req, Resp] {
-	b.methodSet(http.MethodTrace, subpath)
+func (b *RouteBuilder[Req, Resp]) TRACE(path string) *RouteBuilder[Req, Resp] {
+	b.methodSet(http.MethodTrace, path)
+	return b
+}
+
+func (b *RouteBuilder[Req, Resp]) ANY(path string) *RouteBuilder[Req, Resp] {
+	b.methodsSet(allHTTPMethods, path)
+	return b
+}
+
+func (b *RouteBuilder[Req, Resp]) CUSTOM(method, path string) *RouteBuilder[Req, Resp] {
+	b.methodSet(strings.ToUpper(strings.TrimSpace(method)), path)
 	return b
 }
 
@@ -142,42 +183,62 @@ func (rb *responseSpecBuilder[Req, Resp]) End() *RouteBuilder[Req, Resp] {
 	return rb.builder
 }
 
+// Use adds route-level middleware.
+func (b *RouteBuilder[Req, Resp]) Use(mws ...MiddlewareFunc) *RouteBuilder[Req, Resp] {
+	b.middlewares = append(b.middlewares, mws...)
+	return b
+}
+
+// UseFunc adds handler-function middleware to the route.
+func (b *RouteBuilder[Req, Resp]) UseFunc(mws ...HandlerMiddlewareFunc) *RouteBuilder[Req, Resp] {
+	for _, mw := range mws {
+		b.middlewares = append(b.middlewares, HandlerMiddleware(mw))
+	}
+	return b
+}
+
 // To registers the handler and finalizes the route.
-func (b *RouteBuilder[Req, Resp]) To(handler HandlerFunc[Req, Resp]) {
+func (b *RouteBuilder[Req, Resp]) To(handler HandlerFunc[Req, Resp]) error {
 	b.handler = handler
-	b.register()
-	_ = b.server.router.Register(b.method, b.path, b.buildHandlerChain())
+	if len(b.methods) == 0 {
+		return ErrRouteMethodRequired
+	}
+	for _, method := range b.methods {
+		if method == "" {
+			return ErrRouteMethodEmpty
+		}
+		if !isHTTPMethodToken(method) {
+			return ErrRouteMethodInvalid
+		}
+		if err := b.target.handleRoute(method, b.path, b.buildHandlerChain(), b.middlewares...); err != nil {
+			return err
+		}
+		b.register(method)
+	}
+	return nil
 }
 
 func (b *RouteBuilder[Req, Resp]) buildHandlerChain() http.Handler {
 	h := b.buildHandler()
-	for i := len(b.middlewares) - 1; i >= 0; i-- {
-		h = b.middlewares[i](h)
-	}
 	return h
 }
 
-func (b *RouteBuilder[Req, Resp]) addMiddlewares(mws ...MiddlewareFunc) {
-	b.middlewares = append(b.middlewares, mws...)
-}
-
-func (b *RouteBuilder[Req, Resp]) register() {
-	if b.server.openAPI != nil {
-		b.server.openAPI.AddRoute(b.method, b.path, b.doc, b.tags, b.operationID, b.reqType, b.responses)
-	}
+func (b *RouteBuilder[Req, Resp]) register(method string) {
+	b.target.addRouteSpec(method, b.path, b.doc, b.tags, b.operationID, b.reqType, b.responses)
 }
 
 func (b *RouteBuilder[Req, Resp]) buildHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var input Req
 		if err := parseInput(r, &input); err != nil {
-			writeError(w, r, b.server, http.StatusBadRequest, err)
+			writeError(w, r, b.target.owner(), http.StatusBadRequest, err)
 			return
 		}
 
-		if b.server.validator != nil {
-			if err := b.server.validator.Validate(r.Context(), &input); err != nil {
-				writeError(w, r, b.server, http.StatusUnprocessableEntity, err)
+		server := b.target.owner()
+		if server.validator != nil {
+			if err := server.validator.Validate(r.Context(), &input); err != nil {
+				writeError(w, r, server, http.StatusUnprocessableEntity, err)
 				return
 			}
 		}
@@ -187,15 +248,29 @@ func (b *RouteBuilder[Req, Resp]) buildHandler() http.Handler {
 			if isErrHandled(err) {
 				return
 			}
-			writeError(w, r, b.server, http.StatusInternalServerError, err)
+			writeError(w, r, server, http.StatusInternalServerError, err)
 			return
 		}
 
-		if b.server.envelope != nil {
-			ectx := &responseContext{w: w, r: r, codecMgr: b.server.codecMgr}
-			b.server.envelope(ectx, resolveStatusCode(resp), resp, nil, b.server.codecMgr)
+		if server.envelope != nil {
+			ectx := &responseContext{w: w, r: r, codecMgr: server.codecMgr}
+			server.envelope(ectx, resolveStatusCode(resp), resp, nil, server.codecMgr)
 		}
 	})
+}
+
+func isHTTPMethodToken(method string) bool {
+	for i := 0; i < len(method); i++ {
+		c := method[i]
+		if c <= 32 || c >= 127 {
+			return false
+		}
+		switch c {
+		case '(', ')', '<', '>', '@', ',', ';', ':', '\\', '"', '/', '[', ']', '?', '=', '{', '}', ' ', '\t':
+			return false
+		}
+	}
+	return true
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, s *Server, defaultCode int, err error) {
@@ -206,77 +281,5 @@ func writeError(w http.ResponseWriter, r *http.Request, s *Server, defaultCode i
 			code = he.Code
 		}
 		s.envelope(ectx, code, nil, err, s.codecMgr)
-	}
-}
-
-// ---- Server shortcut methods ----
-// These must be top-level functions because Go 1.24 does not allow
-// type parameters on methods. Usage: ghttp.Get(app, "/path", handler)
-
-// Get registers a GET route.
-func Get[Req, Resp any](s *Server, path string, handler HandlerFunc[Req, Resp], opts ...RouteOption) {
-	registerRoute(s, http.MethodGet, path, handler, opts...)
-}
-
-// Head registers a HEAD route.
-func Head[Req, Resp any](s *Server, path string, handler HandlerFunc[Req, Resp], opts ...RouteOption) {
-	registerRoute(s, http.MethodHead, path, handler, opts...)
-}
-
-// Post registers a POST route.
-func Post[Req, Resp any](s *Server, path string, handler HandlerFunc[Req, Resp], opts ...RouteOption) {
-	registerRoute(s, http.MethodPost, path, handler, opts...)
-}
-
-// Put registers a PUT route.
-func Put[Req, Resp any](s *Server, path string, handler HandlerFunc[Req, Resp], opts ...RouteOption) {
-	registerRoute(s, http.MethodPut, path, handler, opts...)
-}
-
-// Delete registers a DELETE route.
-func Delete[Req, Resp any](s *Server, path string, handler HandlerFunc[Req, Resp], opts ...RouteOption) {
-	registerRoute(s, http.MethodDelete, path, handler, opts...)
-}
-
-// Patch registers a PATCH route.
-func Patch[Req, Resp any](s *Server, path string, handler HandlerFunc[Req, Resp], opts ...RouteOption) {
-	registerRoute(s, http.MethodPatch, path, handler, opts...)
-}
-
-// Connect registers a CONNECT route.
-func Connect[Req, Resp any](s *Server, path string, handler HandlerFunc[Req, Resp], opts ...RouteOption) {
-	registerRoute(s, http.MethodConnect, path, handler, opts...)
-}
-
-// Options registers an OPTIONS route.
-func Options[Req, Resp any](s *Server, path string, handler HandlerFunc[Req, Resp], opts ...RouteOption) {
-	registerRoute(s, http.MethodOptions, path, handler, opts...)
-}
-
-// Trace registers a TRACE route.
-func Trace[Req, Resp any](s *Server, path string, handler HandlerFunc[Req, Resp], opts ...RouteOption) {
-	registerRoute(s, http.MethodTrace, path, handler, opts...)
-}
-
-func registerRoute[Req, Resp any](s *Server, method, path string, handler HandlerFunc[Req, Resp], opts ...RouteOption) {
-	b := &RouteBuilder[Req, Resp]{server: s, path: path, method: method}
-	for _, opt := range opts {
-		opt(b)
-	}
-	b.To(handler)
-}
-
-// RouteOption is an option that applies to a RouteBuilder.
-type RouteOption func(interface{})
-
-type routeMiddlewareAppender interface {
-	addMiddlewares(...MiddlewareFunc)
-}
-
-func withRouteMiddlewares(mws ...MiddlewareFunc) RouteOption {
-	return func(builder interface{}) {
-		if b, ok := builder.(routeMiddlewareAppender); ok {
-			b.addMiddlewares(mws...)
-		}
 	}
 }

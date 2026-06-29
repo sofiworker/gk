@@ -262,13 +262,17 @@ func BenchmarkFullServer(b *testing.B) {
 		Name string `json:"name"`
 	}
 
-	Post[benchInput, benchOutput](s, "/bench/{id}", func(ctx context.Context, req *benchInput) (*benchOutput, error) {
+	if err := Route[benchInput, benchOutput](s).POST("/bench/{id}").To(func(ctx context.Context, req *benchInput) (*benchOutput, error) {
 		return &benchOutput{ID: req.Path.ID, Name: req.Body.Name}, nil
-	})
+	}); err != nil {
+		b.Fatalf("route registration failed: %v", err)
+	}
 
-	Get[struct{ Body struct{} }, struct{ Pong string }](s, "/bench/ping", func(ctx context.Context, req *struct{ Body struct{} }) (*struct{ Pong string }, error) {
+	if err := Route[struct{ Body struct{} }, struct{ Pong string }](s).GET("/bench/ping").To(func(ctx context.Context, req *struct{ Body struct{} }) (*struct{ Pong string }, error) {
 		return &struct{ Pong string }{"ok"}, nil
-	})
+	}); err != nil {
+		b.Fatalf("route registration failed: %v", err)
+	}
 
 	ts := httptest.NewServer(s)
 	defer ts.Close()

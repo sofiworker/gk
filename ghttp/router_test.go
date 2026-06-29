@@ -1,8 +1,11 @@
 package ghttp
 
 import (
+	"bytes"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -14,13 +17,13 @@ func TestRadixRouterStaticParamWildcard(t *testing.T) {
 	if err := r.Register("GET", "/users", dummy); err != nil {
 		t.Fatalf("Register failed: %v", err)
 	}
-	if err := r.Register("GET", "/users/:id", dummy); err != nil {
+	if err := r.Register("GET", "/users/{id}", dummy); err != nil {
 		t.Fatalf("Register failed: %v", err)
 	}
 	if err := r.Register("GET", "/assets/*path", dummy); err != nil {
 		t.Fatalf("Register failed: %v", err)
 	}
-	if err := r.Register("GET", "/articles/:category/:id", dummy); err != nil {
+	if err := r.Register("GET", "/articles/{category}/{id}", dummy); err != nil {
 		t.Fatalf("Register failed: %v", err)
 	}
 
@@ -54,7 +57,7 @@ func TestRadixRouterPathParams(t *testing.T) {
 	r := NewRadixRouter()
 
 	var capturedParams map[string]string
-	r.Register("GET", "/users/:id", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	r.Register("GET", "/users/{id}", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		capturedParams = Params(req)
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -105,13 +108,45 @@ func TestStdRouterGo122(t *testing.T) {
 	}
 }
 
+func TestRouteParamColonSyntaxIsCompatibleWithWarning(t *testing.T) {
+	var buf bytes.Buffer
+	oldWriter := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(oldWriter)
+
+	r := NewRadixRouter()
+	var capturedParams map[string]string
+	if err := r.Register("GET", "/users/:id", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		capturedParams = Params(req)
+		w.WriteHeader(http.StatusOK)
+	})); err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/users/42", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if capturedParams["id"] != "42" {
+		t.Fatalf("id param = %q, want 42", capturedParams["id"])
+	}
+	if got := buf.String(); !strings.Contains(got, "deprecated :param syntax") || !strings.Contains(got, "use {param}") {
+		t.Fatalf("warning log = %q, want deprecated :param warning", got)
+	}
+}
+
 func TestConvertPathParams(t *testing.T) {
 	tests := []struct {
 		input    string
 		expected string
 	}{
 		{"/users/:id", "/users/{id}"},
+		{"/users/{id}", "/users/{id}"},
 		{"/assets/*path", "/assets/{path...}"},
+		{"/assets/{path...}", "/assets/{path...}"},
 		{"/articles/:category/:id", "/articles/{category}/{id}"},
 		{"/static", "/static"},
 	}

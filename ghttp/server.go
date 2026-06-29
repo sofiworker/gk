@@ -1,11 +1,15 @@
 package ghttp
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
+	"reflect"
 	"sync"
 )
+
+type serverContextKey struct{}
 
 // Server is the core HTTP server.
 // It implements http.Handler, so it can be:
@@ -21,6 +25,7 @@ type Server struct {
 	renderer  Renderer
 	envelope  EnvelopeFunc
 	validator Validator
+	logger    Logger
 
 	middlewares []MiddlewareFunc
 
@@ -45,12 +50,16 @@ func New(opts ...ServerOption) *Server {
 		codecMgr:  NewCodecManager(),
 		envelope:  DefaultEnvelope,
 		validator: newDefaultValidator(),
+		logger:    c.logger,
 	}
 	if c.validator != nil {
 		s.validator = c.validator
 	}
 	if c.openAPIEnabled {
 		s.openAPI = NewOpenAPI(c.openAPITitle, c.openAPIVersion)
+	}
+	if c.renderer != nil {
+		s.renderer = c.renderer
 	}
 	if c.router != nil {
 		s.router = c.router
@@ -63,6 +72,7 @@ func New(opts ...ServerOption) *Server {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.finalizeRoutes()
 	h := s.buildHandlerChain()
+	r = r.WithContext(context.WithValue(r.Context(), serverContextKey{}, s))
 	h.ServeHTTP(w, r)
 }
 
@@ -128,6 +138,11 @@ func (s *Server) Use(mw MiddlewareFunc) {
 	s.middlewares = append(s.middlewares, mw)
 }
 
+// UseFunc adds handler-function middleware to the server.
+func (s *Server) UseFunc(mw HandlerMiddlewareFunc) {
+	s.Use(HandlerMiddleware(mw))
+}
+
 // Handle registers a raw http.Handler on the server.
 func (s *Server) Handle(method, path string, handler http.Handler, mws ...MiddlewareFunc) error {
 	h := handler
@@ -140,6 +155,40 @@ func (s *Server) Handle(method, path string, handler http.Handler, mws ...Middle
 // Raw registers a RawHandler on the server.
 func (s *Server) Raw(method, path string, handler RawHandler, mws ...MiddlewareFunc) error {
 	return s.Handle(method, path, http.HandlerFunc(handler), mws...)
+}
+
+// Render renders a template and writes it to the response.
+func (s *Server) Render(w http.ResponseWriter, status int, name string, data interface{}) error {
+	if s.renderer == nil {
+		return errors.New("renderer is not configured")
+	}
+	var buf bytes.Buffer
+	if err := s.renderer.Render(name, data, &buf); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	_, err := w.Write(buf.Bytes())
+	return err
+}
+
+// HTML renders an HTML template.
+func (s *Server) HTML(w http.ResponseWriter, status int, name string, data interface{}) error {
+	return s.Render(w, status, name, data)
+}
+
+func (s *Server) handleRoute(method, path string, handler http.Handler, mws ...MiddlewareFunc) error {
+	return s.Handle(method, path, handler, mws...)
+}
+
+func (s *Server) addRouteSpec(method, path, doc string, tags []string, operationID string, reqType reflect.Type, responses []responseSpec) {
+	if s.openAPI != nil {
+		s.openAPI.AddRoute(method, path, doc, tags, operationID, reqType, responses)
+	}
+}
+
+func (s *Server) owner() *Server {
+	return s
 }
 
 func (s *Server) finalizeRoutes() {

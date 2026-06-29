@@ -4,13 +4,29 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"log"
 	"net/http"
 	"time"
 )
 
 // MiddlewareFunc is the standard net/http middleware signature.
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// HandlerMiddlewareFunc is a lightweight middleware signature for common
+// handler-function wrapping.
+type HandlerMiddlewareFunc func(http.HandlerFunc) http.HandlerFunc
+
+// HandlerMiddleware adapts a HandlerMiddlewareFunc into the standard
+// MiddlewareFunc shape.
+func HandlerMiddleware(fn HandlerMiddlewareFunc) MiddlewareFunc {
+	if fn == nil {
+		return func(next http.Handler) http.Handler {
+			return next
+		}
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(fn(next.ServeHTTP))
+	}
+}
 
 // RequestID adds a unique X-Request-ID header to every response.
 func RequestID() MiddlewareFunc {
@@ -39,6 +55,13 @@ type CORSConfig struct {
 
 // CORS returns a CORS middleware.
 func CORS(cfg CORSConfig) MiddlewareFunc {
+	allowMethods := joinStrings(cfg.AllowMethods)
+	allowHeaders := joinStrings(cfg.AllowHeaders)
+	maxAge := ""
+	if cfg.MaxAge > 0 {
+		maxAge = itoa(cfg.MaxAge)
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
@@ -49,17 +72,17 @@ func CORS(cfg CORSConfig) MiddlewareFunc {
 				}
 			}
 
-			if len(cfg.AllowMethods) > 0 {
-				w.Header().Set("Access-Control-Allow-Methods", joinStrings(cfg.AllowMethods))
+			if allowMethods != "" {
+				w.Header().Set("Access-Control-Allow-Methods", allowMethods)
 			}
-			if len(cfg.AllowHeaders) > 0 {
-				w.Header().Set("Access-Control-Allow-Headers", joinStrings(cfg.AllowHeaders))
+			if allowHeaders != "" {
+				w.Header().Set("Access-Control-Allow-Headers", allowHeaders)
 			}
 			if cfg.AllowCredentials {
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
 			}
-			if cfg.MaxAge > 0 {
-				w.Header().Set("Access-Control-Max-Age", itoa(cfg.MaxAge))
+			if maxAge != "" {
+				w.Header().Set("Access-Control-Max-Age", maxAge)
 			}
 
 			if r.Method == http.MethodOptions {
@@ -78,7 +101,9 @@ func RequestLogger() MiddlewareFunc {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			next.ServeHTTP(w, r)
-			log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start))
+			if logger := loggerFromRequest(r); logger != nil {
+				logger.Infof("%s %s %s", r.Method, r.URL.Path, time.Since(start))
+			}
 		})
 	}
 }
@@ -89,13 +114,23 @@ func Recoverer() MiddlewareFunc {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
 				if rec := recover(); rec != nil {
-					log.Printf("panic: %v", rec)
+					if logger := loggerFromRequest(r); logger != nil {
+						logger.Errorf("panic: %v", rec)
+					}
 					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				}
 			}()
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func loggerFromRequest(r *http.Request) Logger {
+	server, _ := r.Context().Value(serverContextKey{}).(*Server)
+	if server == nil {
+		return nil
+	}
+	return server.logger
 }
 
 // Timeout adds a timeout to the request context.

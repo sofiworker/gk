@@ -656,7 +656,7 @@ func WithWebSocketSubprotocols(protos []string) WebSocketOption {
 type WebSocketHandler func(ctx Context, conn *WebSocketConn) error
 
 // Upgrade registers a WebSocket upgrade route.
-func (s *Server) Upgrade(path string, handler WebSocketHandler, opts ...RouteOption) {
+func (s *Server) Upgrade(path string, handler WebSocketHandler) {
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = handler
 		w.WriteHeader(http.StatusNotImplemented)

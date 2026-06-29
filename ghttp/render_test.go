@@ -16,7 +16,7 @@ func TestRenderHTML(t *testing.T) {
 	renderer := NewRenderer(tmpDir, ".html", nil, false)
 
 	var buf bytes.Buffer
-	if err := renderer.HTML("index", map[string]interface{}{"Title": "Hello"}, &buf); err != nil {
+	if err := renderer.Render("index", map[string]interface{}{"Title": "Hello"}, &buf); err != nil {
 		t.Fatalf("RenderHTML failed: %v", err)
 	}
 	if !bytes.Contains(buf.Bytes(), []byte("<h1>Hello</h1>")) {
@@ -35,7 +35,7 @@ func TestRenderWithFuncMap(t *testing.T) {
 	renderer := NewRenderer(tmpDir, ".html", funcMap, false)
 
 	var buf bytes.Buffer
-	if err := renderer.HTML("greet", map[string]interface{}{}, &buf); err != nil {
+	if err := renderer.Render("greet", map[string]interface{}{}, &buf); err != nil {
 		t.Fatalf("RenderHTML failed: %v", err)
 	}
 }

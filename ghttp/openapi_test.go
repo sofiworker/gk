@@ -23,9 +23,11 @@ func TestOpenAPIBuildsValidSpec(t *testing.T) {
 		Name string `json:"name"`
 	}
 
-	Post[CreateUserReq, struct{ Body UserData }](app, "/orgs/{orgId}/users", func(ctx context.Context, req *CreateUserReq) (*struct{ Body UserData }, error) {
+	if err := Route[CreateUserReq, struct{ Body UserData }](app).POST("/orgs/{orgId}/users").To(func(ctx context.Context, req *CreateUserReq) (*struct{ Body UserData }, error) {
 		return nil, nil
-	})
+	}); err != nil {
+		t.Fatalf("route registration failed: %v", err)
+	}
 
 	spec := app.openAPI.Build()
 	if len(spec) == 0 {

@@ -1,11 +1,15 @@
 package ghttp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"html/template"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -75,6 +79,30 @@ func TestServerNewInitializesDefaultsAndOptions(t *testing.T) {
 	}
 	if app.openAPI != nil {
 		t.Fatal("OpenAPI should be disabled by default")
+	}
+}
+
+func TestServerRenderHTML(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "index.html"), []byte(`<h1>{{.Title}}</h1>`), 0o600); err != nil {
+		t.Fatalf("write template failed: %v", err)
+	}
+
+	app := New(WithRenderer(NewRenderer(tmpDir, ".html", template.FuncMap{}, false)))
+
+	rec := httptest.NewRecorder()
+	if err := app.Render(rec, http.StatusCreated, "index", map[string]interface{}{"Title": "Hello"}); err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusCreated)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
+		t.Fatalf("Content-Type = %q, want text/html; charset=utf-8", ct)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("<h1>Hello</h1>")) {
+		t.Fatalf("body = %q, want rendered html", rec.Body.String())
 	}
 }
 
@@ -159,31 +187,31 @@ func TestServerRegistersAllStandardHTTPMethods(t *testing.T) {
 		register func(*Server, string)
 	}{
 		{http.MethodGet, "/standard/get", func(s *Server, path string) {
-			Get[struct{}, standardMethodOutput](s, path, methodOutputHandler(http.MethodGet))
+			mustRoute(t, Route[struct{}, standardMethodOutput](s).GET(path).To(methodOutputHandler(http.MethodGet)))
 		}},
 		{http.MethodHead, "/standard/head", func(s *Server, path string) {
-			Head[struct{}, standardMethodOutput](s, path, methodOutputHandler(http.MethodHead))
+			mustRoute(t, Route[struct{}, standardMethodOutput](s).HEAD(path).To(methodOutputHandler(http.MethodHead)))
 		}},
 		{http.MethodPost, "/standard/post", func(s *Server, path string) {
-			Post[struct{}, standardMethodOutput](s, path, methodOutputHandler(http.MethodPost))
+			mustRoute(t, Route[struct{}, standardMethodOutput](s).POST(path).To(methodOutputHandler(http.MethodPost)))
 		}},
 		{http.MethodPut, "/standard/put", func(s *Server, path string) {
-			Put[struct{}, standardMethodOutput](s, path, methodOutputHandler(http.MethodPut))
+			mustRoute(t, Route[struct{}, standardMethodOutput](s).PUT(path).To(methodOutputHandler(http.MethodPut)))
 		}},
 		{http.MethodPatch, "/standard/patch", func(s *Server, path string) {
-			Patch[struct{}, standardMethodOutput](s, path, methodOutputHandler(http.MethodPatch))
+			mustRoute(t, Route[struct{}, standardMethodOutput](s).PATCH(path).To(methodOutputHandler(http.MethodPatch)))
 		}},
 		{http.MethodDelete, "/standard/delete", func(s *Server, path string) {
-			Delete[struct{}, standardMethodOutput](s, path, methodOutputHandler(http.MethodDelete))
+			mustRoute(t, Route[struct{}, standardMethodOutput](s).DELETE(path).To(methodOutputHandler(http.MethodDelete)))
 		}},
 		{http.MethodConnect, "/standard/connect", func(s *Server, path string) {
-			Connect[struct{}, standardMethodOutput](s, path, methodOutputHandler(http.MethodConnect))
+			mustRoute(t, Route[struct{}, standardMethodOutput](s).CONNECT(path).To(methodOutputHandler(http.MethodConnect)))
 		}},
 		{http.MethodOptions, "/standard/options", func(s *Server, path string) {
-			Options[struct{}, standardMethodOutput](s, path, methodOutputHandler(http.MethodOptions))
+			mustRoute(t, Route[struct{}, standardMethodOutput](s).OPTIONS(path).To(methodOutputHandler(http.MethodOptions)))
 		}},
 		{http.MethodTrace, "/standard/trace", func(s *Server, path string) {
-			Trace[struct{}, standardMethodOutput](s, path, methodOutputHandler(http.MethodTrace))
+			mustRoute(t, Route[struct{}, standardMethodOutput](s).TRACE(path).To(methodOutputHandler(http.MethodTrace)))
 		}},
 	}
 
@@ -202,9 +230,76 @@ func TestServerRegistersAllStandardHTTPMethods(t *testing.T) {
 	}
 }
 
+func TestRouteBuilderANYRegistersAllStandardHTTPMethods(t *testing.T) {
+	app := New()
+	mustRoute(t, Route[struct{}, standardMethodOutput](app).ANY("/any").To(func(ctx context.Context, req *struct{}) (*standardMethodOutput, error) {
+		return &standardMethodOutput{Method: ""}, nil
+	}))
+
+	methods := []string{
+		http.MethodGet,
+		http.MethodHead,
+		http.MethodPost,
+		http.MethodPut,
+		http.MethodPatch,
+		http.MethodDelete,
+		http.MethodConnect,
+		http.MethodOptions,
+		http.MethodTrace,
+	}
+	for _, method := range methods {
+		req := httptest.NewRequest(method, "/any", nil)
+		rec := httptest.NewRecorder()
+		app.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s /any status = %d, want %d", method, rec.Code, http.StatusOK)
+		}
+	}
+}
+
+func TestRouteBuilderToRequiresMethod(t *testing.T) {
+	app := New()
+	err := Route[struct{}, struct{}](app).To(func(context.Context, *struct{}) (*struct{}, error) {
+		return &struct{}{}, nil
+	})
+	if !errors.Is(err, ErrRouteMethodRequired) {
+		t.Fatalf("To error = %v, want ErrRouteMethodRequired", err)
+	}
+}
+
+func TestRouteBuilderCUSTOMRegistersCustomMethod(t *testing.T) {
+	app := New()
+	mustRoute(t, Route[struct{}, standardMethodOutput](app).CUSTOM("PROPFIND", "/custom").To(methodOutputHandler("PROPFIND")))
+
+	req := httptest.NewRequest("PROPFIND", "/custom", nil)
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestRouteBuilderCUSTOMRejectsInvalidMethod(t *testing.T) {
+	app := New()
+	err := Route[struct{}, struct{}](app).CUSTOM("BAD METHOD", "/custom").To(func(context.Context, *struct{}) (*struct{}, error) {
+		return &struct{}{}, nil
+	})
+	if !errors.Is(err, ErrRouteMethodInvalid) {
+		t.Fatalf("To error = %v, want ErrRouteMethodInvalid", err)
+	}
+}
+
 func methodOutputHandler(method string) HandlerFunc[struct{}, standardMethodOutput] {
 	return func(context.Context, *struct{}) (*standardMethodOutput, error) {
 		return &standardMethodOutput{Method: method}, nil
+	}
+}
+
+func mustRoute(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("route registration failed: %v", err)
 	}
 }
 
@@ -219,15 +314,15 @@ func TestServerOpenAPIEndpoint(t *testing.T) {
 	}
 
 	app := New(WithOpenAPI("accounts", "2.0.0"))
-	Route[req, resp](app, "/users/:id").
-		GET("").
+	mustRoute(t, Route[req, resp](app).
+		GET("/users/{id}").
 		Doc("get user").
 		OperationID("getUser").
 		Tags("users").
 		Responds(http.StatusOK).With(resp{}).Desc("user").End().
 		To(func(context.Context, *req) (*resp, error) {
 			return &resp{Name: "alice"}, nil
-		})
+		}))
 
 	httpReq := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
 	rec := httptest.NewRecorder()
@@ -259,10 +354,10 @@ func TestServerRouteUsesValidator(t *testing.T) {
 	app := New(WithValidator(serverValidatorFunc(func(ctx context.Context, input interface{}) error {
 		return wantErr
 	})))
-	Get[struct{}, struct{}](app, "/validate", func(context.Context, *struct{}) (*struct{}, error) {
+	mustRoute(t, Route[struct{}, struct{}](app).GET("/validate").To(func(context.Context, *struct{}) (*struct{}, error) {
 		t.Fatal("handler should not run after validation error")
 		return nil, nil
-	})
+	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/validate", nil)
 	rec := httptest.NewRecorder()
@@ -282,10 +377,10 @@ func TestServerUsesDefaultGoPlaygroundValidator(t *testing.T) {
 	type output struct{}
 
 	app := New()
-	Get[input, output](app, "/validate/default", func(context.Context, *input) (*output, error) {
+	mustRoute(t, Route[input, output](app).GET("/validate/default").To(func(context.Context, *input) (*output, error) {
 		t.Fatal("handler should not run after default validation error")
 		return nil, nil
-	})
+	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/validate/default", nil)
 	rec := httptest.NewRecorder()
@@ -422,7 +517,7 @@ func TestServerGroupStoresPrefixAndMiddlewares(t *testing.T) {
 	}
 }
 
-func TestGroupGetRegistersRouteWithPrefixAndMiddleware(t *testing.T) {
+func TestGroupRouteRegistersRouteWithPrefixAndMiddleware(t *testing.T) {
 	app := New()
 	group := app.Group("/api", func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -431,15 +526,15 @@ func TestGroupGetRegistersRouteWithPrefixAndMiddleware(t *testing.T) {
 		})
 	})
 
-	GroupGet[struct{}, struct {
+	mustRoute(t, Route[struct{}, struct {
 		OK bool `json:"ok"`
-	}](group, "/ping", func(context.Context, *struct{}) (*struct {
+	}](group).GET("/ping").To(func(context.Context, *struct{}) (*struct {
 		OK bool `json:"ok"`
 	}, error) {
 		return &struct {
 			OK bool `json:"ok"`
 		}{OK: true}, nil
-	})
+	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/ping", nil)
 	rec := httptest.NewRecorder()
@@ -503,11 +598,11 @@ func TestGroupRouteBuilderUsesGroupPath(t *testing.T) {
 
 	app := New()
 	group := app.Group("/api")
-	GroupRoute[input, output](group, "/users/:id").
-		GET("").
+	mustRoute(t, Route[input, output](group).
+		GET("/users/{id}").
 		To(func(ctx context.Context, req *input) (*output, error) {
 			return &output{ID: req.Path.ID}, nil
-		})
+		}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/users/42", nil)
 	rec := httptest.NewRecorder()
@@ -518,5 +613,30 @@ func TestGroupRouteBuilderUsesGroupPath(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"id":"42"`) {
 		t.Fatalf("response body = %s, want id 42", rec.Body.String())
+	}
+}
+
+func TestGroupRouteBuilderUsesGroupPathInOpenAPI(t *testing.T) {
+	type input struct{}
+	type output struct{}
+
+	app := New(WithOpenAPI("api", "1.0.0"))
+	group := app.Group("/api")
+
+	mustRoute(t, Route[input, output](group).
+		POST("/users").
+		Doc("create user").
+		To(func(context.Context, *input) (*output, error) {
+			return &output{}, nil
+		}))
+
+	spec := app.openAPI.Build()
+	var doc map[string]interface{}
+	if err := json.Unmarshal(spec, &doc); err != nil {
+		t.Fatalf("invalid openapi json: %v", err)
+	}
+	paths := doc["paths"].(map[string]interface{})
+	if _, ok := paths["/api/users"]; !ok {
+		t.Fatalf("paths = %#v, want /api/users", paths)
 	}
 }

@@ -14,11 +14,13 @@ func TestClientBasicGet(t *testing.T) {
 			Message string `json:"message"`
 		}
 	}
-	Route[struct{ Body struct{} }, helloResp](app, "/hello").GET("").To(func(ctx context.Context, req *struct{ Body struct{} }) (*helloResp, error) {
+	if err := Route[struct{ Body struct{} }, helloResp](app).GET("/hello").To(func(ctx context.Context, req *struct{ Body struct{} }) (*helloResp, error) {
 		return &helloResp{Body: struct {
 			Message string `json:"message"`
 		}{Message: "Hello"}}, nil
-	})
+	}); err != nil {
+		t.Fatalf("To failed: %v", err)
+	}
 
 	ts := httptest.NewServer(app)
 	defer ts.Close()
@@ -41,9 +43,11 @@ func TestClientBaseURL(t *testing.T) {
 	type pongResp struct {
 		Body struct{ Pong string }
 	}
-	Route[struct{ Body struct{} }, pongResp](app, "/ping").GET("").To(func(ctx context.Context, req *struct{ Body struct{} }) (*pongResp, error) {
+	if err := Route[struct{ Body struct{} }, pongResp](app).GET("/ping").To(func(ctx context.Context, req *struct{ Body struct{} }) (*pongResp, error) {
 		return &pongResp{Body: struct{ Pong string }{Pong: "ok"}}, nil
-	})
+	}); err != nil {
+		t.Fatalf("To failed: %v", err)
+	}
 
 	ts := httptest.NewServer(app)
 	defer ts.Close()
@@ -71,11 +75,13 @@ type clientGreetResp struct {
 
 func TestClientGenericEndpoint(t *testing.T) {
 	app := New()
-	Route[clientGreetReq, clientGreetResp](app, "/greet").POST("").To(func(ctx context.Context, req *clientGreetReq) (*clientGreetResp, error) {
+	if err := Route[clientGreetReq, clientGreetResp](app).POST("/greet").To(func(ctx context.Context, req *clientGreetReq) (*clientGreetResp, error) {
 		return &clientGreetResp{Body: struct {
 			Message string `json:"message"`
 		}{Message: "Hello, " + req.Body.Name}}, nil
-	})
+	}); err != nil {
+		t.Fatalf("To failed: %v", err)
+	}
 
 	ts := httptest.NewServer(app)
 	defer ts.Close()

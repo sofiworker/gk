@@ -3,6 +3,7 @@ package ghttp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -41,14 +42,16 @@ func testHandler(ctx context.Context, req *testInput) (*testOutput, error) {
 func TestRouteBuilderWithPOST(t *testing.T) {
 	app := New()
 
-	Route[testInput, testOutput](app, "/users/{id}").
-		POST("").
+	if err := Route[testInput, testOutput](app).
+		POST("/users/{id}").
 		Doc("Create user").
 		Tags("Users").
 		OperationID("createUser").
 		Reads(testInput{}).
 		Responds(http.StatusCreated).With(testOutput{}).Desc("Created").End().
-		To(testHandler)
+		To(testHandler); err != nil {
+		t.Fatalf("To failed: %v", err)
+	}
 
 	w := httptest.NewRecorder()
 	body := strings.NewReader(`{"name":"Alice"}`)
@@ -88,10 +91,12 @@ func TestRouteBuilderWithPOST(t *testing.T) {
 	}
 }
 
-func TestShortcutPOST(t *testing.T) {
+func TestRouteBuilderPostShortcutReplacement(t *testing.T) {
 	app := New()
 
-	Post[testInput, testOutput](app, "/users/{id}", testHandler)
+	if err := Route[testInput, testOutput](app).POST("/users/{id}").To(testHandler); err != nil {
+		t.Fatalf("To failed: %v", err)
+	}
 
 	w := httptest.NewRecorder()
 	body := strings.NewReader(`{"name":"Bob"}`)
@@ -112,3 +117,38 @@ func TestShortcutPOST(t *testing.T) {
 		t.Fatalf("expected code=0, got %d", envelope.Code)
 	}
 }
+
+func TestRouteBuilderToReturnsRegisterErrorAndSkipsOpenAPI(t *testing.T) {
+	wantErr := errors.New("register failed")
+	router := &failingRouter{err: wantErr}
+	app := New(WithOpenAPI("test", "1.0.0"), WithRouter(router))
+
+	err := Route[testInput, testOutput](app).
+		POST("/users/{id}").
+		Doc("Create user").
+		To(testHandler)
+
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("To error = %v, want %v", err, wantErr)
+	}
+
+	spec := app.openAPI.Build()
+	var doc map[string]interface{}
+	if err := json.Unmarshal(spec, &doc); err != nil {
+		t.Fatalf("unmarshal openapi failed: %v", err)
+	}
+	paths := doc["paths"].(map[string]interface{})
+	if len(paths) != 0 {
+		t.Fatalf("paths = %#v, want no stale openapi routes", paths)
+	}
+}
+
+type failingRouter struct {
+	err error
+}
+
+func (r *failingRouter) Register(string, string, http.Handler) error {
+	return r.err
+}
+
+func (r *failingRouter) ServeHTTP(http.ResponseWriter, *http.Request) {}

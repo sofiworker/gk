@@ -11,7 +11,7 @@ import (
 
 // Renderer is the template rendering interface.
 type Renderer interface {
-	HTML(name string, data interface{}, w io.Writer) error
+	Render(name string, data interface{}, w io.Writer) error
 }
 
 // GoRenderer uses Go's html/template, gin-style.
@@ -41,12 +41,17 @@ func NewRenderer(dir, ext string, funcMap template.FuncMap, reload bool) *GoRend
 	}
 }
 
-func (r *GoRenderer) HTML(name string, data interface{}, w io.Writer) error {
+func (r *GoRenderer) Render(name string, data interface{}, w io.Writer) error {
 	t, err := r.getTemplate(name)
 	if err != nil {
 		return err
 	}
 	return t.Execute(w, data)
+}
+
+// HTML is kept as a convenience wrapper.
+func (r *GoRenderer) HTML(name string, data interface{}, w io.Writer) error {
+	return r.Render(name, data, w)
 }
 
 func (r *GoRenderer) getTemplate(name string) (*template.Template, error) {

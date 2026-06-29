@@ -3,7 +3,17 @@ package ghttp
 import (
 	"net/http"
 	"reflect"
+	"sync"
 )
+
+const missingStatusField = -1
+
+var statusFieldCache sync.Map
+
+// StatusCoder allows a response to provide its HTTP status without reflection.
+type StatusCoder interface {
+	StatusCode() int
+}
 
 // EnvelopeFunc is the function that wraps responses.
 type EnvelopeFunc func(ctx *responseContext, statusCode int, resp interface{}, err error, codecMgr *CodecManager)
@@ -60,12 +70,25 @@ func (s *Server) WithEnvelope(fn EnvelopeFunc) {
 
 // resolveStatusCode extracts the HTTP status code from the response.
 func resolveStatusCode(resp interface{}) int {
+	if statusCoder, ok := resp.(StatusCoder); ok {
+		if code := statusCoder.StatusCode(); code != 0 {
+			return code
+		}
+	}
+
 	v := reflect.ValueOf(resp)
 	if v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			return http.StatusOK
+		}
 		v = v.Elem()
 	}
 	if v.Kind() == reflect.Struct {
-		statusField := v.FieldByName("Status")
+		idx := cachedStatusFieldIndex(v.Type())
+		if idx == missingStatusField {
+			return http.StatusOK
+		}
+		statusField := v.Field(idx)
 		if statusField.IsValid() && statusField.Kind() == reflect.Int {
 			if code := int(statusField.Int()); code != 0 {
 				return code
@@ -73,4 +96,16 @@ func resolveStatusCode(resp interface{}) int {
 		}
 	}
 	return http.StatusOK
+}
+
+func cachedStatusFieldIndex(t reflect.Type) int {
+	if idx, ok := statusFieldCache.Load(t); ok {
+		return idx.(int)
+	}
+	idx := missingStatusField
+	if field, ok := t.FieldByName("Status"); ok && field.Type.Kind() == reflect.Int {
+		idx = field.Index[0]
+	}
+	actual, _ := statusFieldCache.LoadOrStore(t, idx)
+	return actual.(int)
 }
