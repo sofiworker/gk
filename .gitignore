@@ -3,3 +3,4 @@
 .gocache
 .cache
 .worktrees/
+*.exe
