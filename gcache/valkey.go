@@ -23,7 +23,6 @@ func NewValkeyCache(opts ...Option) (*ValkeyCache, error) {
 		Password:            options.Password,
 		SelectDB:            options.DB,
 		BlockingPoolSize:    options.PoolSize,
-		BlockingPoolMinSize: options.MinIdleConns,
 		Dialer: net.Dialer{
 			Timeout: options.DialTimeout,
 		},

@@ -19,7 +19,7 @@ func generateGServerFile(m model.Model, cfg Config) (string, error) {
 
 	var body strings.Builder
 	body.WriteString(fmt.Sprintf(
-		"func %s(s *httpserver.Server, path string, impl %s, opts ...gws.ServiceOption) error {\n",
+		"func %s(s *ghttpserver.Server, path string, impl %s, opts ...gws.ServiceOption) error {\n",
 		registerName,
 		serverName,
 	))
@@ -33,7 +33,7 @@ func generateGServerFile(m model.Model, cfg Config) (string, error) {
 	source, err := renderGoFile(
 		cfg.Package,
 		[]string{
-			"github.com/sofiworker/gk/ghttp/gserver",
+			"github.com/sofiworker/gk/ghttp",
 			"github.com/sofiworker/gk/gws",
 			"github.com/sofiworker/gk/gws/adapter/gserver",
 		},
@@ -44,7 +44,7 @@ func generateGServerFile(m model.Model, cfg Config) (string, error) {
 	}
 
 	sourceText := string(source)
-	sourceText = strings.ReplaceAll(sourceText, "\"github.com/sofiworker/gk/ghttp/gserver\"", "httpserver \"github.com/sofiworker/gk/ghttp/gserver\"")
+	sourceText = strings.ReplaceAll(sourceText, "\"github.com/sofiworker/gk/ghttp\"", "ghttpserver \"github.com/sofiworker/gk/ghttp\"")
 	sourceText = strings.ReplaceAll(sourceText, "\"github.com/sofiworker/gk/gws/adapter/gserver\"", "adaptergserver \"github.com/sofiworker/gk/gws/adapter/gserver\"")
 	return sourceText, nil
 }

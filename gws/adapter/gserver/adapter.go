@@ -2,14 +2,13 @@ package gserver
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 
-	httpserver "github.com/sofiworker/gk/ghttp/gserver"
+	ghttpserver "github.com/sofiworker/gk/ghttp"
 )
 
 var (
@@ -19,10 +18,8 @@ var (
 	ErrInvalidPath = errors.New("gserver adapter: invalid path")
 )
 
-// Register registers a standard http.Handler into gserver route handling.
-// It projects gserver request context into a lightweight *http.Request shape
-// for gws and similar handlers, rather than promising full net/http parity.
-func Register(s *httpserver.Server, path string, h http.Handler) error {
+// Register registers a standard http.Handler into the main ghttp.Server.
+func Register(s *ghttpserver.Server, path string, h http.Handler) error {
 	switch {
 	case s == nil:
 		return ErrNilServer
@@ -38,60 +35,42 @@ func Register(s *httpserver.Server, path string, h http.Handler) error {
 		return err
 	}
 
-	if err := registerAny(s, path, func(ctx *httpserver.Context) {
-		req := buildRequest(ctx)
-		h.ServeHTTP(ctx.Writer, req)
-	}); err != nil {
+	// Register on all HTTP methods so the underlying handler
+	// (e.g. gws.Handler) can dispatch by method internally.
+	if err := registerAllMethods(s, path, h); err != nil {
 		return err
 	}
 	return nil
 }
 
-func buildRequest(ctx *httpserver.Context) *http.Request {
+func buildRequest(r *http.Request) *http.Request {
+	body, _ := io.ReadAll(r.Body)
+	r.Body.Close()
+
 	req := &http.Request{
-		Method: http.MethodGet,
-		Header: make(http.Header),
-		URL:    &url.URL{},
-		Body:   http.NoBody,
+		Method:     r.Method,
+		Header:     r.Header.Clone(),
+		URL:        &url.URL{},
+		Body:       io.NopCloser(bytes.NewReader(body)),
+		Host:       r.Host,
+		RequestURI: r.RequestURI,
+		Proto:      r.Proto,
+		ProtoMajor: r.ProtoMajor,
+		ProtoMinor: r.ProtoMinor,
+		RemoteAddr: r.RemoteAddr,
 	}
 
-	if ctx == nil {
-		return req.WithContext(context.Background())
+	if r.URL != nil {
+		req.URL = &url.URL{
+			Scheme:   r.URL.Scheme,
+			Host:     r.URL.Host,
+			Path:     r.URL.Path,
+			RawPath:  r.URL.RawPath,
+			RawQuery: r.URL.RawQuery,
+		}
 	}
 
-	req = req.WithContext(ctx.Context())
-
-	fastCtx := ctx.FastContext()
-	if fastCtx == nil {
-		return req
-	}
-
-	if method := string(fastCtx.Method()); method != "" {
-		req.Method = method
-	}
-
-	req.URL.Scheme = string(fastCtx.URI().Scheme())
-	req.URL.Host = string(fastCtx.URI().Host())
-	req.Host = string(fastCtx.Host())
-	req.URL.Path = string(fastCtx.Path())
-	req.URL.RawQuery = string(fastCtx.URI().QueryString())
-	req.RequestURI = req.URL.RequestURI()
-	req.Proto = string(fastCtx.Request.Header.Protocol())
-	req.ProtoMajor, req.ProtoMinor = parseProtoVersion(req.Proto)
-	if remoteAddr := fastCtx.RemoteAddr(); remoteAddr != nil {
-		req.RemoteAddr = remoteAddr.String()
-	}
-
-	fastCtx.Request.Header.VisitAll(func(k, v []byte) {
-		req.Header.Add(string(k), string(v))
-	})
-
-	body := fastCtx.Request.Body()
-	if len(body) > 0 {
-		req.Body = io.NopCloser(bytes.NewReader(body))
-		req.ContentLength = int64(len(body))
-	}
-
+	req = req.WithContext(r.Context())
 	return req
 }
 
@@ -105,20 +84,22 @@ func validatePath(path string) error {
 	return nil
 }
 
-func parseProtoVersion(proto string) (int, int) {
-	major, minor, ok := http.ParseHTTPVersion(proto)
-	if !ok {
-		return 0, 0
+func registerAllMethods(s *ghttpserver.Server, path string, h http.Handler) error {
+	methods := []string{
+		http.MethodGet,
+		http.MethodHead,
+		http.MethodPost,
+		http.MethodPut,
+		http.MethodPatch,
+		http.MethodDelete,
+		http.MethodConnect,
+		http.MethodOptions,
+		http.MethodTrace,
 	}
-	return major, minor
-}
-
-func registerAny(s *httpserver.Server, path string, handler httpserver.HandlerFunc) (err error) {
-	defer func() {
-		if recover() != nil {
-			err = ErrInvalidPath
+	for _, m := range methods {
+		if err := s.Handle(m, path, h); err != nil {
+			return err
 		}
-	}()
-	s.ANY(path, handler)
+	}
 	return nil
 }

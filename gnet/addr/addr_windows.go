@@ -71,7 +71,7 @@ func fetchAdapters() ([]adapterInfo, error) {
 	var adapters []adapterInfo
 	for a := adapter; a != nil; a = a.Next {
 		info := adapterInfo{
-			Name:         windows.ByteSliceToString(a.AdapterName[:]),
+			Name:         windows.BytePtrToString(a.AdapterName),
 			FriendlyName: windows.UTF16PtrToString(a.FriendlyName),
 			IfIndex:      a.IfIndex,
 		}
@@ -89,7 +89,7 @@ func socketAddressToIPNet(sa windows.SocketAddress, prefixLen uint8) *net.IPNet 
 	if sa.Sockaddr == nil {
 		return nil
 	}
-	rsa := (*windows.RawSockaddrAny)(sa.Sockaddr)
+		rsa := (*windows.RawSockaddrAny)(unsafe.Pointer(sa.Sockaddr))
 	switch rsa.Addr.Family {
 	case windows.AF_INET:
 		sa4 := (*windows.RawSockaddrInet4)(unsafe.Pointer(sa.Sockaddr))

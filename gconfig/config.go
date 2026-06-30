@@ -7,7 +7,7 @@ import (
 	"sync"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/go-viper/mapstructure/v2"
+	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
 	_ "github.com/spf13/viper/remote" // 匿名导入以支持远程配置
 	"os"
