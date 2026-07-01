@@ -487,7 +487,7 @@ func (r *Response) UnwrapEnvelope(target interface{}) error {
 	if env.Data != nil {
 		return json.Unmarshal(env.Data, target)
 	}
-	return nil
+	return json.Unmarshal(r.Body, target)
 }
 
 // Endpoint generic callers
@@ -556,6 +556,10 @@ func Do[Req, Resp any](ctx context.Context, client *Client, method, path string,
 		if err := json.Unmarshal(env.Data, &resp); err != nil {
 			return nil, err
 		}
+		return &resp, nil
+	}
+	if err := json.Unmarshal(respData, &resp); err != nil {
+		return nil, err
 	}
 	return &resp, nil
 }
@@ -650,16 +654,5 @@ func WithWebSocketSubprotocols(protos []string) WebSocketOption {
 	return func(c *clientWebSocketConfig) { c.subprotocols = protos }
 }
 
-// Server WebSocket
-
 // WebSocketHandler is the handler type for WebSocket upgrades.
 type WebSocketHandler func(ctx Context, conn *WebSocketConn) error
-
-// Upgrade registers a WebSocket upgrade route.
-func (s *Server) Upgrade(path string, handler WebSocketHandler) {
-	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = handler
-		w.WriteHeader(http.StatusNotImplemented)
-	})
-	_ = s.router.Register(http.MethodGet, path, h)
-}

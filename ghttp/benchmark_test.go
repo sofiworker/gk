@@ -229,8 +229,7 @@ func BenchmarkEnvelope(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			w := httptest.NewRecorder()
 			r := httptest.NewRequest("GET", "/", nil)
-			ctx := &responseContext{w: w, r: r, codecMgr: cm}
-			DefaultEnvelope(ctx, 200, &payload{ID: 1, Name: "Alice"}, nil, cm)
+			DefaultEnvelope(requestContext{w: w, r: r}, 200, &payload{ID: 1, Name: "Alice"}, nil, cm)
 		}
 	})
 
@@ -239,8 +238,7 @@ func BenchmarkEnvelope(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			w := httptest.NewRecorder()
 			r := httptest.NewRequest("GET", "/", nil)
-			ctx := &responseContext{w: w, r: r, codecMgr: cm}
-			DefaultEnvelope(ctx, 400, nil, Err(400, "bad request"), cm)
+			DefaultEnvelope(requestContext{w: w, r: r}, 400, nil, Err(400, "bad request"), cm)
 		}
 	})
 }

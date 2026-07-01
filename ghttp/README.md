@@ -13,8 +13,8 @@
 - **路由器可插拔** — 内建高性能 Radix 树路由器和 Go 1.22+ `http.ServeMux` 适配
 - **OpenAPI 3.1** — 从路由元数据自动生成 JSON Schema 和 OAS 文档
 - **WebSocket / SSE** — 服务端推送和双向通信
-- **模板渲染** — 集成 Go 模板引擎（类似 Gin 的 `HTML()`）
-- **静态文件服务** — `Static()` / `StaticFS()` / `StaticFile()` 一行挂载
+- **模板渲染** — 集成 Go 模板引擎，路由级 `ToHTML()`
+- **静态文件服务** — 路由级 `ToStatic*()`
 - **中间件系统** — 内置 RequestID、CORS、日志、Recover、超时控制
 - **HTTP 客户端** — go-resty 风格链式调用 + 泛型端点方法
 - **纯标准库** — 基于 `net/http`，无 fasthttp 依赖，无第三方路由依赖
@@ -214,7 +214,7 @@ group.Use(authMiddleware)
 ### WebSocket
 
 ```go
-s.Upgrade("/ws", func(ctx *ghttp.WSContext) error {
+ghttp.Route[struct{}, struct{}](s).GET("/ws").ToWebSocket(func(ctx ghttp.Context, conn *ghttp.WebSocketConn) error {
     for {
         msg, err := ctx.ReadMessage()
         if err != nil { return err }
@@ -226,9 +226,9 @@ s.Upgrade("/ws", func(ctx *ghttp.WSContext) error {
 ### SSE
 
 ```go
-s.SSE("/events", func(ctx context.Context, w *ghttp.SSEWriter) error {
+ghttp.Route[struct{}, struct{}](s).GET("/events").ToSSE(func(ctx context.Context, w *ghttp.SSEWriter) error {
     for i := 0; i < 10; i++ {
-        w.WriteEvent(&ghttp.SSEEvent{Data: []byte(fmt.Sprintf("event %d", i))})
+        w.WriteEvent("message", fmt.Sprintf("event %d", i))
         time.Sleep(time.Second)
     }
     return nil
@@ -238,9 +238,9 @@ s.SSE("/events", func(ctx context.Context, w *ghttp.SSEWriter) error {
 ### 静态文件
 
 ```go
-s.Static("/static", "./public")
-s.StaticFS("/assets", http.FS(embeddedAssets))
-s.StaticFile("/favicon.ico", "./favicon.ico")
+ghttp.Route[struct{}, struct{}](s).GET("/static").ToStatic("./public")
+ghttp.Route[struct{}, struct{}](s).GET("/assets").ToStaticFS(http.FS(embeddedAssets))
+ghttp.Route[struct{}, struct{}](s).GET("/favicon.ico").ToStaticFile("./favicon.ico")
 ```
 
 ### 模板渲染
@@ -251,7 +251,7 @@ s = ghttp.New(ghttp.WithRenderer(renderer))
 
 // 处理函数中
 ghttp.Route[NoInput, NoOutput](s).GET("/page").To(func(ctx context.Context, req *NoInput) (*NoOutput, error) {
-    s.Render(ctx, 200, "index.html", gin.H{"title": "Hello"})
+    return nil
     return nil, nil
 })
 ```
@@ -262,7 +262,7 @@ ghttp.Route[NoInput, NoOutput](s).GET("/page").To(func(ctx context.Context, req 
 
 ```go
 // 挂载 OpenAPI JSON 端点
-s.GET("/openapi.json", handler)
+ghttp.Route[struct{}, struct{}](s).GET("/openapi.json").ToHTTP(handler)
 ```
 
 ### 验证器

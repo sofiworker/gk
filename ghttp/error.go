@@ -10,6 +10,9 @@ var (
 	ErrNotFound   = errors.New("not found")
 	ErrHandled    = errors.New("response already handled")
 	ErrNilContext = errors.New("context is nil")
+
+	ErrRendererNotConfigured = errors.New("renderer is not configured")
+	ErrStaticRootRequired    = errors.New("static root cannot be empty")
 )
 
 // HTTPError is a structured HTTP error with code and message.

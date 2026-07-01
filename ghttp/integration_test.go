@@ -52,19 +52,13 @@ func TestIntegration_GetUser(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	var env struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-		Data output `json:"data"`
-	}
-	err = json.Unmarshal(body, &env)
+	var data output
+	err = json.Unmarshal(body, &data)
 	require.NoError(t, err, "body: %s", string(body))
 
-	assert.Equal(t, 0, env.Code)
-	assert.Equal(t, "success", env.Msg)
-	assert.Equal(t, 42, env.Data.ID)
-	assert.Equal(t, "Alice", env.Data.Name)
-	assert.Equal(t, "admin", env.Data.Role)
+	assert.Equal(t, 42, data.ID)
+	assert.Equal(t, "Alice", data.Name)
+	assert.Equal(t, "admin", data.Role)
 }
 
 func TestIntegration_CreateUser(t *testing.T) {
@@ -101,17 +95,12 @@ func TestIntegration_CreateUser(t *testing.T) {
 
 	bodyData, _ := io.ReadAll(resp.Body)
 
-	var env struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-		Data output `json:"data"`
-	}
-	err = json.Unmarshal(bodyData, &env)
+	var data output
+	err = json.Unmarshal(bodyData, &data)
 	require.NoError(t, err, "body: %s", string(bodyData))
 
-	assert.Equal(t, 0, env.Code)
-	assert.Equal(t, 99, env.Data.ID)
-	assert.Equal(t, "Bob", env.Data.Name)
+	assert.Equal(t, 99, data.ID)
+	assert.Equal(t, "Bob", data.Name)
 }
 
 func TestIntegration_ValidationError(t *testing.T) {
@@ -346,11 +335,12 @@ func TestIntegration_GenericClientPOST(t *testing.T) {
 func TestIntegration_SSE(t *testing.T) {
 	s := New()
 
-	s.SSE("/events", func(ctx Context, stream *SSEWriter) error {
+	err := Route[struct{}, struct{}](s).GET("/events").ToSSE(func(ctx Context, stream *SSEWriter) error {
 		_ = stream.WriteEvent("message", "hello")
 		_ = stream.WriteEvent("message", "world")
 		return nil
 	})
+	require.NoError(t, err)
 
 	ts := httptest.NewServer(s)
 	defer ts.Close()
@@ -470,7 +460,8 @@ func TestIntegration_RouteBuilderChainWithOpenAPI(t *testing.T) {
 func TestIntegration_StaticFile(t *testing.T) {
 	s := New()
 
-	s.Static("/static", "./testdata")
+	err := Route[struct{}, struct{}](s).GET("/static").ToStatic("./testdata")
+	require.NoError(t, err)
 
 	ts := httptest.NewServer(s)
 	defer ts.Close()
@@ -501,13 +492,7 @@ func TestIntegration_ErrorHandling(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
 	body, _ := io.ReadAll(resp.Body)
-	var env struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-	}
-	json.Unmarshal(body, &env)
-	assert.Equal(t, http.StatusBadRequest, env.Code)
-	assert.Contains(t, env.Msg, "invalid input")
+	assert.Contains(t, string(body), "invalid input")
 }
 
 func TestIntegration_CustomEnvelope(t *testing.T) {
@@ -516,10 +501,9 @@ func TestIntegration_CustomEnvelope(t *testing.T) {
 		Data interface{} `json:"data,omitempty"`
 	}
 
-	s := New()
-	s.WithEnvelope(func(ctx *responseContext, statusCode int, resp interface{}, err error, codecMgr *CodecManager) {
-		w := ctx.w
-		r := ctx.r
+	s := New(WithEnvelope(func(ctx Context, statusCode int, resp interface{}, err error, codecMgr *CodecManager) {
+		w := ctx.ResponseWriter()
+		r := ctx.Request()
 		codec := codecMgr.Negotiate(r.Header.Get("Accept"))
 		w.Header().Set("Content-Type", codec.ContentTypes()[0])
 		if err != nil {
@@ -529,7 +513,7 @@ func TestIntegration_CustomEnvelope(t *testing.T) {
 			w.WriteHeader(statusCode)
 			codec.Marshal(w, &myEnvelope{OK: true, Data: resp})
 		}
-	})
+	}))
 
 	type pongResp struct {
 		Pong string `json:"pong"`

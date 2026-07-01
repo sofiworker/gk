@@ -8,12 +8,12 @@ import (
 )
 
 func TestEnvelopeDefault_Success(t *testing.T) {
-	app := New()
+	app := New(WithEnvelope(DefaultEnvelope))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/test", nil)
 
-	app.envelope(&responseContext{w: w, r: r, codecMgr: app.codecMgr},
+	app.envelope(requestContext{w: w, r: r},
 		http.StatusOK, map[string]string{"id": "1"}, nil, app.codecMgr)
 
 	if w.Code != http.StatusOK {
@@ -31,12 +31,12 @@ func TestEnvelopeDefault_Success(t *testing.T) {
 }
 
 func TestEnvelopeDefault_Error(t *testing.T) {
-	app := New()
+	app := New(WithEnvelope(DefaultEnvelope))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/test", nil)
 
-	app.envelope(&responseContext{w: w, r: r, codecMgr: app.codecMgr},
+	app.envelope(requestContext{w: w, r: r},
 		http.StatusNotFound, nil, Err(http.StatusNotFound, "user not found"), app.codecMgr)
 
 	if w.Code != http.StatusNotFound {

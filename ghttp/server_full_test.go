@@ -56,8 +56,9 @@ func (f serverValidatorFunc) Validate(ctx context.Context, input interface{}) er
 func TestServerNewInitializesDefaultsAndOptions(t *testing.T) {
 	router := &recordingRouter{}
 	validator := serverValidatorFunc(func(context.Context, interface{}) error { return nil })
+	envelope := func(Context, int, interface{}, error, *CodecManager) {}
 
-	app := New(WithAddress("127.0.0.1:0"), WithRouter(router), WithValidator(validator))
+	app := New(WithAddress("127.0.0.1:0"), WithRouter(router), WithValidator(validator), WithEnvelope(envelope))
 
 	if app == nil {
 		t.Fatal("New returned nil")
@@ -75,14 +76,14 @@ func TestServerNewInitializesDefaultsAndOptions(t *testing.T) {
 		t.Fatal("codec manager should be initialized")
 	}
 	if app.envelope == nil {
-		t.Fatal("default envelope should be initialized")
+		t.Fatal("WithEnvelope should install envelope")
 	}
 	if app.openAPI != nil {
 		t.Fatal("OpenAPI should be disabled by default")
 	}
 }
 
-func TestServerRenderHTML(t *testing.T) {
+func TestServerRenderHTMLViaBuilder(t *testing.T) {
 	tmpDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(tmpDir, "index.html"), []byte(`<h1>{{.Title}}</h1>`), 0o600); err != nil {
 		t.Fatalf("write template failed: %v", err)
@@ -90,10 +91,13 @@ func TestServerRenderHTML(t *testing.T) {
 
 	app := New(WithRenderer(NewRenderer(tmpDir, ".html", template.FuncMap{}, false)))
 
-	rec := httptest.NewRecorder()
-	if err := app.Render(rec, http.StatusCreated, "index", map[string]interface{}{"Title": "Hello"}); err != nil {
-		t.Fatalf("Render failed: %v", err)
+	if err := Route[struct{}, struct{}](app).GET("/page").ToHTML(http.StatusCreated, "index", map[string]interface{}{"Title": "Hello"}); err != nil {
+		t.Fatalf("ToHTML failed: %v", err)
 	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/page", nil)
+	app.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusCreated)
@@ -160,11 +164,11 @@ func TestServerMiddlewareChainOrder(t *testing.T) {
 		})
 	})
 
-	if err := app.Router().Register(http.MethodGet, "/ok", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	if err := Route[struct{}, struct{}](app).GET("/ok").ToRaw(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "handler")
 		w.WriteHeader(http.StatusNoContent)
-	})); err != nil {
-		t.Fatalf("Register failed: %v", err)
+	}); err != nil {
+		t.Fatalf("ToRaw failed: %v", err)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/ok", nil)
@@ -566,11 +570,11 @@ func TestNestedGroupCombinesPrefixAndMiddlewares(t *testing.T) {
 		})
 	})
 
-	if err := users.Raw(http.MethodGet, "/me", func(w http.ResponseWriter, r *http.Request) {
+	if err := Route[struct{}, struct{}](users).GET("/me").ToRaw(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "handler")
 		w.WriteHeader(http.StatusNoContent)
 	}); err != nil {
-		t.Fatalf("Raw failed: %v", err)
+		t.Fatalf("ToRaw failed: %v", err)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/users/me", nil)

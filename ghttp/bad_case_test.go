@@ -61,7 +61,7 @@ func TestRouteBuilderBadCasesInvalidScalarInputFallsBackToZeroValue(t *testing.T
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	got := decodeEnvelopeData[badCaseOutput](t, rec.Body.Bytes())
+	got := decodeJSONBody[badCaseOutput](t, rec.Body.Bytes())
 	if got.ID != 0 || got.Page != 0 || got.Flag {
 		t.Fatalf("converted values = id:%d page:%d flag:%t, want zero values", got.ID, got.Page, got.Flag)
 	}
@@ -188,21 +188,11 @@ func badCaseEchoHandler(ctx context.Context, req *badCaseInput) (*badCaseOutput,
 	}, nil
 }
 
-func decodeEnvelopeData[T any](t *testing.T, body []byte) T {
+func decodeJSONBody[T any](t *testing.T, body []byte) T {
 	t.Helper()
-	var envelope struct {
-		Code int             `json:"code"`
-		Data json.RawMessage `json:"data"`
-	}
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		t.Fatalf("unmarshal envelope failed: %v; body = %s", err, string(body))
-	}
-	if envelope.Code != 0 {
-		t.Fatalf("envelope code = %d, want 0; body = %s", envelope.Code, string(body))
-	}
 	var data T
-	if err := json.Unmarshal(envelope.Data, &data); err != nil {
-		t.Fatalf("unmarshal data failed: %v; data = %s", err, string(envelope.Data))
+	if err := json.Unmarshal(body, &data); err != nil {
+		t.Fatalf("unmarshal data failed: %v; body = %s", err, string(body))
 	}
 	return data
 }

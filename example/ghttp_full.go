@@ -129,25 +129,22 @@ func main() {
 
 	registerMethodRoutes(app)
 
-	app.Static("/assets", staticDir)
+	mustRoute(ghttp.Route[struct{}, struct{}](app).
+		GET("/assets").
+		ToStatic(staticDir))
 	mustRoute(ghttp.Route[struct{}, struct{}](app).
 		GET("/pages/home").
 		Doc("render template").
 		Responds(http.StatusOK).With(struct{}{}).End().
-		To(func(ctx context.Context, req *struct{}) (*struct{}, error) {
-			return &struct{}{}, nil
+		ToHTML(http.StatusOK, "home", map[string]interface{}{"Title": "ghttp full example"}))
+	mustRoute(ghttp.Route[struct{}, struct{}](app).
+		GET("/events").
+		ToSSE(func(ctx ghttp.Context, stream *ghttp.SSEWriter) error {
+			if err := stream.WriteEvent("ready", "ok"); err != nil {
+				return err
+			}
+			return nil
 		}))
-	app.Handle(http.MethodGet, "/pages/home", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := app.HTML(w, http.StatusOK, "home", map[string]interface{}{"Title": "ghttp full example"}); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	}))
-	app.SSE("/events", func(ctx ghttp.Context, stream *ghttp.SSEWriter) error {
-		if err := stream.WriteEvent("ready", "ok"); err != nil {
-			return err
-		}
-		return nil
-	})
 
 	serveAndDemo(app)
 }

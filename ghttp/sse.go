@@ -26,28 +26,6 @@ type SSEEvent struct {
 	Data  string
 }
 
-// SSE registers a Server-Sent Events endpoint.
-func (s *Server) SSE(path string, handler SSEHandler) {
-	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-		w.WriteHeader(http.StatusOK)
-
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
-			return
-		}
-
-		stream := &SSEWriter{w: w, flusher: flusher}
-		if err := handler(nil, stream); err != nil {
-			return
-		}
-	})
-	_ = s.router.Register(http.MethodGet, path, h)
-}
-
 func (s *SSEWriter) WriteEvent(event, data string) error {
 	_, err := fmt.Fprintf(s.w, "event: %s\ndata: %s\n\n", event, data)
 	if err != nil {

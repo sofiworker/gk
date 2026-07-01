@@ -11,8 +11,8 @@ type contextKey string
 
 const pathParamsKey = contextKey("http-path-params")
 
-// Params extracts path parameters from the request context.
-func Params(r *http.Request) map[string]string {
+// pathParams extracts path parameters from the request context.
+func pathParams(r *http.Request) map[string]string {
 	params, _ := r.Context().Value(pathParamsKey).(map[string]string)
 	return params
 }

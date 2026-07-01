@@ -13,16 +13,19 @@ import (
 
 // structInfo caches reflection metadata for input struct types.
 type structInfo struct {
-	fields  []fieldInfo
-	bodyIdx int
-	hasBody bool
+	fields    []fieldInfo
+	bodyIdx   int
+	paramsIdx int
+	hasBody   bool
 }
 
 type fieldInfo struct {
-	parentIdx int    // index of Path/Query/Header/Body field in top-level struct
-	fieldName string // "Path", "Query", "Header", "Body"
-	tagName   string // the tag value (e.g. "id", "name")
-	fieldIdx  int    // index inside the nested struct
+	parentIdx    int    // index of Path/Query/Header/Body field in top-level struct
+	fieldName    string // "Path", "Query", "Header", "Body"
+	tagName      string // the tag value (e.g. "id", "name")
+	fieldIdx     int    // index inside the nested struct
+	defaultValue string
+	hasDefault   bool
 }
 
 var (
@@ -34,9 +37,14 @@ func getStructInfo(t reflect.Type) *structInfo {
 		return info.(*structInfo)
 	}
 
-	info := &structInfo{bodyIdx: -1}
+	info := &structInfo{bodyIdx: -1, paramsIdx: -1}
+	paramsType := reflect.TypeOf(Params{})
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
+		if f.Anonymous && f.Type == paramsType {
+			info.paramsIdx = i
+			continue
+		}
 		switch f.Name {
 		case "Path", "Query", "Header":
 			if f.Type.Kind() == reflect.Struct {
@@ -48,16 +56,49 @@ func getStructInfo(t reflect.Type) *structInfo {
 						continue
 					}
 					info.fields = append(info.fields, fieldInfo{
-						parentIdx: i,
-						fieldName: f.Name,
-						tagName:   tag,
-						fieldIdx:  j,
+						parentIdx:    i,
+						fieldName:    f.Name,
+						tagName:      tag,
+						fieldIdx:     j,
+						defaultValue: sf.Tag.Get("default"),
+						hasDefault:   sf.Tag.Get("default") != "",
 					})
 				}
 			}
 		case "Body":
 			info.bodyIdx = i
 			info.hasBody = true
+		default:
+			if tag := f.Tag.Get("path"); tag != "" {
+				info.fields = append(info.fields, fieldInfo{
+					parentIdx:    -1,
+					fieldName:    "Path",
+					tagName:      tag,
+					fieldIdx:     i,
+					defaultValue: f.Tag.Get("default"),
+					hasDefault:   f.Tag.Get("default") != "",
+				})
+			}
+			if tag := f.Tag.Get("query"); tag != "" {
+				info.fields = append(info.fields, fieldInfo{
+					parentIdx:    -1,
+					fieldName:    "Query",
+					tagName:      tag,
+					fieldIdx:     i,
+					defaultValue: f.Tag.Get("default"),
+					hasDefault:   f.Tag.Get("default") != "",
+				})
+			}
+			if tag := f.Tag.Get("header"); tag != "" {
+				info.fields = append(info.fields, fieldInfo{
+					parentIdx:    -1,
+					fieldName:    "Header",
+					tagName:      tag,
+					fieldIdx:     i,
+					defaultValue: f.Tag.Get("default"),
+					hasDefault:   f.Tag.Get("default") != "",
+				})
+			}
 		}
 	}
 
@@ -78,10 +119,14 @@ func SetBodyDecoder(fn BodyDecodeFunc) {
 }
 
 func ParseInput(r *http.Request, input interface{}) error {
-	return parseInput(r, input)
+	return parseInputWithConfig(r, input, nil)
 }
 
 func parseInput(r *http.Request, input interface{}) error {
+	return parseInputWithConfig(r, input, nil)
+}
+
+func parseInputWithConfig(r *http.Request, input interface{}, c *Config) error {
 	v := reflect.ValueOf(input)
 	if v.Kind() != reflect.Ptr || v.IsNil() {
 		return nil
@@ -93,25 +138,43 @@ func parseInput(r *http.Request, input interface{}) error {
 
 	t := v.Type()
 	info := getStructInfo(t)
+	if info.paramsIdx >= 0 {
+		clientIP := defaultClientIPResolver(r)
+		if c != nil && c.clientIPResolver != nil {
+			clientIP = c.clientIPResolver(r)
+		}
+		v.Field(info.paramsIdx).Set(reflect.ValueOf(newParams(pathParams(r), r.URL.Query(), r.Header, clientIP)))
+	}
 
 	for _, fi := range info.fields {
-		parent := v.Field(fi.parentIdx)
-		field := parent.Field(fi.fieldIdx)
+		field := v.Field(fi.fieldIdx)
+		if fi.parentIdx >= 0 {
+			field = v.Field(fi.parentIdx).Field(fi.fieldIdx)
+		}
 
 		switch fi.fieldName {
 		case "Path":
-			if params := Params(r); params != nil {
+			if params := pathParams(r); params != nil {
 				if val, ok := params[fi.tagName]; ok {
 					setFieldDirect(field, val)
+				} else if fi.hasDefault {
+					setFieldDirect(field, fi.defaultValue)
 				}
+			} else if fi.hasDefault {
+				setFieldDirect(field, fi.defaultValue)
 			}
 		case "Query":
-			if val := r.URL.Query().Get(fi.tagName); val != "" {
-				setFieldDirect(field, val)
+			values := r.URL.Query()[fi.tagName]
+			if len(values) > 0 {
+				setFieldValues(field, values)
+			} else if fi.hasDefault {
+				setFieldDirect(field, fi.defaultValue)
 			}
 		case "Header":
 			if val := r.Header.Get(fi.tagName); val != "" {
 				setFieldDirect(field, val)
+			} else if fi.hasDefault {
+				setFieldDirect(field, fi.defaultValue)
 			}
 		}
 	}
@@ -190,4 +253,22 @@ func setFieldDirect(field reflect.Value, val string) {
 		b, _ := strconv.ParseBool(val)
 		field.SetBool(b)
 	}
+}
+
+func setFieldValues(field reflect.Value, values []string) {
+	if !field.CanSet() || len(values) == 0 {
+		return
+	}
+	if field.Kind() != reflect.Slice {
+		setFieldDirect(field, values[0])
+		return
+	}
+
+	slice := reflect.MakeSlice(field.Type(), 0, len(values))
+	for _, value := range values {
+		elem := reflect.New(field.Type().Elem()).Elem()
+		setFieldDirect(elem, value)
+		slice = reflect.Append(slice, elem)
+	}
+	field.Set(slice)
 }

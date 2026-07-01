@@ -54,7 +54,7 @@ func NewOpenAPI(title, version string) *OpenAPI {
 	}
 }
 
-func (o *OpenAPI) AddRoute(method, path, doc string, tags []string, operationID string, reqType reflect.Type, responses []responseSpec) {
+func (o *OpenAPI) AddRoute(method, path, doc string, tags []string, operationID string, reqType, pathType, queryType reflect.Type, responses []responseSpec) {
 	if o == nil {
 		return
 	}
@@ -73,7 +73,11 @@ func (o *OpenAPI) AddRoute(method, path, doc string, tags []string, operationID 
 		Tags:        tags,
 	}
 
-	if reqType != nil {
+	if pathType != nil || queryType != nil {
+		op.Parameters = append(op.Parameters, extractParametersFromType(pathType, "path", true)...)
+		op.Parameters = append(op.Parameters, extractParametersFromType(queryType, "query", false)...)
+		op.Parameters = append(op.Parameters, extractParametersFromType(reqType, "header", false)...)
+	} else if reqType != nil {
 		op.Parameters = extractParameters(reqType)
 	}
 
@@ -137,22 +141,49 @@ func convertToOpenAPIPath(path string) string {
 }
 
 func extractParameters(t reflect.Type) []*parameter {
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return nil
+	}
+
 	var params []*parameter
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		switch field.Name {
 		case "Path":
-			params = append(params, extractFieldParams(field.Type, "path", true)...)
+			params = append(params, extractParametersFromType(field.Type, "path", true)...)
 		case "Query":
-			params = append(params, extractFieldParams(field.Type, "query", false)...)
+			params = append(params, extractParametersFromType(field.Type, "query", false)...)
 		case "Header":
-			params = append(params, extractFieldParams(field.Type, "header", false)...)
+			params = append(params, extractParametersFromType(field.Type, "header", false)...)
+		default:
+			if field.Tag.Get("path") != "" {
+				params = append(params, fieldToParameter(field, "path", true))
+			}
+			if field.Tag.Get("query") != "" {
+				params = append(params, fieldToParameter(field, "query", false))
+			}
+			if field.Tag.Get("header") != "" {
+				params = append(params, fieldToParameter(field, "header", false))
+			}
 		}
 	}
 	return params
 }
 
-func extractFieldParams(t reflect.Type, in string, required bool) []*parameter {
+func extractParametersFromType(t reflect.Type, in string, required bool) []*parameter {
+	if t == nil {
+		return nil
+	}
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return nil
+	}
+
 	var params []*parameter
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
@@ -160,18 +191,22 @@ func extractFieldParams(t reflect.Type, in string, required bool) []*parameter {
 		if tag == "" {
 			continue
 		}
-		param := &parameter{
-			Name:     tag,
-			In:       in,
-			Required: required,
-			Schema:   goTypeToSchemaType(f.Type.Kind()),
-		}
-		if doc := f.Tag.Get("doc"); doc != "" {
-			param.Description = doc
-		}
-		params = append(params, param)
+		params = append(params, fieldToParameter(f, in, required))
 	}
 	return params
+}
+
+func fieldToParameter(f reflect.StructField, in string, required bool) *parameter {
+	param := &parameter{
+		Name:     f.Tag.Get(in),
+		In:       in,
+		Required: required,
+		Schema:   goTypeToSchemaType(f.Type.Kind()),
+	}
+	if doc := f.Tag.Get("doc"); doc != "" {
+		param.Description = doc
+	}
+	return param
 }
 
 func extractBodySchema(t reflect.Type) interface{} {

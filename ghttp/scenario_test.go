@@ -101,10 +101,10 @@ func TestScenario_ServerGroupRouteMiddlewareOpenAPIAndStatic(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(staticDir, "hello.txt"), []byte("hello from scenario"), 0o600); err != nil {
 		t.Fatalf("write static file failed: %v", err)
 	}
-	app.Static("/public", staticDir)
-	app.SSE("/events", func(ctx Context, stream *SSEWriter) error {
+	mustScenarioRoute(t, Route[struct{}, struct{}](app).GET("/public").ToStatic(staticDir))
+	mustScenarioRoute(t, Route[struct{}, struct{}](app).GET("/events").ToSSE(func(ctx Context, stream *SSEWriter) error {
 		return stream.WriteEvent("ready", "ok")
-	})
+	}))
 
 	ts := httptest.NewServer(app)
 	defer ts.Close()

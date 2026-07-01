@@ -38,25 +38,15 @@ func (g *Group) Group(prefix string, mws ...MiddlewareFunc) *Group {
 	}
 }
 
-// Handle registers a raw http.Handler under the group prefix.
-func (g *Group) Handle(method, path string, handler http.Handler, mws ...MiddlewareFunc) error {
-	return g.handleRoute(method, path, handler, mws...)
-}
-
-// Raw registers a RawHandler under the group prefix.
-func (g *Group) Raw(method, path string, handler RawHandler) error {
-	return g.Handle(method, path, http.HandlerFunc(handler))
-}
-
 func (g *Group) handleRoute(method, path string, handler http.Handler, mws ...MiddlewareFunc) error {
 	all := make([]MiddlewareFunc, 0, len(g.middlewares)+len(mws))
 	all = append(all, g.middlewares...)
 	all = append(all, mws...)
-	return g.server.Handle(method, JoinPaths(g.prefix, path), handler, all...)
+	return g.server.handleRoute(method, JoinPaths(g.prefix, path), handler, all...)
 }
 
-func (g *Group) addRouteSpec(method, path, doc string, tags []string, operationID string, reqType reflect.Type, responses []responseSpec) {
-	g.server.addRouteSpec(method, JoinPaths(g.prefix, path), doc, tags, operationID, reqType, responses)
+func (g *Group) addRouteSpec(method, path, doc string, tags []string, operationID string, reqType, pathType, queryType reflect.Type, responses []responseSpec) {
+	g.server.addRouteSpec(method, JoinPaths(g.prefix, path), doc, tags, operationID, reqType, pathType, queryType, responses)
 }
 
 func (g *Group) owner() *Server {

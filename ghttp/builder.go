@@ -1,6 +1,7 @@
 package ghttp
 
 import (
+	"bytes"
 	"errors"
 	"net/http"
 	"reflect"
@@ -34,6 +35,8 @@ type RouteBuilder[Req, Resp any] struct {
 	tags        []string
 	operationID string
 	reqType     reflect.Type
+	pathType    reflect.Type
+	queryType   reflect.Type
 	responses   []responseSpec
 	handler     HandlerFunc[Req, Resp]
 	middlewares []MiddlewareFunc
@@ -41,7 +44,7 @@ type RouteBuilder[Req, Resp any] struct {
 
 type routeTarget interface {
 	handleRoute(method, path string, handler http.Handler, mws ...MiddlewareFunc) error
-	addRouteSpec(method, path, doc string, tags []string, operationID string, reqType reflect.Type, responses []responseSpec)
+	addRouteSpec(method, path, doc string, tags []string, operationID string, reqType, pathType, queryType reflect.Type, responses []responseSpec)
 	owner() *Server
 }
 
@@ -156,6 +159,18 @@ func (b *RouteBuilder[Req, Resp]) Reads(input Req) *RouteBuilder[Req, Resp] {
 	return b
 }
 
+// PathSchema declares a dedicated path-parameter schema for OpenAPI generation.
+func (b *RouteBuilder[Req, Resp]) PathSchema(input interface{}) *RouteBuilder[Req, Resp] {
+	b.pathType = reflect.TypeOf(input)
+	return b
+}
+
+// QuerySchema declares a dedicated query-parameter schema for OpenAPI generation.
+func (b *RouteBuilder[Req, Resp]) QuerySchema(input interface{}) *RouteBuilder[Req, Resp] {
+	b.queryType = reflect.TypeOf(input)
+	return b
+}
+
 // Responds starts a response specification block.
 func (b *RouteBuilder[Req, Resp]) Responds(code int) *responseSpecBuilder[Req, Resp] {
 	return &responseSpecBuilder[Req, Resp]{
@@ -200,6 +215,62 @@ func (b *RouteBuilder[Req, Resp]) UseFunc(mws ...HandlerMiddlewareFunc) *RouteBu
 // To registers the handler and finalizes the route.
 func (b *RouteBuilder[Req, Resp]) To(handler HandlerFunc[Req, Resp]) error {
 	b.handler = handler
+	return b.toHandler(b.buildHandlerChain())
+}
+
+// ToHTTP registers a raw http.Handler with the selected route method and path.
+func (b *RouteBuilder[Req, Resp]) ToHTTP(handler http.Handler) error {
+	return b.toHandler(handler)
+}
+
+// ToRaw registers a raw handler function with the selected route method and path.
+func (b *RouteBuilder[Req, Resp]) ToRaw(handler RawHandler) error {
+	return b.ToHTTP(http.HandlerFunc(handler))
+}
+
+// ToSSE registers a Server-Sent Events handler with the selected route method and path.
+func (b *RouteBuilder[Req, Resp]) ToSSE(handler SSEHandler) error {
+	return b.toHandler(buildSSEHandler(handler))
+}
+
+// ToWebSocket registers a WebSocket upgrade handler with the selected route method and path.
+func (b *RouteBuilder[Req, Resp]) ToWebSocket(handler WebSocketHandler) error {
+	return b.toHandler(buildWebSocketHandler(handler))
+}
+
+// ToStatic registers a file server with the selected route path as its URL prefix.
+func (b *RouteBuilder[Req, Resp]) ToStatic(root string) error {
+	if root == "" {
+		return ErrStaticRootRequired
+	}
+	return b.ToStaticFS(http.Dir(root))
+}
+
+// ToStaticFS registers a file server with the selected route path as its URL prefix.
+func (b *RouteBuilder[Req, Resp]) ToStaticFS(fs http.FileSystem) error {
+	prefix := strings.TrimRight(b.path, "/")
+	handler := http.StripPrefix(prefix, http.FileServer(fs))
+	b.path = JoinPaths(b.path, "/*path")
+	return b.toHandler(handler)
+}
+
+// ToStaticFile registers a single static file with the selected route method and path.
+func (b *RouteBuilder[Req, Resp]) ToStaticFile(filepath string) error {
+	return b.toHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, filepath)
+	}))
+}
+
+// ToHTML renders a configured template with fixed data for the selected route.
+func (b *RouteBuilder[Req, Resp]) ToHTML(status int, name string, data interface{}) error {
+	return b.toHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := renderHTML(w, b.target.owner(), status, name, data); err != nil {
+			writeError(w, r, b.target.owner(), http.StatusInternalServerError, err)
+		}
+	}))
+}
+
+func (b *RouteBuilder[Req, Resp]) toHandler(handler http.Handler) error {
 	if len(b.methods) == 0 {
 		return ErrRouteMethodRequired
 	}
@@ -210,7 +281,7 @@ func (b *RouteBuilder[Req, Resp]) To(handler HandlerFunc[Req, Resp]) error {
 		if !isHTTPMethodToken(method) {
 			return ErrRouteMethodInvalid
 		}
-		if err := b.target.handleRoute(method, b.path, b.buildHandlerChain(), b.middlewares...); err != nil {
+		if err := b.target.handleRoute(method, b.path, handler, b.middlewares...); err != nil {
 			return err
 		}
 		b.register(method)
@@ -224,18 +295,18 @@ func (b *RouteBuilder[Req, Resp]) buildHandlerChain() http.Handler {
 }
 
 func (b *RouteBuilder[Req, Resp]) register(method string) {
-	b.target.addRouteSpec(method, b.path, b.doc, b.tags, b.operationID, b.reqType, b.responses)
+	b.target.addRouteSpec(method, b.path, b.doc, b.tags, b.operationID, b.reqType, b.pathType, b.queryType, b.responses)
 }
 
 func (b *RouteBuilder[Req, Resp]) buildHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var input Req
-		if err := parseInput(r, &input); err != nil {
+		server := b.target.owner()
+		if err := parseInputWithConfig(r, &input, server.config); err != nil {
 			writeError(w, r, b.target.owner(), http.StatusBadRequest, err)
 			return
 		}
 
-		server := b.target.owner()
 		if server.validator != nil {
 			if err := server.validator.Validate(r.Context(), &input); err != nil {
 				writeError(w, r, server, http.StatusUnprocessableEntity, err)
@@ -243,7 +314,7 @@ func (b *RouteBuilder[Req, Resp]) buildHandler() http.Handler {
 			}
 		}
 
-		resp, err := b.handler(r.Context(), &input)
+		resp, err := b.handler(contextWithRequest(r.Context(), r), &input)
 		if err != nil {
 			if isErrHandled(err) {
 				return
@@ -253,9 +324,10 @@ func (b *RouteBuilder[Req, Resp]) buildHandler() http.Handler {
 		}
 
 		if server.envelope != nil {
-			ectx := &responseContext{w: w, r: r, codecMgr: server.codecMgr}
-			server.envelope(ectx, resolveStatusCode(resp), resp, nil, server.codecMgr)
+			server.envelope(requestContext{w: w, r: r}, resolveStatusCode(resp), resp, nil, server.codecMgr)
+			return
 		}
+		writeResponse(w, r, server, resolveStatusCode(resp), resp)
 	})
 }
 
@@ -275,11 +347,104 @@ func isHTTPMethodToken(method string) bool {
 
 func writeError(w http.ResponseWriter, r *http.Request, s *Server, defaultCode int, err error) {
 	if s.envelope != nil {
-		ectx := &responseContext{w: w, r: r, codecMgr: s.codecMgr}
 		code := defaultCode
 		if he := AsError(err); he != nil {
 			code = he.Code
 		}
-		s.envelope(ectx, code, nil, err, s.codecMgr)
+		s.envelope(requestContext{w: w, r: r}, code, nil, err, s.codecMgr)
+		return
 	}
+	http.Error(w, err.Error(), statusCodeFromError(defaultCode, err))
+}
+
+func statusCodeFromError(defaultCode int, err error) int {
+	if he := AsError(err); he != nil {
+		return he.Code
+	}
+	return defaultCode
+}
+
+func writeResponse(w http.ResponseWriter, r *http.Request, s *Server, statusCode int, resp interface{}) {
+	accept := r.Header.Get("Accept")
+	codec := s.codecMgr.Negotiate(accept)
+	w.Header().Set("Content-Type", codec.ContentTypes()[0])
+	w.WriteHeader(statusCode)
+	_ = codec.Marshal(w, resp)
+}
+
+func renderHTML(w http.ResponseWriter, s *Server, status int, name string, data interface{}) error {
+	if s.renderer == nil {
+		return ErrRendererNotConfigured
+	}
+	var buf bytes.Buffer
+	if err := s.renderer.Render(name, data, &buf); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	_, err := w.Write(buf.Bytes())
+	return err
+}
+
+func buildSSEHandler(handler SSEHandler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.WriteHeader(http.StatusOK)
+
+		stream := &SSEWriter{w: w, flusher: flusher}
+		_ = handler(requestContext{w: w, r: r}, stream)
+	})
+}
+
+func buildWebSocketHandler(handler WebSocketHandler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = handler
+		_ = r
+		w.WriteHeader(http.StatusNotImplemented)
+	})
+}
+
+type requestContext struct {
+	w http.ResponseWriter
+	r *http.Request
+}
+
+func (c requestContext) ResponseWriter() http.ResponseWriter {
+	return c.w
+}
+
+func (c requestContext) Request() *http.Request {
+	return c.r
+}
+
+func (c requestContext) Query(key string) string {
+	return queryParam(c.r, key)
+}
+
+func (c requestContext) DefaultQuery(key, defaultValue string) string {
+	value := c.Query(key)
+	if value == "" {
+		return defaultValue
+	}
+	return value
+}
+
+func (c requestContext) Path(key string) string {
+	return pathParam(c.r, key)
+}
+
+func (c requestContext) DefaultPath(key, defaultValue string) string {
+	value := c.Path(key)
+	if value == "" {
+		return defaultValue
+	}
+	return value
 }

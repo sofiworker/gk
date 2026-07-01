@@ -77,8 +77,8 @@ The method selector sets both the HTTP method and the route path.
 Raw handler registration:
 
 ```go
-app.Handle(method, path, httpHandler)
-group.Handle(method, path, httpHandler)
+ghttp.Route[Req, Resp](app).GET(path).ToHTTP(httpHandler)
+ghttp.Route[Req, Resp](group).GET(path).ToHTTP(httpHandler)
 ```
 
 Low-level router access may remain available for advanced use:
@@ -200,7 +200,11 @@ The exact names can stay unexported. The important part is that `Route` depends 
 
 ```go
 func (s *Server) handleRoute(method, path string, handler http.Handler, mws ...MiddlewareFunc) error {
-	return s.Handle(method, path, handler, mws...)
+	h := handler
+	for i := len(mws) - 1; i >= 0; i-- {
+		h = mws[i](h)
+	}
+	return s.router.Register(method, path, h)
 }
 ```
 
@@ -211,7 +215,7 @@ func (g *Group) handleRoute(method, path string, handler http.Handler, mws ...Mi
 	all := make([]MiddlewareFunc, 0, len(g.middlewares)+len(mws))
 	all = append(all, g.middlewares...)
 	all = append(all, mws...)
-	return g.server.Handle(method, JoinPaths(g.prefix, path), handler, all...)
+	return g.server.handleRoute(method, JoinPaths(g.prefix, path), handler, all...)
 }
 ```
 

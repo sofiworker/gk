@@ -58,7 +58,7 @@ func TestRadixRouterPathParams(t *testing.T) {
 
 	var capturedParams map[string]string
 	r.Register("GET", "/users/{id}", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		capturedParams = Params(req)
+		capturedParams = pathParams(req)
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -117,7 +117,7 @@ func TestRouteParamColonSyntaxIsCompatibleWithWarning(t *testing.T) {
 	r := NewRadixRouter()
 	var capturedParams map[string]string
 	if err := r.Register("GET", "/users/:id", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		capturedParams = Params(req)
+		capturedParams = pathParams(req)
 		w.WriteHeader(http.StatusOK)
 	})); err != nil {
 		t.Fatalf("Register failed: %v", err)

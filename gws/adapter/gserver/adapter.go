@@ -97,7 +97,7 @@ func registerAllMethods(s *ghttpserver.Server, path string, h http.Handler) erro
 		http.MethodTrace,
 	}
 	for _, m := range methods {
-		if err := s.Handle(m, path, h); err != nil {
+		if err := ghttpserver.Route[struct{}, struct{}](s).CUSTOM(m, path).ToHTTP(h); err != nil {
 			return err
 		}
 	}

@@ -1,16 +1,26 @@
 package ghttp
 
+import (
+	"net"
+	"net/http"
+)
+
 // Config holds server configuration.
 type Config struct {
-	address        string
-	router         Router
-	renderer       Renderer
-	validator      Validator
-	logger         Logger
-	openAPIEnabled bool
-	openAPITitle   string
-	openAPIVersion string
+	address          string
+	router           Router
+	renderer         Renderer
+	validator        Validator
+	logger           Logger
+	envelope         EnvelopeFunc
+	clientIPResolver ClientIPResolver
+	openAPIEnabled   bool
+	openAPITitle     string
+	openAPIVersion   string
 }
+
+// ClientIPResolver resolves a client IP from an HTTP request.
+type ClientIPResolver func(*http.Request) string
 
 // ServerOption configures a Server.
 type ServerOption func(*Config)
@@ -50,6 +60,13 @@ func WithLogger(logger Logger) ServerOption {
 	}
 }
 
+// WithEnvelope sets a custom envelope function.
+func WithEnvelope(fn EnvelopeFunc) ServerOption {
+	return func(c *Config) {
+		c.envelope = fn
+	}
+}
+
 // WithOpenAPI sets the OpenAPI document title and version.
 func WithOpenAPI(title, version string) ServerOption {
 	return func(c *Config) {
@@ -57,4 +74,22 @@ func WithOpenAPI(title, version string) ServerOption {
 		c.openAPITitle = title
 		c.openAPIVersion = version
 	}
+}
+
+// WithClientIPResolver sets the client IP resolver used by Params snapshots.
+func WithClientIPResolver(resolver ClientIPResolver) ServerOption {
+	return func(c *Config) {
+		c.clientIPResolver = resolver
+	}
+}
+
+func defaultClientIPResolver(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host
+	}
+	return r.RemoteAddr
 }
