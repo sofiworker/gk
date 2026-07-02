@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -168,18 +169,8 @@ func BenchmarkJSONCodec(b *testing.B) {
 
 func BenchmarkParseInput(b *testing.B) {
 	type input struct {
-		Path struct {
-			ID    int    `path:"id"`
-			OrgID string `path:"orgId"`
-		}
-		Query struct {
-			Page int    `query:"page"`
-			Sort string `query:"sort"`
-		}
-		Header struct {
-			Auth   string `header:"Authorization"`
-			Accept string `header:"Accept"`
-		}
+		Params `json:"-"`
+
 		Body struct {
 			Name  string `json:"name"`
 			Email string `json:"email"`
@@ -229,7 +220,7 @@ func BenchmarkEnvelope(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			w := httptest.NewRecorder()
 			r := httptest.NewRequest("GET", "/", nil)
-			DefaultEnvelope(requestContext{w: w, r: r}, 200, &payload{ID: 1, Name: "Alice"}, nil, cm)
+			DefaultEnvelope(w, r, 200, &payload{ID: 1, Name: "Alice"}, nil, cm)
 		}
 	})
 
@@ -238,7 +229,7 @@ func BenchmarkEnvelope(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			w := httptest.NewRecorder()
 			r := httptest.NewRequest("GET", "/", nil)
-			DefaultEnvelope(requestContext{w: w, r: r}, 400, nil, Err(400, "bad request"), cm)
+			DefaultEnvelope(w, r, 400, nil, Err(400, "bad request"), cm)
 		}
 	})
 }
@@ -247,9 +238,8 @@ func BenchmarkFullServer(b *testing.B) {
 	s := New(WithProduces(MIMEJSON))
 
 	type benchInput struct {
-		Path struct {
-			ID int `path:"id"`
-		}
+		Params `json:"-"`
+
 		Body struct {
 			Name string `json:"name"`
 		}
@@ -260,17 +250,14 @@ func BenchmarkFullServer(b *testing.B) {
 		Name string `json:"name"`
 	}
 
-	if err := Route[benchInput, benchOutput](s).POST("/bench/{id}").To(func(ctx context.Context, req benchInput) (benchOutput, error) {
-		return benchOutput{ID: req.Path.ID, Name: req.Body.Name}, nil
-	}); err != nil {
-		b.Fatalf("route registration failed: %v", err)
-	}
+	Route[benchInput, benchOutput](s).POST("/bench/{id}").To(func(ctx context.Context, req benchInput) (benchOutput, error) {
+		id, _ := strconv.Atoi(req.Path("id"))
+		return benchOutput{ID: id, Name: req.Body.Name}, nil
+	})
 
-	if err := Route[struct{ Body struct{} }, struct{ Pong string }](s).GET("/bench/ping").To(func(ctx context.Context, req struct{ Body struct{} }) (struct{ Pong string }, error) {
+	Route[struct{ Body struct{} }, struct{ Pong string }](s).GET("/bench/ping").To(func(ctx context.Context, req struct{ Body struct{} }) (struct{ Pong string }, error) {
 		return struct{ Pong string }{"ok"}, nil
-	}); err != nil {
-		b.Fatalf("route registration failed: %v", err)
-	}
+	})
 
 	ts := httptest.NewServer(s)
 	defer ts.Close()

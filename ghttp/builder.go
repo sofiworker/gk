@@ -3,6 +3,8 @@ package ghttp
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"mime"
 	"net/http"
 	"reflect"
 	"strings"
@@ -39,6 +41,8 @@ type RouteBuilder[Req, Resp any] struct {
 	reqType     reflect.Type
 	pathType    reflect.Type
 	queryType   reflect.Type
+	consumes    []string
+	consumesSet bool
 	produces    string
 	responses   []responseSpec
 	handler     HandlerFunc[Req, Resp]
@@ -47,7 +51,8 @@ type RouteBuilder[Req, Resp any] struct {
 
 type routeTarget interface {
 	handleRoute(method, path string, handler http.Handler, mws ...Middleware) error
-	addRouteSpec(method, path, doc string, tags []string, operationID string, reqType, pathType, queryType reflect.Type, produces string, responses []responseSpec)
+	addRouteSpec(method, path, doc string, tags []string, operationID string, reqType, pathType, queryType reflect.Type, consumes []string, produces string, responses []responseSpec)
+	consumesContentTypes() []string
 	producesContentType() string
 	owner() *Server
 }
@@ -181,6 +186,13 @@ func (b *RouteBuilder[Req, Resp]) Produces(contentType string) *RouteBuilder[Req
 	return b
 }
 
+// Consumes declares the request Content-Types accepted for automatic body decoding.
+func (b *RouteBuilder[Req, Resp]) Consumes(contentTypes ...string) *RouteBuilder[Req, Resp] {
+	b.consumes = normalizeContentTypes(contentTypes)
+	b.consumesSet = true
+	return b
+}
+
 // Responds starts a response specification block.
 func (b *RouteBuilder[Req, Resp]) Responds(code int) *responseSpecBuilder[Req, Resp] {
 	return &responseSpecBuilder[Req, Resp]{
@@ -215,30 +227,42 @@ func (b *RouteBuilder[Req, Resp]) Use(mws ...Middleware) *RouteBuilder[Req, Resp
 }
 
 // To registers the handler and finalizes the route.
-func (b *RouteBuilder[Req, Resp]) To(handler HandlerFunc[Req, Resp]) error {
+func (b *RouteBuilder[Req, Resp]) To(handler HandlerFunc[Req, Resp]) {
 	if err := b.validateMethods(); err != nil {
-		return err
+		b.recordSetupError(err)
+		return
+	}
+	if err := validateRequestParamsUsage[Req](); err != nil {
+		b.recordSetupError(err)
+		return
 	}
 	if err := b.resolveProduces(); err != nil {
-		return err
+		b.recordSetupError(err)
+		return
 	}
+	b.resolveConsumes()
 	b.handler = handler
-	return b.toHandler(b.buildHandlerChain())
+	b.toHandler(b.buildHandlerChain())
 }
 
 // ToHTTP registers a raw http.Handler with the selected route method and path.
-func (b *RouteBuilder[Req, Resp]) ToHTTP(handler http.Handler) error {
-	return b.toHandler(handler)
+func (b *RouteBuilder[Req, Resp]) ToHTTP(handler http.Handler) {
+	b.toHandler(handler)
 }
 
 // ToRaw registers a raw handler function with the selected route method and path.
-func (b *RouteBuilder[Req, Resp]) ToRaw(handler RawHandler) error {
-	return b.ToHTTP(http.HandlerFunc(handler))
+func (b *RouteBuilder[Req, Resp]) ToRaw(handler RawHandler) {
+	b.ToHTTP(http.HandlerFunc(handler))
 }
 
 // ToHTTPFunc registers a parsed-input handler that writes the HTTP response itself.
-func (b *RouteBuilder[Req, Resp]) ToHTTPFunc(handler HTTPHandlerFunc[Req]) error {
-	return b.toHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func (b *RouteBuilder[Req, Resp]) ToHTTPFunc(handler HTTPHandlerFunc[Req]) {
+	if err := validateRequestParamsUsage[Req](); err != nil {
+		b.recordSetupError(err)
+		return
+	}
+	b.resolveConsumes()
+	b.toHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		input, ok := b.parseAndValidateInput(w, r)
 		if !ok {
 			return
@@ -253,15 +277,15 @@ func (b *RouteBuilder[Req, Resp]) ToHTTPFunc(handler HTTPHandlerFunc[Req]) error
 }
 
 // ToRedirect registers a fixed redirect response.
-func (b *RouteBuilder[Req, Resp]) ToRedirect(code int, location string) error {
-	return b.ToRedirectFunc(code, func(Req) (string, error) {
+func (b *RouteBuilder[Req, Resp]) ToRedirect(code int, location string) {
+	b.ToRedirectFunc(code, func(Req) (string, error) {
 		return location, nil
 	})
 }
 
 // ToRedirectFunc registers a redirect response whose target uses parsed input.
-func (b *RouteBuilder[Req, Resp]) ToRedirectFunc(code int, redirect RedirectFunc[Req]) error {
-	return b.ToHTTPFunc(func(w http.ResponseWriter, r *http.Request, input Req) error {
+func (b *RouteBuilder[Req, Resp]) ToRedirectFunc(code int, redirect RedirectFunc[Req]) {
+	b.ToHTTPFunc(func(w http.ResponseWriter, r *http.Request, input Req) error {
 		location, err := redirect(input)
 		if err != nil {
 			return err
@@ -272,58 +296,64 @@ func (b *RouteBuilder[Req, Resp]) ToRedirectFunc(code int, redirect RedirectFunc
 }
 
 // ToSSE registers a Server-Sent Events handler with the selected route method and path.
-func (b *RouteBuilder[Req, Resp]) ToSSE(handler SSEHandler) error {
-	return b.toHandler(buildSSEHandler(handler))
+func (b *RouteBuilder[Req, Resp]) ToSSE(handler SSEHandler) {
+	b.toHandler(buildSSEHandler(b.target.owner(), handler))
 }
 
 // ToWebSocket registers a WebSocket upgrade handler with the selected route method and path.
-func (b *RouteBuilder[Req, Resp]) ToWebSocket(handler WebSocketHandler) error {
-	return b.toHandler(buildWebSocketHandler(handler))
+func (b *RouteBuilder[Req, Resp]) ToWebSocket(handler WebSocketHandler) {
+	b.toHandler(buildWebSocketHandler(b.target.owner(), handler))
 }
 
 // ToStatic registers a file server with the selected route path as its URL prefix.
-func (b *RouteBuilder[Req, Resp]) ToStatic(root string) error {
+func (b *RouteBuilder[Req, Resp]) ToStatic(root string) {
 	if root == "" {
-		return ErrStaticRootRequired
+		b.recordSetupError(ErrStaticRootRequired)
+		return
 	}
-	return b.ToStaticFS(http.Dir(root))
+	b.ToStaticFS(http.Dir(root))
 }
 
 // ToStaticFS registers a file server with the selected route path as its URL prefix.
-func (b *RouteBuilder[Req, Resp]) ToStaticFS(fs http.FileSystem) error {
+func (b *RouteBuilder[Req, Resp]) ToStaticFS(fs http.FileSystem) {
 	prefix := strings.TrimRight(b.path, "/")
 	handler := http.StripPrefix(prefix, http.FileServer(fs))
 	b.path = JoinPaths(b.path, "/*path")
-	return b.toHandler(handler)
+	b.toHandler(handler)
 }
 
 // ToStaticFile registers a single static file with the selected route method and path.
-func (b *RouteBuilder[Req, Resp]) ToStaticFile(filepath string) error {
-	return b.toHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func (b *RouteBuilder[Req, Resp]) ToStaticFile(filepath string) {
+	b.toHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, filepath)
 	}))
 }
 
 // ToHTML renders a configured template with fixed data for the selected route.
-func (b *RouteBuilder[Req, Resp]) ToHTML(status int, name string, data interface{}) error {
-	return b.toHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func (b *RouteBuilder[Req, Resp]) ToHTML(status int, name string, data interface{}) {
+	b.toHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := renderHTML(w, b.target.owner(), status, name, data); err != nil {
 			writeError(w, r, b.target.owner(), http.StatusInternalServerError, err)
 		}
 	}))
 }
 
-func (b *RouteBuilder[Req, Resp]) toHandler(handler http.Handler) error {
+func (b *RouteBuilder[Req, Resp]) toHandler(handler http.Handler) {
 	if err := b.validateMethods(); err != nil {
-		return err
+		b.recordSetupError(err)
+		return
 	}
 	for _, method := range b.methods {
 		if err := b.target.handleRoute(method, b.path, handler, b.middlewares...); err != nil {
-			return err
+			b.recordSetupError(err)
+			return
 		}
 		b.register(method)
 	}
-	return nil
+}
+
+func (b *RouteBuilder[Req, Resp]) recordSetupError(err error) {
+	b.target.owner().recordSetupError(err)
 }
 
 func (b *RouteBuilder[Req, Resp]) validateMethods() error {
@@ -347,7 +377,7 @@ func (b *RouteBuilder[Req, Resp]) buildHandlerChain() http.Handler {
 }
 
 func (b *RouteBuilder[Req, Resp]) register(method string) {
-	b.target.addRouteSpec(method, b.path, b.doc, b.tags, b.operationID, b.reqType, b.pathType, b.queryType, b.produces, b.responses)
+	b.target.addRouteSpec(method, b.path, b.doc, b.tags, b.operationID, b.reqType, b.pathType, b.queryType, b.consumes, b.produces, b.responses)
 }
 
 func (b *RouteBuilder[Req, Resp]) buildHandler() http.Handler {
@@ -358,7 +388,7 @@ func (b *RouteBuilder[Req, Resp]) buildHandler() http.Handler {
 		}
 
 		server := b.target.owner()
-		resp, err := b.handler(contextWithRequest(r.Context(), r), input)
+		resp, err := b.handler(r.Context(), input)
 		if err != nil {
 			if isErrHandled(err) {
 				return
@@ -367,8 +397,9 @@ func (b *RouteBuilder[Req, Resp]) buildHandler() http.Handler {
 			return
 		}
 
+		writeResponseCookies(w, resp)
 		if server.envelope != nil {
-			server.envelope(requestContext{w: w, r: r}, resolveStatusCode(resp), resp, nil, server.codecMgr)
+			server.envelope(w, r, resolveStatusCode(resp), resp, nil, server.codecMgr)
 			return
 		}
 		writeResponse(w, r, server, resolveStatusCode(resp), b.produces, resp)
@@ -388,9 +419,21 @@ func (b *RouteBuilder[Req, Resp]) resolveProduces() error {
 	return nil
 }
 
+func (b *RouteBuilder[Req, Resp]) resolveConsumes() {
+	if b.consumesSet {
+		return
+	}
+	b.consumes = append([]string(nil), b.target.consumesContentTypes()...)
+}
+
 func (b *RouteBuilder[Req, Resp]) parseAndValidateInput(w http.ResponseWriter, r *http.Request) (Req, bool) {
 	input, target := newInputTarget[Req]()
 	server := b.target.owner()
+	if err := validateRequestContentType(r, target, b.consumes); err != nil {
+		writeError(w, r, server, http.StatusUnsupportedMediaType, err)
+		var zero Req
+		return zero, false
+	}
 	if err := parseInputWithConfig(r, target, server.config); err != nil {
 		writeError(w, r, server, http.StatusBadRequest, err)
 		var zero Req
@@ -438,6 +481,71 @@ func inputFromTarget[Req any](input Req, target interface{}) Req {
 	return input
 }
 
+func validateRequestContentType(r *http.Request, target interface{}, consumes []string) error {
+	if len(consumes) == 0 || !inputTargetHasBody(target) {
+		return nil
+	}
+	contentType := r.Header.Get("Content-Type")
+	if strings.TrimSpace(contentType) == "" {
+		return nil
+	}
+	mediaType := normalizeContentType(contentType)
+	for _, allowed := range consumes {
+		if mediaTypeMatches(allowed, mediaType) {
+			return nil
+		}
+	}
+	return Err(http.StatusUnsupportedMediaType, fmt.Sprintf("unsupported media type %q", contentType), WithCause(ErrUnsupportedMediaType))
+}
+
+func inputTargetHasBody(target interface{}) bool {
+	t := reflect.TypeOf(target)
+	if t == nil {
+		return false
+	}
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct || t == reflect.TypeOf(Params{}) {
+		return false
+	}
+	return getStructInfo(t).hasBody
+}
+
+func normalizeContentTypes(contentTypes []string) []string {
+	normalized := make([]string, 0, len(contentTypes))
+	for _, contentType := range contentTypes {
+		contentType = normalizeContentType(contentType)
+		if contentType == "" {
+			continue
+		}
+		normalized = append(normalized, contentType)
+	}
+	return normalized
+}
+
+func normalizeContentType(contentType string) string {
+	contentType = strings.TrimSpace(contentType)
+	if contentType == "" {
+		return ""
+	}
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err == nil {
+		return strings.ToLower(mediaType)
+	}
+	return strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+}
+
+func mediaTypeMatches(allowed, actual string) bool {
+	if allowed == "*/*" {
+		return true
+	}
+	if strings.HasSuffix(allowed, "/*") {
+		return strings.HasPrefix(actual, strings.TrimSuffix(allowed, "*"))
+	}
+	return allowed == actual
+}
+
 func isHTTPMethodToken(method string) bool {
 	for i := 0; i < len(method); i++ {
 		c := method[i]
@@ -458,7 +566,7 @@ func writeError(w http.ResponseWriter, r *http.Request, s *Server, defaultCode i
 		if he := AsError(err); he != nil {
 			code = he.Code
 		}
-		s.envelope(requestContext{w: w, r: r}, code, nil, err, s.codecMgr)
+		s.envelope(w, r, code, nil, err, s.codecMgr)
 		return
 	}
 	http.Error(w, err.Error(), statusCodeFromError(defaultCode, err))
@@ -496,7 +604,7 @@ func renderHTML(w http.ResponseWriter, s *Server, status int, name string, data 
 	return err
 }
 
-func buildSSEHandler(handler SSEHandler) http.Handler {
+func buildSSEHandler(s *Server, handler SSEHandler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		flusher, ok := w.(http.Flusher)
 		if !ok {
@@ -510,51 +618,15 @@ func buildSSEHandler(handler SSEHandler) http.Handler {
 		w.WriteHeader(http.StatusOK)
 
 		stream := &SSEWriter{w: w, flusher: flusher}
-		_ = handler(requestContext{w: w, r: r}, stream)
+		_ = handler(r.Context(), paramsFromRequest(r, s.config), stream)
 	})
 }
 
-func buildWebSocketHandler(handler WebSocketHandler) http.Handler {
+func buildWebSocketHandler(s *Server, handler WebSocketHandler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = handler
+		_ = s
 		_ = r
 		w.WriteHeader(http.StatusNotImplemented)
 	})
-}
-
-type requestContext struct {
-	w http.ResponseWriter
-	r *http.Request
-}
-
-func (c requestContext) ResponseWriter() http.ResponseWriter {
-	return c.w
-}
-
-func (c requestContext) Request() *http.Request {
-	return c.r
-}
-
-func (c requestContext) Query(key string) string {
-	return queryParam(c.r, key)
-}
-
-func (c requestContext) DefaultQuery(key, defaultValue string) string {
-	value := c.Query(key)
-	if value == "" {
-		return defaultValue
-	}
-	return value
-}
-
-func (c requestContext) Path(key string) string {
-	return pathParam(c.r, key)
-}
-
-func (c requestContext) DefaultPath(key, defaultValue string) string {
-	value := c.Path(key)
-	if value == "" {
-		return defaultValue
-	}
-	return value
 }

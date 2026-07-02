@@ -11,23 +11,21 @@ func TestOpenAPIBuildsValidSpec(t *testing.T) {
 	app := New(WithOpenAPI("My API", "1.0.0"), WithProduces(MIMEJSON))
 
 	type CreateUserReq struct {
-		Path struct {
-			OrgID string `path:"orgId"`
-		}
 		Body struct {
 			Name string `json:"name" minLength:"1" maxLength:"100"`
 		}
+	}
+	type CreateUserPath struct {
+		OrgID string `path:"orgId"`
 	}
 	type UserData struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	}
 
-	if err := Route[CreateUserReq, struct{ Body UserData }](app).POST("/orgs/{orgId}/users").To(func(ctx context.Context, req CreateUserReq) (struct{ Body UserData }, error) {
+	Route[CreateUserReq, struct{ Body UserData }](app).POST("/orgs/{orgId}/users").PathSchema(CreateUserPath{}).To(func(ctx context.Context, req CreateUserReq) (struct{ Body UserData }, error) {
 		return struct{ Body UserData }{}, nil
-	}); err != nil {
-		t.Fatalf("route registration failed: %v", err)
-	}
+	})
 
 	spec := app.openAPI.Build()
 	if len(spec) == 0 {
@@ -41,6 +39,42 @@ func TestOpenAPIBuildsValidSpec(t *testing.T) {
 
 	if doc["openapi"] != "3.1.0" {
 		t.Fatalf("expected openapi 3.1.0, got %v", doc["openapi"])
+	}
+}
+
+func TestOpenAPIRequestBodyUsesConsumes(t *testing.T) {
+	app := New(WithOpenAPI("My API", "1.0.0"), WithProduces(MIMEJSON))
+
+	type CreateUserReq struct {
+		Body struct {
+			Name string `json:"name"`
+		}
+	}
+
+	Route[CreateUserReq, struct{}](app).
+		POST("/users").
+		Reads(CreateUserReq{}).
+		Consumes(MIMEXML, MIMEJSON).
+		To(func(ctx context.Context, req CreateUserReq) (struct{}, error) {
+			return struct{}{}, nil
+		})
+
+	spec := app.openAPI.Build()
+	var doc map[string]interface{}
+	if err := json.Unmarshal(spec, &doc); err != nil {
+		t.Fatalf("invalid OpenAPI JSON: %v", err)
+	}
+
+	paths := doc["paths"].(map[string]interface{})
+	item := paths["/users"].(map[string]interface{})
+	op := item["post"].(map[string]interface{})
+	requestBody := op["requestBody"].(map[string]interface{})
+	content := requestBody["content"].(map[string]interface{})
+	if _, ok := content[MIMEXML]; !ok {
+		t.Fatalf("requestBody content missing %s: %#v", MIMEXML, content)
+	}
+	if _, ok := content[MIMEJSON]; !ok {
+		t.Fatalf("requestBody content missing %s: %#v", MIMEJSON, content)
 	}
 }
 

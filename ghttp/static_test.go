@@ -14,9 +14,7 @@ func TestStaticServesFile(t *testing.T) {
 	os.WriteFile(testFile, []byte("Hello, World!"), 0644)
 
 	app := New(WithProduces(MIMEJSON))
-	if err := Route[struct{}, struct{}](app).GET("/static").ToStatic(tmpDir); err != nil {
-		t.Fatalf("ToStatic failed: %v", err)
-	}
+	Route[struct{}, struct{}](app).GET("/static").ToStatic(tmpDir)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/static/hello.txt", nil)
@@ -36,9 +34,7 @@ func TestStaticFileSingle(t *testing.T) {
 	os.WriteFile(testFile, []byte("icon-data"), 0644)
 
 	app := New(WithProduces(MIMEJSON))
-	if err := Route[struct{}, struct{}](app).GET("/favicon.ico").ToStaticFile(testFile); err != nil {
-		t.Fatalf("ToStaticFile failed: %v", err)
-	}
+	Route[struct{}, struct{}](app).GET("/favicon.ico").ToStaticFile(testFile)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/favicon.ico", nil)

@@ -113,12 +113,44 @@ func RequestLogger() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
-			next.ServeHTTP(w, r)
+			rw := newLoggingResponseWriter(w)
+			next.ServeHTTP(rw, r)
 			if logger := loggerFromRequest(r); logger != nil {
-				logger.Infof("%s %s %s", r.Method, r.URL.Path, time.Since(start))
+				logger.InfoContext(r.Context(), "http request",
+					"method", r.Method,
+					"path", r.URL.Path,
+					"status", rw.Status(),
+					"size", rw.Size(),
+					"duration", time.Since(start),
+				)
 			}
 		})
 	}
+}
+
+type loggingResponseWriter interface {
+	http.ResponseWriter
+	Status() int
+	Size() int
+}
+
+type flushLoggingResponseWriter struct {
+	*ResponseWriter
+}
+
+func newLoggingResponseWriter(w http.ResponseWriter) loggingResponseWriter {
+	rw := NewResponseWriter(w)
+	if _, ok := w.(http.Flusher); ok {
+		return &flushLoggingResponseWriter{ResponseWriter: rw}
+	}
+	return rw
+}
+
+func (w *flushLoggingResponseWriter) Flush() {
+	if !w.written {
+		w.WriteHeader(w.statusCode)
+	}
+	w.ResponseWriter.ResponseWriter.(http.Flusher).Flush()
 }
 
 // Recoverer catches panics and returns 500.
@@ -128,7 +160,11 @@ func Recoverer() Middleware {
 			defer func() {
 				if rec := recover(); rec != nil {
 					if logger := loggerFromRequest(r); logger != nil {
-						logger.Errorf("panic: %v", rec)
+						logger.ErrorContext(r.Context(), "panic recovered",
+							"panic", rec,
+							"method", r.Method,
+							"path", r.URL.Path,
+						)
 					}
 					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				}

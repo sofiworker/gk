@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"html/template"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,9 +17,8 @@ import (
 )
 
 type testInput struct {
-	Path struct {
-		ID string `path:"id"`
-	}
+	Params `json:"-"`
+
 	Body struct {
 		Name string `json:"name"`
 	}
@@ -37,7 +38,7 @@ func testHandler(ctx context.Context, req testInput) (testOutput, error) {
 			ID   string `json:"id"`
 			Name string `json:"name"`
 		}{
-			ID:   req.Path.ID,
+			ID:   req.Path("id"),
 			Name: req.Body.Name,
 		},
 	}, nil
@@ -46,16 +47,14 @@ func testHandler(ctx context.Context, req testInput) (testOutput, error) {
 func TestRouteBuilderWithPOST(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 
-	if err := Route[testInput, testOutput](app).
+	Route[testInput, testOutput](app).
 		POST("/users/{id}").
 		Doc("Create user").
 		Tags("Users").
 		OperationID("createUser").
 		Reads(testInput{}).
 		Responds(http.StatusCreated).With(testOutput{}).Desc("Created").End().
-		To(testHandler); err != nil {
-		t.Fatalf("To failed: %v", err)
-	}
+		To(testHandler)
 
 	w := httptest.NewRecorder()
 	body := strings.NewReader(`{"name":"Alice"}`)
@@ -85,12 +84,236 @@ func TestRouteBuilderWithPOST(t *testing.T) {
 	}
 }
 
+type cookieOutput struct {
+	Token string `json:"token"`
+}
+
+func (o cookieOutput) Cookies() []*http.Cookie {
+	return []*http.Cookie{
+		{
+			Name:     "session_id",
+			Value:    o.Token,
+			Path:     "/",
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		},
+		DeleteCookie("old_session"),
+	}
+}
+
+func TestRouteBuilderWritesOutputCookies(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+
+	Route[Params, cookieOutput](app).GET("/login").To(func(ctx context.Context, params Params) (cookieOutput, error) {
+		return cookieOutput{Token: params.DefaultCookie("seed", "token-1")}, nil
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	req.AddCookie(&http.Cookie{Name: "seed", Value: "token-2"})
+	app.ServeHTTP(rec, req)
+
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 2 {
+		t.Fatalf("cookies = %#v, want session and deletion cookies", cookies)
+	}
+	if cookies[0].Name != "session_id" || cookies[0].Value != "token-2" || !cookies[0].HttpOnly {
+		t.Fatalf("session cookie = %#v", cookies[0])
+	}
+	if cookies[1].Name != "old_session" || cookies[1].MaxAge != -1 {
+		t.Fatalf("delete cookie = %#v, want MaxAge -1", cookies[1])
+	}
+}
+
+func TestRouteBuilderConsumesRejectsUnsupportedContentType(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+
+	type input struct {
+		Body struct {
+			Name string `json:"name"`
+		}
+	}
+
+	Route[input, struct{}](app).
+		POST("/users").
+		Consumes(MIMEJSON).
+		To(func(context.Context, input) (struct{}, error) {
+			t.Fatal("handler should not run for unsupported media type")
+			return struct{}{}, nil
+		})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(`{"name":"alice"}`))
+	req.Header.Set("Content-Type", MIMEPlain)
+	app.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusUnsupportedMediaType, rec.Body.String())
+	}
+}
+
+func TestRouteBuilderConsumesAllowsEmptyContentType(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+
+	type input struct {
+		Body struct {
+			Name string `json:"name"`
+		}
+	}
+	type output struct {
+		Name string `json:"name"`
+	}
+
+	Route[input, output](app).
+		POST("/users").
+		Consumes(MIMEJSON).
+		To(func(ctx context.Context, req input) (output, error) {
+			return output{Name: req.Body.Name}, nil
+		})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(`{"name":"alice"}`))
+	app.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var data output
+	if err := json.Unmarshal(rec.Body.Bytes(), &data); err != nil {
+		t.Fatalf("unmarshal response failed: %v; body = %s", err, rec.Body.String())
+	}
+	if data.Name != "alice" {
+		t.Fatalf("Name = %q, want alice", data.Name)
+	}
+}
+
+func TestRouteBuilderConsumesMatchesContentTypeParameters(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+
+	type input struct {
+		Body struct {
+			Name string `json:"name"`
+		}
+	}
+
+	Route[input, struct{}](app).
+		POST("/users").
+		Consumes(MIMEJSON).
+		To(func(ctx context.Context, req input) (struct{}, error) {
+			if req.Body.Name != "alice" {
+				t.Fatalf("Name = %q, want alice", req.Body.Name)
+			}
+			return struct{}{}, nil
+		})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(`{"name":"alice"}`))
+	req.Header.Set("Content-Type", MIMEJSON+"; charset=utf-8")
+	app.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func TestRouteBuilderConsumesInheritanceAndOverride(t *testing.T) {
+	type input struct {
+		Body struct {
+			Name string `json:"name"`
+		}
+	}
+
+	app := New(WithProduces(MIMEJSON)).Consumes(MIMEJSON)
+	api := app.Group("/api").Consumes(MIMEXML)
+
+	Route[input, struct{}](api).POST("/xml").To(func(context.Context, input) (struct{}, error) {
+		return struct{}{}, nil
+	})
+	Route[input, struct{}](api).POST("/json").Consumes(MIMEJSON).To(func(context.Context, input) (struct{}, error) {
+		return struct{}{}, nil
+	})
+
+	tests := []struct {
+		name        string
+		path        string
+		contentType string
+		body        string
+		want        int
+	}{
+		{name: "group consumes xml", path: "/api/xml", contentType: MIMEXML, body: `<Body><Name>alice</Name></Body>`, want: http.StatusOK},
+		{name: "group rejects server json default", path: "/api/xml", contentType: MIMEJSON, body: `{"name":"alice"}`, want: http.StatusUnsupportedMediaType},
+		{name: "route override consumes json", path: "/api/json", contentType: MIMEJSON, body: `{"name":"alice"}`, want: http.StatusOK},
+		{name: "route override rejects xml", path: "/api/json", contentType: MIMEXML, body: `<Body><Name>alice</Name></Body>`, want: http.StatusUnsupportedMediaType},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, tt.path, strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", tt.contentType)
+			app.ServeHTTP(rec, req)
+			if rec.Code != tt.want {
+				t.Fatalf("status = %d, want %d; body = %s", rec.Code, tt.want, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestServerWithBodyDecoderUsesInstanceDecoder(t *testing.T) {
+	type input struct {
+		Body struct {
+			Name string `json:"name"`
+		}
+	}
+	type output struct {
+		Name string `json:"name"`
+	}
+
+	newApp := func(prefix string) *Server {
+		app := New(WithProduces(MIMEJSON), WithBodyDecoder(func(r io.Reader, contentType string, target interface{}) error {
+			data, err := io.ReadAll(r)
+			if err != nil {
+				return err
+			}
+			body := reflect.ValueOf(target).Elem()
+			body.FieldByName("Name").SetString(prefix + string(data))
+			return nil
+		}))
+		Route[input, output](app).POST("/decode").To(func(ctx context.Context, req input) (output, error) {
+			return output{Name: req.Body.Name}, nil
+		})
+		return app
+	}
+
+	for _, tt := range []struct {
+		name string
+		app  *Server
+		want string
+	}{
+		{name: "first server", app: newApp("one:"), want: "one:alice"},
+		{name: "second server", app: newApp("two:"), want: "two:alice"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/decode", strings.NewReader("alice"))
+			req.Header.Set("Content-Type", "application/x-custom")
+			tt.app.ServeHTTP(rec, req)
+
+			var data output
+			if err := json.Unmarshal(rec.Body.Bytes(), &data); err != nil {
+				t.Fatalf("unmarshal response failed: %v; body = %s", err, rec.Body.String())
+			}
+			if data.Name != tt.want {
+				t.Fatalf("Name = %q, want %q", data.Name, tt.want)
+			}
+		})
+	}
+}
+
 func TestRouteBuilderPostShortcutReplacement(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 
-	if err := Route[testInput, testOutput](app).POST("/users/{id}").To(testHandler); err != nil {
-		t.Fatalf("To failed: %v", err)
-	}
+	Route[testInput, testOutput](app).POST("/users/{id}").To(testHandler)
 
 	w := httptest.NewRecorder()
 	body := strings.NewReader(`{"name":"Bob"}`)
@@ -118,11 +341,9 @@ func TestRouteBuilderPointerResponseType(t *testing.T) {
 		Message string `json:"message"`
 	}
 
-	if err := Route[struct{}, *output](app).GET("/pointer-response").To(func(ctx context.Context, req struct{}) (*output, error) {
+	Route[struct{}, *output](app).GET("/pointer-response").To(func(ctx context.Context, req struct{}) (*output, error) {
 		return &output{Message: "ok"}, nil
-	}); err != nil {
-		t.Fatalf("To failed: %v", err)
-	}
+	})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/pointer-response", nil)
@@ -141,22 +362,18 @@ func TestRouteBuilderPointerRequestType(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 
 	type input struct {
-		Query struct {
-			Name string `query:"name"`
-		}
+		Params `json:"-"`
 	}
 	type output struct {
 		Name string `json:"name"`
 	}
 
-	if err := Route[*input, output](app).GET("/pointer-request").To(func(ctx context.Context, req *input) (output, error) {
+	Route[*input, output](app).GET("/pointer-request").To(func(ctx context.Context, req *input) (output, error) {
 		if req == nil {
 			t.Fatal("request input is nil")
 		}
-		return output{Name: req.Query.Name}, nil
-	}); err != nil {
-		t.Fatalf("To failed: %v", err)
-	}
+		return output{Name: req.Query("name")}, nil
+	})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/pointer-request?name=alice", nil)
@@ -174,25 +391,23 @@ func TestRouteBuilderPointerRequestType(t *testing.T) {
 func TestRouteBuilderToRequiresProduces(t *testing.T) {
 	app := New()
 
-	err := Route[struct{}, string](app).GET("/ping").To(func(ctx context.Context, req struct{}) (string, error) {
+	Route[struct{}, string](app).GET("/ping").To(func(ctx context.Context, req struct{}) (string, error) {
 		return "pong", nil
 	})
-	if !errors.Is(err, ErrRouteProducesRequired) {
-		t.Fatalf("To error = %v, want ErrRouteProducesRequired", err)
-	}
+	assertPanicsIs(t, ErrRouteProducesRequired, func() {
+		app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/ping", nil))
+	})
 }
 
 func TestRouteBuilderProducesPlainString(t *testing.T) {
 	app := New()
 
-	if err := Route[struct{}, string](app).
+	Route[struct{}, string](app).
 		GET("/ping").
 		Produces(MIMEPlain).
 		To(func(ctx context.Context, req struct{}) (string, error) {
 			return "pong", nil
-		}); err != nil {
-		t.Fatalf("To failed: %v", err)
-	}
+		})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
@@ -211,23 +426,17 @@ func TestRouteBuilderProducesInheritance(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	group := app.Group("/api").Produces(MIMEPlain)
 
-	if err := Route[struct{}, string](app).GET("/server").To(func(context.Context, struct{}) (string, error) {
+	Route[struct{}, string](app).GET("/server").To(func(context.Context, struct{}) (string, error) {
 		return "server", nil
-	}); err != nil {
-		t.Fatalf("server route To failed: %v", err)
-	}
+	})
 
-	if err := Route[struct{}, string](group).GET("/group").To(func(context.Context, struct{}) (string, error) {
+	Route[struct{}, string](group).GET("/group").To(func(context.Context, struct{}) (string, error) {
 		return "group", nil
-	}); err != nil {
-		t.Fatalf("group route To failed: %v", err)
-	}
+	})
 
-	if err := Route[struct{}, string](group).GET("/route").Produces(MIMEJSON).To(func(context.Context, struct{}) (string, error) {
+	Route[struct{}, string](group).GET("/route").Produces(MIMEJSON).To(func(context.Context, struct{}) (string, error) {
 		return "route", nil
-	}); err != nil {
-		t.Fatalf("route override To failed: %v", err)
-	}
+	})
 
 	tests := []struct {
 		path string
@@ -253,19 +462,15 @@ func TestRouteBuilderProducesInheritance(t *testing.T) {
 	}
 }
 
-func TestRouteBuilderToReturnsRegisterErrorAndSkipsOpenAPI(t *testing.T) {
+func TestRouteBuilderRecordsRegisterErrorAndSkipsOpenAPI(t *testing.T) {
 	wantErr := errors.New("register failed")
 	router := &failingRouter{err: wantErr}
 	app := New(WithOpenAPI("test", "1.0.0"), WithRouter(router), WithProduces(MIMEJSON))
 
-	err := Route[testInput, testOutput](app).
+	Route[testInput, testOutput](app).
 		POST("/users/{id}").
 		Doc("Create user").
 		To(testHandler)
-
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("To error = %v, want %v", err, wantErr)
-	}
 
 	spec := app.openAPI.Build()
 	var doc map[string]interface{}
@@ -276,17 +481,17 @@ func TestRouteBuilderToReturnsRegisterErrorAndSkipsOpenAPI(t *testing.T) {
 	if len(paths) != 0 {
 		t.Fatalf("paths = %#v, want no stale openapi routes", paths)
 	}
+	assertPanicsIs(t, wantErr, func() {
+		app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/users/42", nil))
+	})
 }
 
 func TestRouteBuilderToRaw(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 
-	err := Route[struct{}, struct{}](app).GET("/raw").ToRaw(func(w http.ResponseWriter, r *http.Request) {
+	Route[struct{}, struct{}](app).GET("/raw").ToRaw(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
-	if err != nil {
-		t.Fatalf("ToRaw failed: %v", err)
-	}
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/raw", nil)
@@ -299,11 +504,9 @@ func TestRouteBuilderToRaw(t *testing.T) {
 func TestRouteBuilderToSSE(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 
-	if err := Route[struct{}, struct{}](app).GET("/events").ToSSE(func(ctx Context, stream *SSEWriter) error {
+	Route[struct{}, struct{}](app).GET("/events").ToSSE(func(ctx context.Context, params Params, stream *SSEWriter) error {
 		return stream.WriteEvent("message", "hello")
-	}); err != nil {
-		t.Fatalf("ToSSE failed: %v", err)
-	}
+	})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/events", nil)
@@ -323,9 +526,7 @@ func TestRouteBuilderToHTML(t *testing.T) {
 	}
 
 	app := New(WithRenderer(NewRenderer(tmpDir, ".html", template.FuncMap{}, false)))
-	if err := Route[struct{}, struct{}](app).GET("/page").ToHTML(http.StatusCreated, "index", map[string]interface{}{"Title": "Hello"}); err != nil {
-		t.Fatalf("ToHTML failed: %v", err)
-	}
+	Route[struct{}, struct{}](app).GET("/page").ToHTML(http.StatusCreated, "index", map[string]interface{}{"Title": "Hello"})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/page", nil)
@@ -348,15 +549,13 @@ func TestRouteBuilderPathAndQueryPopulateOpenAPI(t *testing.T) {
 		Role string `query:"role"`
 	}
 
-	if err := Route[struct{}, struct{}](app).
+	Route[struct{}, struct{}](app).
 		GET("/users/{id}").
 		PathSchema(pathParams{}).
 		QuerySchema(queryParams{}).
 		To(func(context.Context, struct{}) (struct{}, error) {
 			return struct{}{}, nil
-		}); err != nil {
-		t.Fatalf("To failed: %v", err)
-	}
+		})
 
 	spec := app.openAPI.Build()
 	var doc map[string]interface{}
@@ -372,51 +571,33 @@ func TestRouteBuilderPathAndQueryPopulateOpenAPI(t *testing.T) {
 	}
 }
 
-func TestRouteBuilderParamsBindFlatFields(t *testing.T) {
+func TestRouteBuilderParamsSnapshot(t *testing.T) {
 	app := New(WithClientIPResolver(func(r *http.Request) string {
 		return r.Header.Get("X-Client-IP")
 	}), WithProduces(MIMEJSON))
 
 	type input struct {
 		Params `json:"-"`
-
-		Name  string   `path:"name"`
-		Role  string   `query:"role" default:"guest"`
-		Age   int      `query:"age"`
-		Tags  []string `query:"tag"`
-		Token string   `header:"X-Token"`
 	}
 	type output struct {
 		Name     string   `json:"name"`
-		RawName  string   `json:"raw_name"`
 		Role     string   `json:"role"`
-		RawRole  string   `json:"raw_role"`
-		Age      int      `json:"age"`
 		Tags     []string `json:"tags"`
-		RawTags  []string `json:"raw_tags"`
 		Token    string   `json:"token"`
-		RawToken string   `json:"raw_token"`
 		ClientIP string   `json:"client_ip"`
 	}
 
-	if err := Route[input, output](app).
+	Route[input, output](app).
 		PUT("/user/{name}").
 		To(func(ctx context.Context, in input) (output, error) {
 			return output{
-				Name:     in.Name,
-				RawName:  in.Path("name"),
-				Role:     in.Role,
-				RawRole:  in.DefaultQuery("role", "guest"),
-				Age:      in.Age,
-				Tags:     in.Tags,
-				RawTags:  in.QueryList("tag"),
-				Token:    in.Token,
-				RawToken: in.Header("X-Token"),
+				Name:     in.Path("name"),
+				Role:     in.DefaultQuery("role", "guest"),
+				Tags:     in.QueryList("tag"),
+				Token:    in.Header("X-Token"),
 				ClientIP: in.ClientIP(),
 			}, nil
-		}); err != nil {
-		t.Fatalf("To failed: %v", err)
-	}
+		})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/user/alice?age=18&tag=a&tag=b", nil)
@@ -428,32 +609,33 @@ func TestRouteBuilderParamsBindFlatFields(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &data); err != nil {
 		t.Fatalf("unmarshal response failed: %v", err)
 	}
-	if data.Name != "alice" || data.RawName != "alice" || data.Role != "guest" || data.RawRole != "guest" || data.Age != 18 || data.Token != "token-1" || data.RawToken != "token-1" || data.ClientIP != "203.0.113.9" {
+	if data.Name != "alice" || data.Role != "guest" || data.Token != "token-1" || data.ClientIP != "203.0.113.9" {
 		t.Fatalf("data = %#v", data)
 	}
-	if !reflect.DeepEqual(data.Tags, []string{"a", "b"}) || !reflect.DeepEqual(data.RawTags, []string{"a", "b"}) {
-		t.Fatalf("tags = %#v raw = %#v", data.Tags, data.RawTags)
+	if !reflect.DeepEqual(data.Tags, []string{"a", "b"}) {
+		t.Fatalf("tags = %#v", data.Tags)
 	}
 }
 
-func TestRouteBuilderHandlerContextParams(t *testing.T) {
+func TestRouteBuilderHandlerUsesInputParams(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 
+	type input struct {
+		Params `json:"-"`
+	}
 	type output struct {
 		ID      string `json:"id"`
 		Role    string `json:"role"`
 		Missing string `json:"missing"`
 	}
 
-	if err := Route[struct{}, output](app).GET("/users/{id}").To(func(ctx context.Context, req struct{}) (output, error) {
+	Route[input, output](app).GET("/users/{id}").To(func(ctx context.Context, req input) (output, error) {
 		return output{
-			ID:      Path(ctx, "id"),
-			Role:    DefaultQuery(ctx, "role", "guest"),
-			Missing: DefaultPath(ctx, "missing", "fallback"),
+			ID:      req.Path("id"),
+			Role:    req.DefaultQuery("role", "guest"),
+			Missing: req.DefaultPath("missing", "fallback"),
 		}, nil
-	}); err != nil {
-		t.Fatalf("To failed: %v", err)
-	}
+	})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/users/42?role=admin", nil)
@@ -468,27 +650,157 @@ func TestRouteBuilderHandlerContextParams(t *testing.T) {
 	}
 }
 
+func TestRouteBuilderSupportsDirectParamsInput(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+
+	type output struct {
+		ID    string `json:"id"`
+		Role  string `json:"role"`
+		Token string `json:"token"`
+	}
+
+	Route[Params, output](app).GET("/direct/{id}").To(func(ctx context.Context, params Params) (output, error) {
+		return output{
+			ID:    params.Path("id"),
+			Role:  params.DefaultQuery("role", "guest"),
+			Token: params.Header("X-Token"),
+		}, nil
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/direct/42?role=admin", nil)
+	req.Header.Set("X-Token", "secret")
+	app.ServeHTTP(rec, req)
+
+	var data output
+	if err := json.Unmarshal(rec.Body.Bytes(), &data); err != nil {
+		t.Fatalf("unmarshal response failed: %v; body = %s", err, rec.Body.String())
+	}
+	if data.ID != "42" || data.Role != "admin" || data.Token != "secret" {
+		t.Fatalf("data = %#v", data)
+	}
+}
+
+func TestRouteBuilderRejectsDirectPointerParamsInput(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+
+	Route[*Params, struct{}](app).GET("/direct-pointer-params").To(func(context.Context, *Params) (struct{}, error) {
+		return struct{}{}, nil
+	})
+	assertPanicsIs(t, ErrInvalidParamsUsage, func() {
+		app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/direct-pointer-params", nil))
+	})
+}
+
+func TestRouteBuilderSetupErrorPanicsFromRun(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+
+	Route[*Params, struct{}](app).GET("/direct-pointer-params").To(func(context.Context, *Params) (struct{}, error) {
+		return struct{}{}, nil
+	})
+
+	assertPanicsIs(t, ErrInvalidParamsUsage, func() {
+		_ = app.Run("bad address")
+	})
+}
+
+func TestRouteBuilderSetupErrorPanicsFromServe(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+
+	Route[*Params, struct{}](app).GET("/direct-pointer-params").To(func(context.Context, *Params) (struct{}, error) {
+		return struct{}{}, nil
+	})
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen failed: %v", err)
+	}
+	defer ln.Close()
+
+	assertPanicsIs(t, ErrInvalidParamsUsage, func() {
+		_ = app.Serve(ln)
+	})
+}
+
+func TestRouteBuilderSetupErrorPanicsFromListenAndServeTLS(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+
+	Route[*Params, struct{}](app).GET("/direct-pointer-params").To(func(context.Context, *Params) (struct{}, error) {
+		return struct{}{}, nil
+	})
+
+	assertPanicsIs(t, ErrInvalidParamsUsage, func() {
+		_ = app.ListenAndServeTLS("bad address", "", "")
+	})
+}
+
+func TestRouteBuilderRejectsInvalidParamsUsage(t *testing.T) {
+	type namedParamsInput struct {
+		Request Params `json:"-"`
+	}
+	type pointerParamsInput struct {
+		*Params `json:"-"`
+	}
+	type commonParams struct {
+		Params `json:"-"`
+	}
+	type indirectParamsInput struct {
+		commonParams
+	}
+
+	app := New(WithProduces(MIMEJSON))
+	Route[namedParamsInput, struct{}](app).GET("/named-params").To(func(context.Context, namedParamsInput) (struct{}, error) {
+		return struct{}{}, nil
+	})
+	assertPanicsIs(t, ErrInvalidParamsUsage, func() {
+		app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/named-params", nil))
+	})
+
+	app = New(WithProduces(MIMEJSON))
+	Route[pointerParamsInput, struct{}](app).GET("/pointer-params").To(func(context.Context, pointerParamsInput) (struct{}, error) {
+		return struct{}{}, nil
+	})
+	assertPanicsIs(t, ErrInvalidParamsUsage, func() {
+		app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/pointer-params", nil))
+	})
+
+	app = New(WithProduces(MIMEJSON))
+	Route[indirectParamsInput, struct{}](app).GET("/indirect-params").To(func(context.Context, indirectParamsInput) (struct{}, error) {
+		return struct{}{}, nil
+	})
+	assertPanicsIs(t, ErrInvalidParamsUsage, func() {
+		app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/indirect-params", nil))
+	})
+
+	app = New(WithProduces(MIMEJSON))
+	Route[namedParamsInput, struct{}](app).GET("/http-func-params").ToHTTPFunc(func(http.ResponseWriter, *http.Request, namedParamsInput) error {
+		return nil
+	})
+	assertPanicsIs(t, ErrInvalidParamsUsage, func() {
+		app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/http-func-params", nil))
+	})
+}
+
 func TestRouteBuilderToHTTPFunc(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 
 	type input struct {
-		Value string `query:"value"`
+		Params `json:"-"`
 	}
 
-	if err := Route[input, struct{}](app).GET("/raw-context").ToHTTPFunc(func(w http.ResponseWriter, r *http.Request, req input) error {
+	Route[input, struct{}](app).GET("/raw-context").ToHTTPFunc(func(w http.ResponseWriter, r *http.Request, req input) error {
 		if r.Method != http.MethodGet {
 			t.Fatalf("method = %s, want %s", r.Method, http.MethodGet)
 		}
-		if req.Value != "yes" {
-			t.Fatalf("value = %q, want yes", req.Value)
+		value := req.Query("value")
+		if value != "yes" {
+			t.Fatalf("value = %q, want yes", value)
 		}
-		w.Header().Set("X-Raw-Context", req.Value)
+		w.Header().Set("X-Raw-Context", value)
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte("handled"))
 		return nil
-	}); err != nil {
-		t.Fatalf("ToHTTPFunc failed: %v", err)
-	}
+	})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/raw-context?value=yes", nil)
@@ -508,9 +820,7 @@ func TestRouteBuilderToHTTPFunc(t *testing.T) {
 func TestRouteBuilderToRedirect(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 
-	if err := Route[struct{}, struct{}](app).GET("/old").ToRedirect(http.StatusFound, "/new"); err != nil {
-		t.Fatalf("ToRedirect failed: %v", err)
-	}
+	Route[struct{}, struct{}](app).GET("/old").ToRedirect(http.StatusFound, "/new")
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/old", nil)
@@ -528,14 +838,12 @@ func TestRouteBuilderToRedirectFunc(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 
 	type input struct {
-		ID string `path:"id"`
+		Params `json:"-"`
 	}
 
-	if err := Route[input, struct{}](app).GET("/old/{id}").ToRedirectFunc(http.StatusMovedPermanently, func(req input) (string, error) {
-		return "/new/" + req.ID, nil
-	}); err != nil {
-		t.Fatalf("ToRedirectFunc failed: %v", err)
-	}
+	Route[input, struct{}](app).GET("/old/{id}").ToRedirectFunc(http.StatusMovedPermanently, func(req input) (string, error) {
+		return "/new/" + req.Path("id"), nil
+	})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/old/42", nil)
@@ -549,17 +857,15 @@ func TestRouteBuilderToRedirectFunc(t *testing.T) {
 	}
 }
 
-func TestRequestContextParams(t *testing.T) {
+func TestSSEHandlerUsesParams(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 
-	if err := Route[struct{}, struct{}](app).GET("/events/{id}").ToSSE(func(ctx Context, stream *SSEWriter) error {
-		if err := stream.WriteEvent("path", ctx.Path("id")); err != nil {
+	Route[struct{}, struct{}](app).GET("/events/{id}").ToSSE(func(ctx context.Context, params Params, stream *SSEWriter) error {
+		if err := stream.WriteEvent("path", params.Path("id")); err != nil {
 			return err
 		}
-		return stream.WriteEvent("query", ctx.DefaultQuery("role", "guest"))
-	}); err != nil {
-		t.Fatalf("ToSSE failed: %v", err)
-	}
+		return stream.WriteEvent("query", params.DefaultQuery("role", "guest"))
+	})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/events/7?role=admin", nil)

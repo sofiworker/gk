@@ -10,6 +10,8 @@ type Group struct {
 	server      *Server
 	prefix      string
 	produces    string
+	consumes    []string
+	consumesSet bool
 	middlewares []Middleware
 }
 
@@ -25,6 +27,13 @@ func (g *Group) Produces(contentType string) *Group {
 	return g
 }
 
+// Consumes declares the default request Content-Types for routes in this group.
+func (g *Group) Consumes(contentTypes ...string) *Group {
+	g.consumes = normalizeContentTypes(contentTypes)
+	g.consumesSet = true
+	return g
+}
+
 // Group creates a nested route group.
 func (g *Group) Group(prefix string, mws ...Middleware) *Group {
 	groupMiddlewares := make([]Middleware, 0, len(g.middlewares)+len(mws))
@@ -34,6 +43,8 @@ func (g *Group) Group(prefix string, mws ...Middleware) *Group {
 		server:      g.server,
 		prefix:      JoinPaths(g.prefix, prefix),
 		produces:    g.produces,
+		consumes:    append([]string(nil), g.consumes...),
+		consumesSet: g.consumesSet,
 		middlewares: groupMiddlewares,
 	}
 }
@@ -45,8 +56,8 @@ func (g *Group) handleRoute(method, path string, handler http.Handler, mws ...Mi
 	return g.server.handleRoute(method, JoinPaths(g.prefix, path), handler, all...)
 }
 
-func (g *Group) addRouteSpec(method, path, doc string, tags []string, operationID string, reqType, pathType, queryType reflect.Type, produces string, responses []responseSpec) {
-	g.server.addRouteSpec(method, JoinPaths(g.prefix, path), doc, tags, operationID, reqType, pathType, queryType, produces, responses)
+func (g *Group) addRouteSpec(method, path, doc string, tags []string, operationID string, reqType, pathType, queryType reflect.Type, consumes []string, produces string, responses []responseSpec) {
+	g.server.addRouteSpec(method, JoinPaths(g.prefix, path), doc, tags, operationID, reqType, pathType, queryType, consumes, produces, responses)
 }
 
 func (g *Group) producesContentType() string {
@@ -54,6 +65,13 @@ func (g *Group) producesContentType() string {
 		return g.produces
 	}
 	return g.server.producesContentType()
+}
+
+func (g *Group) consumesContentTypes() []string {
+	if g.consumesSet {
+		return g.consumes
+	}
+	return g.server.consumesContentTypes()
 }
 
 func (g *Group) owner() *Server {

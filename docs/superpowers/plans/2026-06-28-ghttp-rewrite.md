@@ -1561,7 +1561,7 @@ func TestBuiltinMiddlewareRecovery(t *testing.T) {
     app := New("test", "1.0.0")
     app.Use(Recoverer())
 
-    app.GET("/panic", func(ctx Context, req *struct{ Body struct{} }) (*struct{ Body struct{} }, error) {
+    app.GET("/panic", func(ctx context.Context, req *struct{ Body struct{} }) (*struct{ Body struct{} }, error) {
         panic("test panic")
     })
 
@@ -1581,32 +1581,12 @@ Run: `go test ./ghttp -run "TestMiddlewareOrder|TestBuiltinMiddleware" -v`
 
 Expected: FAIL — Use, RequestID, Recoverer not defined
 
-- [ ] **Step 3: Implement context and middleware**
+- [ ] **Step 3: Implement middleware**
 
-**`ghttp/context.go`:**
-
-```go
-package ghttp
-
-import "net/http"
-
-// Context is the request context interface exposed to handlers.
-type Context interface {
-    ResponseWriter() http.ResponseWriter
-    Request() *http.Request
-}
-
-type requestContext struct {
-    w http.ResponseWriter
-    r *http.Request
-}
-
-func newContext(w http.ResponseWriter, r *http.Request) Context {
-    return &requestContext{w: w, r: r}
-}
-func (c *requestContext) ResponseWriter() http.ResponseWriter { return c.w }
-func (c *requestContext) Request() *http.Request { return c.r }
-```
+Historical note: this plan originally introduced a package-specific request
+context abstraction. That API has been removed; handlers use
+`context.Context`, `http.ResponseWriter`, `*http.Request`, and `Params`
+directly depending on the route terminal.
 
 **`ghttp/middleware.go`:**
 

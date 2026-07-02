@@ -29,13 +29,11 @@ func TestMiddlewareOrder(t *testing.T) {
 	})
 
 	var handlerCalled bool
-	if err := Route[struct{ Body struct{} }, struct{ Body struct{} }](app).GET("/test").To(func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
+	Route[struct{ Body struct{} }, struct{ Body struct{} }](app).GET("/test").To(func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
 		order = append(order, "handler")
 		handlerCalled = true
 		return struct{ Body struct{} }{}, nil
-	}); err != nil {
-		t.Fatalf("To failed: %v", err)
-	}
+	})
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/test", nil)
@@ -69,7 +67,7 @@ func TestMiddlewareServerGroupAndRoute(t *testing.T) {
 		})
 	})
 
-	if err := Route[struct{ Body struct{} }, struct{ Body struct{} }](group).
+	Route[struct{ Body struct{} }, struct{ Body struct{} }](group).
 		GET("/test").
 		Use(func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -81,9 +79,7 @@ func TestMiddlewareServerGroupAndRoute(t *testing.T) {
 		To(func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
 			calls = append(calls, "handler")
 			return struct{ Body struct{} }{}, nil
-		}); err != nil {
-		t.Fatalf("To failed: %v", err)
-	}
+		})
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/test", nil)
@@ -143,15 +139,53 @@ func TestMiddlewareWrapStandaloneHandler(t *testing.T) {
 	}
 }
 
+func TestRequestLoggerWriterPreservesFlusherWhenSupported(t *testing.T) {
+	rec := httptest.NewRecorder()
+	rw := newLoggingResponseWriter(rec)
+
+	flusher, ok := rw.(http.Flusher)
+	if !ok {
+		t.Fatal("expected flusher to be preserved")
+	}
+
+	flusher.Flush()
+
+	if !rec.Flushed {
+		t.Fatal("expected underlying writer to be flushed")
+	}
+	if rw.Status() != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rw.Status(), http.StatusOK)
+	}
+}
+
+func TestRequestLoggerWriterDoesNotInventFlusher(t *testing.T) {
+	rw := newLoggingResponseWriter(simpleResponseWriter{header: make(http.Header)})
+	if _, ok := rw.(http.Flusher); ok {
+		t.Fatal("expected wrapper not to implement flusher")
+	}
+}
+
+type simpleResponseWriter struct {
+	header http.Header
+}
+
+func (w simpleResponseWriter) Header() http.Header {
+	return w.header
+}
+
+func (w simpleResponseWriter) Write(data []byte) (int, error) {
+	return len(data), nil
+}
+
+func (w simpleResponseWriter) WriteHeader(int) {}
+
 func TestBuiltinMiddlewareRequestID(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	app.Use(RequestID())
 
-	if err := Route[struct{ Body struct{} }, struct{ Body struct{} }](app).GET("/test").To(func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
+	Route[struct{ Body struct{} }, struct{ Body struct{} }](app).GET("/test").To(func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
 		return struct{ Body struct{} }{}, nil
-	}); err != nil {
-		t.Fatalf("To failed: %v", err)
-	}
+	})
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/test", nil)
@@ -171,11 +205,9 @@ func TestBuiltinMiddlewareCORSUsesConfiguredHeaders(t *testing.T) {
 		MaxAge:       60,
 	}))
 
-	if err := Route[struct{}, struct{}](app).GET("/cors").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+	Route[struct{}, struct{}](app).GET("/cors").To(func(ctx context.Context, req struct{}) (struct{}, error) {
 		return struct{}{}, nil
-	}); err != nil {
-		t.Fatalf("To failed: %v", err)
-	}
+	})
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/cors", nil)
@@ -200,11 +232,9 @@ func TestBuiltinMiddlewareRecovery(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	app.Use(Recoverer())
 
-	if err := Route[struct{ Body struct{} }, struct{ Body struct{} }](app).GET("/panic").To(func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
+	Route[struct{ Body struct{} }, struct{ Body struct{} }](app).GET("/panic").To(func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
 		panic("test panic")
-	}); err != nil {
-		t.Fatalf("To failed: %v", err)
-	}
+	})
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/panic", nil)

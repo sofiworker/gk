@@ -1,23 +1,38 @@
 package ghttp
 
 import (
+	"context"
+	"crypto/tls"
+	"log"
 	"net"
 	"net/http"
+	"time"
 )
 
 // Config holds server configuration.
 type Config struct {
-	address          string
-	router           Router
-	renderer         Renderer
-	validator        Validator
-	logger           Logger
-	envelope         EnvelopeFunc
-	produces         string
-	clientIPResolver ClientIPResolver
-	openAPIEnabled   bool
-	openAPITitle     string
-	openAPIVersion   string
+	address           string
+	router            Router
+	renderer          Renderer
+	validator         Validator
+	logger            Logger
+	envelope          EnvelopeFunc
+	bodyDecoder       BodyDecodeFunc
+	produces          string
+	consumes          []string
+	clientIPResolver  ClientIPResolver
+	openAPIEnabled    bool
+	openAPITitle      string
+	openAPIVersion    string
+	readTimeout       time.Duration
+	readHeaderTimeout time.Duration
+	writeTimeout      time.Duration
+	idleTimeout       time.Duration
+	maxHeaderBytes    int
+	tlsConfig         *tls.Config
+	baseContext       func(net.Listener) context.Context
+	connContext       func(context.Context, net.Conn) context.Context
+	errorLog          *log.Logger
 }
 
 // ClientIPResolver resolves a client IP from an HTTP request.
@@ -68,10 +83,24 @@ func WithEnvelope(fn EnvelopeFunc) ServerOption {
 	}
 }
 
+// WithBodyDecoder sets a custom request body decoder for this server.
+func WithBodyDecoder(fn BodyDecodeFunc) ServerOption {
+	return func(c *Config) {
+		c.bodyDecoder = fn
+	}
+}
+
 // WithProduces sets the default response Content-Type for automatic route encoding.
 func WithProduces(contentType string) ServerOption {
 	return func(c *Config) {
 		c.produces = contentType
+	}
+}
+
+// WithConsumes sets the default request Content-Types for automatic body decoding.
+func WithConsumes(contentTypes ...string) ServerOption {
+	return func(c *Config) {
+		c.consumes = normalizeContentTypes(contentTypes)
 	}
 }
 
@@ -88,6 +117,69 @@ func WithOpenAPI(title, version string) ServerOption {
 func WithClientIPResolver(resolver ClientIPResolver) ServerOption {
 	return func(c *Config) {
 		c.clientIPResolver = resolver
+	}
+}
+
+// WithReadTimeout sets the maximum duration for reading the entire request.
+func WithReadTimeout(timeout time.Duration) ServerOption {
+	return func(c *Config) {
+		c.readTimeout = timeout
+	}
+}
+
+// WithReadHeaderTimeout sets the maximum duration for reading request headers.
+func WithReadHeaderTimeout(timeout time.Duration) ServerOption {
+	return func(c *Config) {
+		c.readHeaderTimeout = timeout
+	}
+}
+
+// WithWriteTimeout sets the maximum duration before timing out response writes.
+func WithWriteTimeout(timeout time.Duration) ServerOption {
+	return func(c *Config) {
+		c.writeTimeout = timeout
+	}
+}
+
+// WithIdleTimeout sets the maximum time to wait for the next request.
+func WithIdleTimeout(timeout time.Duration) ServerOption {
+	return func(c *Config) {
+		c.idleTimeout = timeout
+	}
+}
+
+// WithMaxHeaderBytes sets the maximum size of request headers.
+func WithMaxHeaderBytes(n int) ServerOption {
+	return func(c *Config) {
+		c.maxHeaderBytes = n
+	}
+}
+
+// WithTLSConfig sets the TLS configuration used by TLS serving methods.
+func WithTLSConfig(tlsConfig *tls.Config) ServerOption {
+	return func(c *Config) {
+		c.tlsConfig = tlsConfig
+	}
+}
+
+// WithBaseContext sets the base context for accepted connections.
+func WithBaseContext(fn func(net.Listener) context.Context) ServerOption {
+	return func(c *Config) {
+		c.baseContext = fn
+	}
+}
+
+// WithConnContext sets the context for each accepted connection.
+func WithConnContext(fn func(context.Context, net.Conn) context.Context) ServerOption {
+	return func(c *Config) {
+		c.connContext = fn
+	}
+}
+
+// WithErrorLog sets the logger used by the underlying http.Server.
+func WithErrorLog(logger *log.Logger) ServerOption {
+	return func(c *Config) {
+		c.errorLog = logger
 	}
 }
 

@@ -11,32 +11,24 @@ import (
 )
 
 type badCaseInput struct {
-	Path struct {
-		ID int `path:"id"`
-	}
-	Query struct {
-		Page int  `query:"page"`
-		Flag bool `query:"flag"`
-	}
-	Header struct {
-		TraceID string `header:"X-Trace-ID"`
-	}
+	Params `json:"-"`
+
 	Body struct {
 		Name string `json:"name"`
 	}
 }
 
 type badCaseOutput struct {
-	ID      int    `json:"id"`
-	Page    int    `json:"page"`
-	Flag    bool   `json:"flag"`
+	ID      string `json:"id"`
+	Page    string `json:"page"`
+	Flag    string `json:"flag"`
 	TraceID string `json:"trace_id"`
 	Name    string `json:"name"`
 }
 
 func TestRouteBuilderBadCasesMalformedJSONReturnsBadRequest(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	mustRoute(t, Route[badCaseInput, badCaseOutput](app).POST("/users/{id}").To(badCaseEchoHandler))
+	Route[badCaseInput, badCaseOutput](app).POST("/users/{id}").To(badCaseEchoHandler)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/users/42", strings.NewReader(`{"name":`))
@@ -48,9 +40,9 @@ func TestRouteBuilderBadCasesMalformedJSONReturnsBadRequest(t *testing.T) {
 	}
 }
 
-func TestRouteBuilderBadCasesInvalidScalarInputFallsBackToZeroValue(t *testing.T) {
+func TestRouteBuilderBadCasesParamsKeepRawScalarValues(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	mustRoute(t, Route[badCaseInput, badCaseOutput](app).POST("/users/{id}").To(badCaseEchoHandler))
+	Route[badCaseInput, badCaseOutput](app).POST("/users/{id}").To(badCaseEchoHandler)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/users/not-int?page=bad&flag=maybe", strings.NewReader(`{"name":"alice"}`))
@@ -62,8 +54,8 @@ func TestRouteBuilderBadCasesInvalidScalarInputFallsBackToZeroValue(t *testing.T
 		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 	got := decodeJSONBody[badCaseOutput](t, rec.Body.Bytes())
-	if got.ID != 0 || got.Page != 0 || got.Flag {
-		t.Fatalf("converted values = id:%d page:%d flag:%t, want zero values", got.ID, got.Page, got.Flag)
+	if got.ID != "not-int" || got.Page != "bad" || got.Flag != "maybe" {
+		t.Fatalf("raw values = id:%q page:%q flag:%q", got.ID, got.Page, got.Flag)
 	}
 	if got.TraceID != "trace-1" || got.Name != "alice" {
 		t.Fatalf("preserved values = trace:%q name:%q, want trace-1/alice", got.TraceID, got.Name)
@@ -75,7 +67,7 @@ func TestRouteBuilderBadCasesValidatorErrorReturnsUnprocessableEntity(t *testing
 	app := New(WithValidator(serverValidatorFunc(func(context.Context, interface{}) error {
 		return wantErr
 	})), WithProduces(MIMEJSON))
-	mustRoute(t, Route[badCaseInput, badCaseOutput](app).POST("/users/{id}").To(badCaseEchoHandler))
+	Route[badCaseInput, badCaseOutput](app).POST("/users/{id}").To(badCaseEchoHandler)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/users/42", strings.NewReader(`{"name":"alice"}`))
@@ -89,9 +81,9 @@ func TestRouteBuilderBadCasesValidatorErrorReturnsUnprocessableEntity(t *testing
 
 func TestRouteBuilderBadCasesHandlerHTTPErrorStatusIsPreserved(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	mustRoute(t, Route[struct{}, struct{}](app).GET("/conflict").To(func(context.Context, struct{}) (struct{}, error) {
+	Route[struct{}, struct{}](app).GET("/conflict").To(func(context.Context, struct{}) (struct{}, error) {
 		return struct{}{}, Conflict("already exists")
-	}))
+	})
 
 	rec := httptest.NewRecorder()
 	app.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/conflict", nil))
@@ -103,7 +95,7 @@ func TestRouteBuilderBadCasesHandlerHTTPErrorStatusIsPreserved(t *testing.T) {
 
 func TestRouteBuilderBadCasesMiddlewareCanShortCircuitRoute(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	mustRoute(t, Route[struct{}, struct{}](app).
+	Route[struct{}, struct{}](app).
 		GET("/blocked").
 		Use(func(http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -114,7 +106,7 @@ func TestRouteBuilderBadCasesMiddlewareCanShortCircuitRoute(t *testing.T) {
 		To(func(context.Context, struct{}) (struct{}, error) {
 			t.Fatal("handler should not be called")
 			return struct{}{}, nil
-		}))
+		})
 
 	rec := httptest.NewRecorder()
 	app.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/blocked", nil))
@@ -141,9 +133,9 @@ func TestRouteBuilderBadCasesGroupPathJoiningEdgeCases(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			app := New(WithProduces(MIMEJSON))
 			group := app.Group(tt.prefix)
-			mustRoute(t, Route[struct{}, badCaseOutput](group).GET(tt.routePath).To(func(context.Context, struct{}) (badCaseOutput, error) {
+			Route[struct{}, badCaseOutput](group).GET(tt.routePath).To(func(context.Context, struct{}) (badCaseOutput, error) {
 				return badCaseOutput{Name: tt.name}, nil
-			}))
+			})
 
 			rec := httptest.NewRecorder()
 			app.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.wantPath, nil))
@@ -160,10 +152,10 @@ func TestRouteBuilderBadCasesCORSPreflightShortCircuitsOptionsRoute(t *testing.T
 		AllowOrigins: []string{"*"},
 		AllowMethods: []string{http.MethodOptions},
 	}))
-	mustRoute(t, Route[struct{}, badCaseOutput](app).OPTIONS("/options").To(func(context.Context, struct{}) (badCaseOutput, error) {
+	Route[struct{}, badCaseOutput](app).OPTIONS("/options").To(func(context.Context, struct{}) (badCaseOutput, error) {
 		t.Fatal("OPTIONS handler should not be called for CORS preflight")
 		return badCaseOutput{}, nil
-	}))
+	})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodOptions, "/options", nil)
@@ -180,10 +172,10 @@ func TestRouteBuilderBadCasesCORSPreflightShortCircuitsOptionsRoute(t *testing.T
 
 func badCaseEchoHandler(ctx context.Context, req badCaseInput) (badCaseOutput, error) {
 	return badCaseOutput{
-		ID:      req.Path.ID,
-		Page:    req.Query.Page,
-		Flag:    req.Query.Flag,
-		TraceID: req.Header.TraceID,
+		ID:      req.Path("id"),
+		Page:    req.Query("page"),
+		Flag:    req.Query("flag"),
+		TraceID: req.Header("X-Trace-ID"),
 		Name:    req.Body.Name,
 	}, nil
 }

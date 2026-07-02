@@ -49,3 +49,8 @@ func (w *ResponseWriter) Size() int {
 func (w *ResponseWriter) WriteString(s string) (int, error) {
 	return w.Write([]byte(s))
 }
+
+// Unwrap returns the underlying response writer for http.ResponseController.
+func (w *ResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}

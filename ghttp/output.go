@@ -15,14 +15,11 @@ type StatusCoder interface {
 	StatusCode() int
 }
 
-// EnvelopeFunc is the function that wraps responses.
-type EnvelopeFunc func(ctx Context, statusCode int, resp interface{}, err error, codecMgr *CodecManager)
+// EnvelopeFunc wraps responses before they are written.
+type EnvelopeFunc func(w http.ResponseWriter, r *http.Request, statusCode int, resp interface{}, err error, codecMgr *CodecManager)
 
 // DefaultEnvelope wraps responses in {code, msg, data}.
-func DefaultEnvelope(ctx Context, statusCode int, resp interface{}, err error, codecMgr *CodecManager) {
-	w := ctx.ResponseWriter()
-	r := ctx.Request()
-
+func DefaultEnvelope(w http.ResponseWriter, r *http.Request, statusCode int, resp interface{}, err error, codecMgr *CodecManager) {
 	accept := r.Header.Get("Accept")
 	codec := codecMgr.Negotiate(accept)
 

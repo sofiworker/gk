@@ -2,7 +2,6 @@ package ghttp
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,15 +15,15 @@ type scenarioLogger struct {
 	lines []string
 }
 
-func (l *scenarioLogger) Debugf(format string, args ...interface{}) {}
+func (l *scenarioLogger) DebugContext(context.Context, string, ...interface{}) {}
 
-func (l *scenarioLogger) Infof(format string, args ...interface{}) {}
+func (l *scenarioLogger) InfoContext(context.Context, string, ...interface{}) {}
 
-func (l *scenarioLogger) Warnf(format string, args ...interface{}) {
-	l.lines = append(l.lines, fmt.Sprintf(format, args...))
+func (l *scenarioLogger) WarnContext(ctx context.Context, msg string, args ...interface{}) {
+	l.lines = append(l.lines, msg)
 }
 
-func (l *scenarioLogger) Errorf(format string, args ...interface{}) {}
+func (l *scenarioLogger) ErrorContext(context.Context, string, ...interface{}) {}
 
 type scenarioValidator struct{}
 
@@ -50,9 +49,8 @@ func TestScenario_ServerGroupRouteMiddlewareOpenAPIAndStatic(t *testing.T) {
 	})
 
 	type input struct {
-		Path struct {
-			ID string `path:"id"`
-		}
+		Params `json:"-"`
+
 		Body struct {
 			Name string `json:"name"`
 		}
@@ -63,17 +61,17 @@ func TestScenario_ServerGroupRouteMiddlewareOpenAPIAndStatic(t *testing.T) {
 		Name string `json:"name"`
 	}
 
-	mustScenarioRoute(t, Route[input, output](api).
+	Route[input, output](api).
 		POST("/users/{id}").
 		Doc("create user").
 		Tags("users").
 		OperationID("createUser").
 		Responds(http.StatusCreated).With(output{}).Desc("created").End().
 		To(func(ctx context.Context, req input) (output, error) {
-			return output{ID: req.Path.ID, Name: req.Body.Name}, nil
-		}))
+			return output{ID: req.Path("id"), Name: req.Body.Name}, nil
+		})
 
-	mustScenarioRoute(t, Route[struct{}, struct {
+	Route[struct{}, struct {
 		OK bool `json:"ok"`
 	}](app).
 		ANY("/health").
@@ -83,9 +81,9 @@ func TestScenario_ServerGroupRouteMiddlewareOpenAPIAndStatic(t *testing.T) {
 			return struct {
 				OK bool `json:"ok"`
 			}{OK: true}, nil
-		}))
+		})
 
-	mustScenarioRoute(t, Route[struct{}, struct {
+	Route[struct{}, struct {
 		Verb string `json:"verb"`
 	}](app).
 		CUSTOM("PROPFIND", "/custom").
@@ -95,16 +93,16 @@ func TestScenario_ServerGroupRouteMiddlewareOpenAPIAndStatic(t *testing.T) {
 			return struct {
 				Verb string `json:"verb"`
 			}{Verb: "PROPFIND"}, nil
-		}))
+		})
 
 	staticDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(staticDir, "hello.txt"), []byte("hello from scenario"), 0o600); err != nil {
 		t.Fatalf("write static file failed: %v", err)
 	}
-	mustScenarioRoute(t, Route[struct{}, struct{}](app).GET("/public").ToStatic(staticDir))
-	mustScenarioRoute(t, Route[struct{}, struct{}](app).GET("/events").ToSSE(func(ctx Context, stream *SSEWriter) error {
+	Route[struct{}, struct{}](app).GET("/public").ToStatic(staticDir)
+	Route[struct{}, struct{}](app).GET("/events").ToSSE(func(ctx context.Context, params Params, stream *SSEWriter) error {
 		return stream.WriteEvent("ready", "ok")
-	}))
+	})
 
 	ts := httptest.NewServer(app)
 	defer ts.Close()
@@ -173,12 +171,5 @@ func TestScenario_ServerGroupRouteMiddlewareOpenAPIAndStatic(t *testing.T) {
 	defer openAPIResp.Body.Close()
 	if openAPIResp.StatusCode != http.StatusOK {
 		t.Fatalf("openapi status = %d, want %d", openAPIResp.StatusCode, http.StatusOK)
-	}
-}
-
-func mustScenarioRoute(t *testing.T, err error) {
-	t.Helper()
-	if err != nil {
-		t.Fatalf("route registration failed: %v", err)
 	}
 }

@@ -17,7 +17,7 @@ type SSEWriter struct {
 }
 
 // SSEHandler handles an SSE connection.
-type SSEHandler func(ctx Context, stream *SSEWriter) error
+type SSEHandler func(ctx context.Context, params Params, stream *SSEWriter) error
 
 // SSEEvent represents a single SSE event.
 type SSEEvent struct {

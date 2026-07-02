@@ -3,21 +3,34 @@ package ghttp
 import "net/url"
 import "net/http"
 
-// Params stores per-request path, query, header, and client IP snapshots.
+// Params stores per-request path, query, header, cookie, and client IP snapshots.
 type Params struct {
 	path     map[string]string
 	query    url.Values
 	header   http.Header
+	cookies  []*http.Cookie
 	clientIP string
 }
 
-func newParams(path map[string]string, query url.Values, header http.Header, clientIP string) Params {
+func newParams(path map[string]string, query url.Values, header http.Header, cookies []*http.Cookie, clientIP string) Params {
 	return Params{
 		path:     clonePathParams(path),
 		query:    cloneQueryParams(query),
 		header:   header.Clone(),
+		cookies:  cloneCookies(cookies),
 		clientIP: clientIP,
 	}
+}
+
+func paramsFromRequest(r *http.Request, c *Config) Params {
+	if r == nil {
+		return newParams(nil, nil, nil, nil, "")
+	}
+	clientIP := defaultClientIPResolver(r)
+	if c != nil && c.clientIPResolver != nil {
+		clientIP = c.clientIPResolver(r)
+	}
+	return newParams(pathParams(r), r.URL.Query(), r.Header, r.Cookies(), clientIP)
 }
 
 func clonePathParams(src map[string]string) map[string]string {
@@ -38,6 +51,22 @@ func cloneQueryParams(src url.Values) url.Values {
 	dst := make(url.Values, len(src))
 	for k, values := range src {
 		dst[k] = append([]string(nil), values...)
+	}
+	return dst
+}
+
+func cloneCookies(src []*http.Cookie) []*http.Cookie {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make([]*http.Cookie, 0, len(src))
+	for _, cookie := range src {
+		if cookie == nil {
+			continue
+		}
+		copyCookie := *cookie
+		copyCookie.Unparsed = append([]string(nil), cookie.Unparsed...)
+		dst = append(dst, &copyCookie)
 	}
 	return dst
 }
@@ -100,6 +129,30 @@ func (p Params) DefaultHeader(key, defaultValue string) string {
 func (p Params) HeaderList(key string) []string {
 	values := p.header.Values(key)
 	return append([]string(nil), values...)
+}
+
+// Cookie returns a request cookie value.
+func (p Params) Cookie(key string) string {
+	for _, cookie := range p.cookies {
+		if cookie != nil && cookie.Name == key {
+			return cookie.Value
+		}
+	}
+	return ""
+}
+
+// DefaultCookie returns a request cookie value or defaultValue when it is empty.
+func (p Params) DefaultCookie(key, defaultValue string) string {
+	value := p.Cookie(key)
+	if value == "" {
+		return defaultValue
+	}
+	return value
+}
+
+// Cookies returns request cookies.
+func (p Params) Cookies() []*http.Cookie {
+	return cloneCookies(p.cookies)
 }
 
 // ClientIP returns the resolved client IP snapshot.

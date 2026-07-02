@@ -655,4 +655,4 @@ func WithWebSocketSubprotocols(protos []string) WebSocketOption {
 }
 
 // WebSocketHandler is the handler type for WebSocket upgrades.
-type WebSocketHandler func(ctx Context, conn *WebSocketConn) error
+type WebSocketHandler func(ctx context.Context, params Params, conn *WebSocketConn) error

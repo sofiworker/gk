@@ -3,9 +3,12 @@ package ghttp
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"html/template"
+	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -56,7 +59,7 @@ func (f serverValidatorFunc) Validate(ctx context.Context, input interface{}) er
 func TestServerNewInitializesDefaultsAndOptions(t *testing.T) {
 	router := &recordingRouter{}
 	validator := serverValidatorFunc(func(context.Context, interface{}) error { return nil })
-	envelope := func(Context, int, interface{}, error, *CodecManager) {}
+	envelope := func(http.ResponseWriter, *http.Request, int, interface{}, error, *CodecManager) {}
 
 	app := New(WithAddress("127.0.0.1:0"), WithRouter(router), WithValidator(validator), WithEnvelope(envelope), WithProduces(MIMEJSON))
 
@@ -91,9 +94,7 @@ func TestServerRenderHTMLViaBuilder(t *testing.T) {
 
 	app := New(WithRenderer(NewRenderer(tmpDir, ".html", template.FuncMap{}, false)))
 
-	if err := Route[struct{}, struct{}](app).GET("/page").ToHTML(http.StatusCreated, "index", map[string]interface{}{"Title": "Hello"}); err != nil {
-		t.Fatalf("ToHTML failed: %v", err)
-	}
+	Route[struct{}, struct{}](app).GET("/page").ToHTML(http.StatusCreated, "index", map[string]interface{}{"Title": "Hello"})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/page", nil)
@@ -164,12 +165,10 @@ func TestServerMiddlewareChainOrder(t *testing.T) {
 		})
 	})
 
-	if err := Route[struct{}, struct{}](app).GET("/ok").ToRaw(func(w http.ResponseWriter, r *http.Request) {
+	Route[struct{}, struct{}](app).GET("/ok").ToRaw(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "handler")
 		w.WriteHeader(http.StatusNoContent)
-	}); err != nil {
-		t.Fatalf("ToRaw failed: %v", err)
-	}
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/ok", nil)
 	rec := httptest.NewRecorder()
@@ -191,31 +190,31 @@ func TestServerRegistersAllStandardHTTPMethods(t *testing.T) {
 		register func(*Server, string)
 	}{
 		{http.MethodGet, "/standard/get", func(s *Server, path string) {
-			mustRoute(t, Route[struct{}, standardMethodOutput](s).GET(path).To(methodOutputHandler(http.MethodGet)))
+			Route[struct{}, standardMethodOutput](s).GET(path).To(methodOutputHandler(http.MethodGet))
 		}},
 		{http.MethodHead, "/standard/head", func(s *Server, path string) {
-			mustRoute(t, Route[struct{}, standardMethodOutput](s).HEAD(path).To(methodOutputHandler(http.MethodHead)))
+			Route[struct{}, standardMethodOutput](s).HEAD(path).To(methodOutputHandler(http.MethodHead))
 		}},
 		{http.MethodPost, "/standard/post", func(s *Server, path string) {
-			mustRoute(t, Route[struct{}, standardMethodOutput](s).POST(path).To(methodOutputHandler(http.MethodPost)))
+			Route[struct{}, standardMethodOutput](s).POST(path).To(methodOutputHandler(http.MethodPost))
 		}},
 		{http.MethodPut, "/standard/put", func(s *Server, path string) {
-			mustRoute(t, Route[struct{}, standardMethodOutput](s).PUT(path).To(methodOutputHandler(http.MethodPut)))
+			Route[struct{}, standardMethodOutput](s).PUT(path).To(methodOutputHandler(http.MethodPut))
 		}},
 		{http.MethodPatch, "/standard/patch", func(s *Server, path string) {
-			mustRoute(t, Route[struct{}, standardMethodOutput](s).PATCH(path).To(methodOutputHandler(http.MethodPatch)))
+			Route[struct{}, standardMethodOutput](s).PATCH(path).To(methodOutputHandler(http.MethodPatch))
 		}},
 		{http.MethodDelete, "/standard/delete", func(s *Server, path string) {
-			mustRoute(t, Route[struct{}, standardMethodOutput](s).DELETE(path).To(methodOutputHandler(http.MethodDelete)))
+			Route[struct{}, standardMethodOutput](s).DELETE(path).To(methodOutputHandler(http.MethodDelete))
 		}},
 		{http.MethodConnect, "/standard/connect", func(s *Server, path string) {
-			mustRoute(t, Route[struct{}, standardMethodOutput](s).CONNECT(path).To(methodOutputHandler(http.MethodConnect)))
+			Route[struct{}, standardMethodOutput](s).CONNECT(path).To(methodOutputHandler(http.MethodConnect))
 		}},
 		{http.MethodOptions, "/standard/options", func(s *Server, path string) {
-			mustRoute(t, Route[struct{}, standardMethodOutput](s).OPTIONS(path).To(methodOutputHandler(http.MethodOptions)))
+			Route[struct{}, standardMethodOutput](s).OPTIONS(path).To(methodOutputHandler(http.MethodOptions))
 		}},
 		{http.MethodTrace, "/standard/trace", func(s *Server, path string) {
-			mustRoute(t, Route[struct{}, standardMethodOutput](s).TRACE(path).To(methodOutputHandler(http.MethodTrace)))
+			Route[struct{}, standardMethodOutput](s).TRACE(path).To(methodOutputHandler(http.MethodTrace))
 		}},
 	}
 
@@ -236,9 +235,9 @@ func TestServerRegistersAllStandardHTTPMethods(t *testing.T) {
 
 func TestRouteBuilderANYRegistersAllStandardHTTPMethods(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	mustRoute(t, Route[struct{}, standardMethodOutput](app).ANY("/any").To(func(ctx context.Context, req struct{}) (standardMethodOutput, error) {
+	Route[struct{}, standardMethodOutput](app).ANY("/any").To(func(ctx context.Context, req struct{}) (standardMethodOutput, error) {
 		return standardMethodOutput{Method: ""}, nil
-	}))
+	})
 
 	methods := []string{
 		http.MethodGet,
@@ -263,17 +262,17 @@ func TestRouteBuilderANYRegistersAllStandardHTTPMethods(t *testing.T) {
 
 func TestRouteBuilderToRequiresMethod(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	err := Route[struct{}, struct{}](app).To(func(context.Context, struct{}) (struct{}, error) {
+	Route[struct{}, struct{}](app).To(func(context.Context, struct{}) (struct{}, error) {
 		return struct{}{}, nil
 	})
-	if !errors.Is(err, ErrRouteMethodRequired) {
-		t.Fatalf("To error = %v, want ErrRouteMethodRequired", err)
-	}
+	assertPanicsIs(t, ErrRouteMethodRequired, func() {
+		app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+	})
 }
 
 func TestRouteBuilderCUSTOMRegistersCustomMethod(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	mustRoute(t, Route[struct{}, standardMethodOutput](app).CUSTOM("PROPFIND", "/custom").To(methodOutputHandler("PROPFIND")))
+	Route[struct{}, standardMethodOutput](app).CUSTOM("PROPFIND", "/custom").To(methodOutputHandler("PROPFIND"))
 
 	req := httptest.NewRequest("PROPFIND", "/custom", nil)
 	rec := httptest.NewRecorder()
@@ -286,12 +285,12 @@ func TestRouteBuilderCUSTOMRegistersCustomMethod(t *testing.T) {
 
 func TestRouteBuilderCUSTOMRejectsInvalidMethod(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	err := Route[struct{}, struct{}](app).CUSTOM("BAD METHOD", "/custom").To(func(context.Context, struct{}) (struct{}, error) {
+	Route[struct{}, struct{}](app).CUSTOM("BAD METHOD", "/custom").To(func(context.Context, struct{}) (struct{}, error) {
 		return struct{}{}, nil
 	})
-	if !errors.Is(err, ErrRouteMethodInvalid) {
-		t.Fatalf("To error = %v, want ErrRouteMethodInvalid", err)
-	}
+	assertPanicsIs(t, ErrRouteMethodInvalid, func() {
+		app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/custom", nil))
+	})
 }
 
 func methodOutputHandler(method string) HandlerFunc[struct{}, standardMethodOutput] {
@@ -300,33 +299,26 @@ func methodOutputHandler(method string) HandlerFunc[struct{}, standardMethodOutp
 	}
 }
 
-func mustRoute(t *testing.T, err error) {
-	t.Helper()
-	if err != nil {
-		t.Fatalf("route registration failed: %v", err)
-	}
-}
-
 func TestServerOpenAPIEndpoint(t *testing.T) {
-	type req struct {
-		Path struct {
-			ID string `path:"id"`
-		}
+	type req struct{}
+	type pathSchema struct {
+		ID string `path:"id"`
 	}
 	type resp struct {
 		Name string `json:"name"`
 	}
 
 	app := New(WithOpenAPI("accounts", "2.0.0"), WithProduces(MIMEJSON))
-	mustRoute(t, Route[req, resp](app).
+	Route[req, resp](app).
 		GET("/users/{id}").
 		Doc("get user").
 		OperationID("getUser").
 		Tags("users").
+		PathSchema(pathSchema{}).
 		Responds(http.StatusOK).With(resp{}).Desc("user").End().
 		To(func(context.Context, req) (resp, error) {
 			return resp{Name: "alice"}, nil
-		}))
+		})
 
 	httpReq := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
 	rec := httptest.NewRecorder()
@@ -358,10 +350,10 @@ func TestServerRouteUsesValidator(t *testing.T) {
 	app := New(WithValidator(serverValidatorFunc(func(ctx context.Context, input interface{}) error {
 		return wantErr
 	})), WithProduces(MIMEJSON))
-	mustRoute(t, Route[struct{}, struct{}](app).GET("/validate").To(func(context.Context, struct{}) (struct{}, error) {
+	Route[struct{}, struct{}](app).GET("/validate").To(func(context.Context, struct{}) (struct{}, error) {
 		t.Fatal("handler should not run after validation error")
 		return struct{}{}, nil
-	}))
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/validate", nil)
 	rec := httptest.NewRecorder()
@@ -374,19 +366,20 @@ func TestServerRouteUsesValidator(t *testing.T) {
 
 func TestServerUsesDefaultGoPlaygroundValidator(t *testing.T) {
 	type input struct {
-		Query struct {
-			Name string `query:"name" validate:"required"`
+		Body struct {
+			Name string `json:"name" validate:"required"`
 		}
 	}
 	type output struct{}
 
 	app := New(WithProduces(MIMEJSON))
-	mustRoute(t, Route[input, output](app).GET("/validate/default").To(func(context.Context, input) (output, error) {
+	Route[input, output](app).POST("/validate/default").To(func(context.Context, input) (output, error) {
 		t.Fatal("handler should not run after default validation error")
 		return output{}, nil
-	}))
+	})
 
-	req := httptest.NewRequest(http.MethodGet, "/validate/default", nil)
+	req := httptest.NewRequest(http.MethodPost, "/validate/default", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	app.ServeHTTP(rec, req)
 
@@ -410,6 +403,64 @@ func TestServerRunInitializesHTTPServerWithOverrideAddress(t *testing.T) {
 	}
 	if app.httpServer.Handler == nil {
 		t.Fatal("Run should install handler chain")
+	}
+}
+
+func TestServerRunAppliesHTTPServerOptions(t *testing.T) {
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	errorLog := log.New(&bytes.Buffer{}, "ghttp-test: ", 0)
+	baseContext := func(net.Listener) context.Context {
+		return context.Background()
+	}
+	connContext := func(ctx context.Context, conn net.Conn) context.Context {
+		return ctx
+	}
+
+	app := New(
+		WithReadTimeout(time.Second),
+		WithReadHeaderTimeout(2*time.Second),
+		WithWriteTimeout(3*time.Second),
+		WithIdleTimeout(4*time.Second),
+		WithMaxHeaderBytes(1<<19),
+		WithTLSConfig(tlsConfig),
+		WithBaseContext(baseContext),
+		WithConnContext(connContext),
+		WithErrorLog(errorLog),
+	)
+
+	err := app.Run("bad-address")
+	if err == nil {
+		t.Fatal("Run should fail for an invalid address")
+	}
+	if app.httpServer == nil {
+		t.Fatal("Run should initialize httpServer")
+	}
+	if app.httpServer.ReadTimeout != time.Second {
+		t.Fatalf("ReadTimeout = %v, want %v", app.httpServer.ReadTimeout, time.Second)
+	}
+	if app.httpServer.ReadHeaderTimeout != 2*time.Second {
+		t.Fatalf("ReadHeaderTimeout = %v, want %v", app.httpServer.ReadHeaderTimeout, 2*time.Second)
+	}
+	if app.httpServer.WriteTimeout != 3*time.Second {
+		t.Fatalf("WriteTimeout = %v, want %v", app.httpServer.WriteTimeout, 3*time.Second)
+	}
+	if app.httpServer.IdleTimeout != 4*time.Second {
+		t.Fatalf("IdleTimeout = %v, want %v", app.httpServer.IdleTimeout, 4*time.Second)
+	}
+	if app.httpServer.MaxHeaderBytes != 1<<19 {
+		t.Fatalf("MaxHeaderBytes = %d, want %d", app.httpServer.MaxHeaderBytes, 1<<19)
+	}
+	if app.httpServer.TLSConfig != tlsConfig {
+		t.Fatal("TLSConfig was not applied")
+	}
+	if app.httpServer.BaseContext == nil {
+		t.Fatal("BaseContext was not applied")
+	}
+	if app.httpServer.ConnContext == nil {
+		t.Fatal("ConnContext was not applied")
+	}
+	if app.httpServer.ErrorLog != errorLog {
+		t.Fatal("ErrorLog was not applied")
 	}
 }
 
@@ -464,6 +515,101 @@ func TestServerShutdownStopsRunningServerGracefully(t *testing.T) {
 	}
 }
 
+func TestServerRunExposesActualAddrForZeroPort(t *testing.T) {
+	app := New()
+	errCh := make(chan error, 1)
+
+	go func() {
+		errCh <- app.Run("127.0.0.1:0")
+	}()
+
+	addr := waitForServerAddr(t, app)
+	_, port, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		t.Fatalf("SplitHostPort failed: %v", err)
+	}
+	if port == "" || port == "0" {
+		t.Fatalf("Addr = %q, want actual listener port", addr.String())
+	}
+
+	if err := app.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Run returned error after Close: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Run did not return after Close")
+	}
+}
+
+func TestServerServeUsesExistingListener(t *testing.T) {
+	app := New()
+	Route[struct{}, struct{}](app).GET("/ping").ToRaw(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("pong"))
+	})
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen failed: %v", err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- app.Serve(ln)
+	}()
+
+	addr := waitForServerAddr(t, app)
+	resp, err := http.Get("http://" + addr.String() + "/ping")
+	if err != nil {
+		t.Fatalf("GET failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	if err := app.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("Serve returned error after Close: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Serve did not return after Close")
+	}
+}
+
+func TestServerServeRejectsNilListener(t *testing.T) {
+	app := New()
+	if err := app.Serve(nil); !errors.Is(err, ErrNilListener) {
+		t.Fatalf("Serve(nil) error = %v, want ErrNilListener", err)
+	}
+	if err := app.ServeTLS(nil, "", ""); !errors.Is(err, ErrNilListener) {
+		t.Fatalf("ServeTLS(nil) error = %v, want ErrNilListener", err)
+	}
+}
+
+func TestServerListenAndServeTLSInitializesHTTPServer(t *testing.T) {
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	app := New(WithTLSConfig(tlsConfig))
+
+	err := app.ListenAndServeTLS("bad-address", "", "")
+	if err == nil {
+		t.Fatal("ListenAndServeTLS should fail for an invalid address")
+	}
+	if app.httpServer == nil {
+		t.Fatal("ListenAndServeTLS should initialize httpServer")
+	}
+	if app.httpServer.TLSConfig != tlsConfig {
+		t.Fatal("TLSConfig was not applied")
+	}
+}
+
 func TestServerCloseStopsRunningServerWithoutErrServerClosed(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	errCh := make(chan error, 1)
@@ -504,6 +650,20 @@ func waitForHTTPServer(t *testing.T, app *Server) {
 	t.Fatal("server did not initialize httpServer")
 }
 
+func waitForServerAddr(t *testing.T, app *Server) net.Addr {
+	t.Helper()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if addr := app.Addr(); addr != nil {
+			return addr
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("server did not expose listener address")
+	return nil
+}
+
 func TestServerGroupStoresPrefixAndMiddlewares(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	mw := func(next http.Handler) http.Handler { return next }
@@ -530,7 +690,7 @@ func TestGroupRouteRegistersRouteWithPrefixAndMiddleware(t *testing.T) {
 		})
 	})
 
-	mustRoute(t, Route[struct{}, struct {
+	Route[struct{}, struct {
 		OK bool `json:"ok"`
 	}](group).GET("/ping").To(func(context.Context, struct{}) (struct {
 		OK bool `json:"ok"`
@@ -538,7 +698,7 @@ func TestGroupRouteRegistersRouteWithPrefixAndMiddleware(t *testing.T) {
 		return struct {
 			OK bool `json:"ok"`
 		}{OK: true}, nil
-	}))
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/ping", nil)
 	rec := httptest.NewRecorder()
@@ -570,12 +730,10 @@ func TestNestedGroupCombinesPrefixAndMiddlewares(t *testing.T) {
 		})
 	})
 
-	if err := Route[struct{}, struct{}](users).GET("/me").ToRaw(func(w http.ResponseWriter, r *http.Request) {
+	Route[struct{}, struct{}](users).GET("/me").ToRaw(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "handler")
 		w.WriteHeader(http.StatusNoContent)
-	}); err != nil {
-		t.Fatalf("ToRaw failed: %v", err)
-	}
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/users/me", nil)
 	rec := httptest.NewRecorder()
@@ -592,9 +750,7 @@ func TestNestedGroupCombinesPrefixAndMiddlewares(t *testing.T) {
 
 func TestGroupRouteBuilderUsesGroupPath(t *testing.T) {
 	type input struct {
-		Path struct {
-			ID string `path:"id"`
-		}
+		Params `json:"-"`
 	}
 	type output struct {
 		ID string `json:"id"`
@@ -602,11 +758,11 @@ func TestGroupRouteBuilderUsesGroupPath(t *testing.T) {
 
 	app := New(WithProduces(MIMEJSON))
 	group := app.Group("/api")
-	mustRoute(t, Route[input, output](group).
+	Route[input, output](group).
 		GET("/users/{id}").
 		To(func(ctx context.Context, req input) (output, error) {
-			return output{ID: req.Path.ID}, nil
-		}))
+			return output{ID: req.Path("id")}, nil
+		})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/users/42", nil)
 	rec := httptest.NewRecorder()
@@ -627,12 +783,12 @@ func TestGroupRouteBuilderUsesGroupPathInOpenAPI(t *testing.T) {
 	app := New(WithOpenAPI("api", "1.0.0"), WithProduces(MIMEJSON))
 	group := app.Group("/api")
 
-	mustRoute(t, Route[input, output](group).
+	Route[input, output](group).
 		POST("/users").
 		Doc("create user").
 		To(func(context.Context, input) (output, error) {
 			return output{}, nil
-		}))
+		})
 
 	spec := app.openAPI.Build()
 	var doc map[string]interface{}

@@ -16,12 +16,8 @@ import (
 )
 
 type userInput struct {
-	Path struct {
-		ID string `path:"id"`
-	}
-	Query struct {
-		Role string `query:"role"`
-	}
+	ghttp.Params `json:"-"`
+
 	Body struct {
 		Name string `json:"name"`
 	}
@@ -97,7 +93,7 @@ func main() {
 		})
 	})
 
-	mustRoute(ghttp.Route[userInput, userOutput](api).
+	ghttp.Route[userInput, userOutput](api).
 		POST("/users/{id}").
 		Doc("Create or update a user").
 		Tags("users").
@@ -106,140 +102,140 @@ func main() {
 		Responds(http.StatusCreated).With(userOutput{}).Desc("created").End().
 		To(func(ctx context.Context, req userInput) (userOutput, error) {
 			return userOutput{
-				ID:   req.Path.ID,
+				ID:   req.Path("id"),
 				Name: req.Body.Name,
-				Role: req.Query.Role,
+				Role: req.Query("role"),
 			}, nil
-		}))
+		})
 
-	mustRoute(ghttp.Route[struct{}, healthOutput](app).
+	ghttp.Route[struct{}, healthOutput](app).
 		ANY("/health").
 		Doc("health check").
 		Responds(http.StatusOK).With(healthOutput{}).Desc("healthy").End().
 		To(func(ctx context.Context, req struct{}) (healthOutput, error) {
 			return healthOutput{OK: true}, nil
-		}))
+		})
 
-	mustRoute(ghttp.Route[struct{}, customOutput](app).
+	ghttp.Route[struct{}, customOutput](app).
 		CUSTOM("PROPFIND", "/custom").
 		Doc("custom method").
 		Responds(http.StatusOK).With(customOutput{}).Desc("custom").End().
 		To(func(ctx context.Context, req struct{}) (customOutput, error) {
 			return customOutput{Method: "PROPFIND"}, nil
-		}))
+		})
 
 	registerMethodRoutes(app)
 
-	mustRoute(ghttp.Route[struct{}, struct{}](app).
+	ghttp.Route[struct{}, struct{}](app).
 		GET("/assets").
-		ToStatic(staticDir))
-	mustRoute(ghttp.Route[struct{}, struct{}](app).
+		ToStatic(staticDir)
+	ghttp.Route[struct{}, struct{}](app).
 		GET("/pages/home").
 		Doc("render template").
 		Responds(http.StatusOK).With(struct{}{}).End().
-		ToHTML(http.StatusOK, "home", map[string]interface{}{"Title": "ghttp full example"}))
-	mustRoute(ghttp.Route[struct{}, struct{}](app).
+		ToHTML(http.StatusOK, "home", map[string]interface{}{"Title": "ghttp full example"})
+	ghttp.Route[struct{}, struct{}](app).
 		GET("/events").
-		ToSSE(func(ctx ghttp.Context, stream *ghttp.SSEWriter) error {
+		ToSSE(func(ctx context.Context, params ghttp.Params, stream *ghttp.SSEWriter) error {
 			if err := stream.WriteEvent("ready", "ok"); err != nil {
 				return err
 			}
 			return nil
-		}))
+		})
 
 	serveAndDemo(app)
 }
 
 func registerMethodRoutes(app *ghttp.Server) {
-	mustRoute(ghttp.Route[struct{}, methodOutput](app).
+	ghttp.Route[struct{}, methodOutput](app).
 		GET("/methods/get").
 		Doc("GET example").
 		Responds(http.StatusOK).With(methodOutput{}).End().
 		To(func(ctx context.Context, req struct{}) (methodOutput, error) {
 			return methodOutput{Verb: "GET", Path: "/methods/get"}, nil
-		}))
+		})
 
-	mustRoute(ghttp.Route[userInput, methodOutput](app).
+	ghttp.Route[userInput, methodOutput](app).
 		GET("/methods/get-body").
 		Doc("GET with body").
 		Reads(userInput{}).
 		Responds(http.StatusOK).With(methodOutput{}).End().
 		To(func(ctx context.Context, req userInput) (methodOutput, error) {
-			return methodOutput{Verb: "GET", Path: "/methods/get-body", Name: req.Body.Name, Role: req.Query.Role}, nil
-		}))
+			return methodOutput{Verb: "GET", Path: "/methods/get-body", Name: req.Body.Name, Role: req.Query("role")}, nil
+		})
 
-	mustRoute(ghttp.Route[struct{}, methodOutput](app).
+	ghttp.Route[struct{}, methodOutput](app).
 		HEAD("/methods/head").
 		Doc("HEAD example").
 		Responds(http.StatusOK).With(methodOutput{}).End().
 		To(func(ctx context.Context, req struct{}) (methodOutput, error) {
 			return methodOutput{Verb: "HEAD", Path: "/methods/head"}, nil
-		}))
+		})
 
-	mustRoute(ghttp.Route[struct{}, methodOutput](app).
+	ghttp.Route[struct{}, methodOutput](app).
 		POST("/methods/post").
 		Doc("POST example").
 		Responds(http.StatusOK).With(methodOutput{}).End().
 		To(func(ctx context.Context, req struct{}) (methodOutput, error) {
 			return methodOutput{Verb: "POST", Path: "/methods/post"}, nil
-		}))
+		})
 
-	mustRoute(ghttp.Route[userInput, methodOutput](app).
+	ghttp.Route[userInput, methodOutput](app).
 		POST("/methods/post-empty").
 		Doc("POST without body").
 		Reads(userInput{}).
 		Responds(http.StatusOK).With(methodOutput{}).End().
 		To(func(ctx context.Context, req userInput) (methodOutput, error) {
 			return methodOutput{Verb: "POST", Path: "/methods/post-empty", Name: req.Body.Name}, nil
-		}))
+		})
 
-	mustRoute(ghttp.Route[struct{}, methodOutput](app).
+	ghttp.Route[struct{}, methodOutput](app).
 		PUT("/methods/put/{id}").
 		Doc("PUT example").
 		Responds(http.StatusOK).With(methodOutput{}).End().
 		To(func(ctx context.Context, req struct{}) (methodOutput, error) {
 			return methodOutput{Verb: "PUT", Path: "/methods/put/{id}"}, nil
-		}))
+		})
 
-	mustRoute(ghttp.Route[struct{}, methodOutput](app).
+	ghttp.Route[struct{}, methodOutput](app).
 		PATCH("/methods/patch/{id}").
 		Doc("PATCH example").
 		Responds(http.StatusOK).With(methodOutput{}).End().
 		To(func(ctx context.Context, req struct{}) (methodOutput, error) {
 			return methodOutput{Verb: "PATCH", Path: "/methods/patch/{id}"}, nil
-		}))
+		})
 
-	mustRoute(ghttp.Route[struct{}, methodOutput](app).
+	ghttp.Route[struct{}, methodOutput](app).
 		DELETE("/methods/delete/{id}").
 		Doc("DELETE example").
 		Responds(http.StatusOK).With(methodOutput{}).End().
 		To(func(ctx context.Context, req struct{}) (methodOutput, error) {
 			return methodOutput{Verb: "DELETE", Path: "/methods/delete/{id}"}, nil
-		}))
+		})
 
-	mustRoute(ghttp.Route[struct{}, methodOutput](app).
+	ghttp.Route[struct{}, methodOutput](app).
 		OPTIONS("/methods/options").
 		Doc("OPTIONS example").
 		Responds(http.StatusOK).With(methodOutput{}).End().
 		To(func(ctx context.Context, req struct{}) (methodOutput, error) {
 			return methodOutput{Verb: "OPTIONS", Path: "/methods/options"}, nil
-		}))
+		})
 
-	mustRoute(ghttp.Route[struct{}, methodOutput](app).
+	ghttp.Route[struct{}, methodOutput](app).
 		TRACE("/methods/trace").
 		Doc("TRACE example").
 		Responds(http.StatusOK).With(methodOutput{}).End().
 		To(func(ctx context.Context, req struct{}) (methodOutput, error) {
 			return methodOutput{Verb: "TRACE", Path: "/methods/trace"}, nil
-		}))
+		})
 
-	mustRoute(ghttp.Route[struct{}, methodOutput](app).
+	ghttp.Route[struct{}, methodOutput](app).
 		CONNECT("/methods/connect").
 		Doc("CONNECT example").
 		Responds(http.StatusOK).With(methodOutput{}).End().
 		To(func(ctx context.Context, req struct{}) (methodOutput, error) {
 			return methodOutput{Verb: "CONNECT", Path: "/methods/connect"}, nil
-		}))
+		})
 }
 
 func serveAndDemo(app *ghttp.Server) {
@@ -346,12 +342,6 @@ func mustCreateTemplateDir() string {
 		panic(err)
 	}
 	return dir
-}
-
-func mustRoute(err error) {
-	if err != nil {
-		panic(err)
-	}
 }
 
 func mustHTTPRequest(method, url string, body io.Reader) *http.Response {

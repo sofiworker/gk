@@ -13,8 +13,7 @@ func TestEnvelopeDefault_Success(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/test", nil)
 
-	app.envelope(requestContext{w: w, r: r},
-		http.StatusOK, map[string]string{"id": "1"}, nil, app.codecMgr)
+	app.envelope(w, r, http.StatusOK, map[string]string{"id": "1"}, nil, app.codecMgr)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
@@ -36,8 +35,7 @@ func TestEnvelopeDefault_Error(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/test", nil)
 
-	app.envelope(requestContext{w: w, r: r},
-		http.StatusNotFound, nil, Err(http.StatusNotFound, "user not found"), app.codecMgr)
+	app.envelope(w, r, http.StatusNotFound, nil, Err(http.StatusNotFound, "user not found"), app.codecMgr)
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", w.Code)

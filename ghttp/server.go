@@ -3,6 +3,7 @@ package ghttp
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"reflect"
 	"sync"
@@ -26,13 +27,16 @@ type Server struct {
 	validator Validator
 	logger    Logger
 	produces  string
+	consumes  []string
 
 	middlewares []Middleware
 
-	httpServer *http.Server
-	mu         sync.Mutex
-	openAPI    *OpenAPI
-	routed     bool
+	httpServer   *http.Server
+	listenerAddr net.Addr
+	mu           sync.Mutex
+	openAPI      *OpenAPI
+	routed       bool
+	setupErr     error
 }
 
 // New creates a new Server with the given options.
@@ -53,6 +57,7 @@ func New(opts ...ServerOption) *Server {
 		validator: newDefaultValidator(),
 		logger:    c.logger,
 		produces:  c.produces,
+		consumes:  c.consumes,
 	}
 	if c.validator != nil {
 		s.validator = c.validator
@@ -73,14 +78,20 @@ func New(opts ...ServerOption) *Server {
 // ServeHTTP implements http.Handler - applies middlewares then delegates to router.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.finalizeRoutes()
-	h := s.buildHandlerChain()
-	r = r.WithContext(context.WithValue(r.Context(), serverContextKey{}, s))
-	h.ServeHTTP(w, r)
+	s.buildServerHandler().ServeHTTP(w, r)
 }
 
 // buildHandlerChain wraps the router with all middlewares.
 func (s *Server) buildHandlerChain() http.Handler {
 	return Wrap(s.router, s.middlewares...)
+}
+
+func (s *Server) buildServerHandler() http.Handler {
+	h := s.buildHandlerChain()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = r.WithContext(context.WithValue(r.Context(), serverContextKey{}, s))
+		h.ServeHTTP(w, r)
+	})
 }
 
 // Run starts the HTTP server on the given address (or config address).
@@ -90,17 +101,85 @@ func (s *Server) Run(addr ...string) error {
 		addrStr = addr[0]
 	}
 
+	httpServer := s.prepareHTTPServer(addrStr)
+	ln, err := net.Listen("tcp", addrStr)
+	if err != nil {
+		return err
+	}
+	return s.serveListener(httpServer, ln, httpServer.Serve)
+}
+
+// Serve starts the HTTP server on an existing listener.
+func (s *Server) Serve(ln net.Listener) error {
+	if ln == nil {
+		return ErrNilListener
+	}
+	httpServer := s.prepareHTTPServer(listenerAddress(ln))
+	return s.serveListener(httpServer, ln, httpServer.Serve)
+}
+
+// ListenAndServeTLS starts the HTTPS server on the given address.
+func (s *Server) ListenAndServeTLS(addr, certFile, keyFile string) error {
+	if addr == "" {
+		addr = s.config.address
+	}
+	httpServer := s.prepareHTTPServer(addr)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	return s.serveListener(httpServer, ln, func(l net.Listener) error {
+		return httpServer.ServeTLS(l, certFile, keyFile)
+	})
+}
+
+// ServeTLS starts the HTTPS server on an existing listener.
+func (s *Server) ServeTLS(ln net.Listener, certFile, keyFile string) error {
+	if ln == nil {
+		return ErrNilListener
+	}
+	httpServer := s.prepareHTTPServer(listenerAddress(ln))
+	return s.serveListener(httpServer, ln, func(l net.Listener) error {
+		return httpServer.ServeTLS(l, certFile, keyFile)
+	})
+}
+
+func (s *Server) prepareHTTPServer(addr string) *http.Server {
 	s.finalizeRoutes()
 
-	httpServer := &http.Server{
-		Addr:    addrStr,
-		Handler: s.buildHandlerChain(),
-	}
+	httpServer := s.newHTTPServer(addr)
 	s.mu.Lock()
 	s.httpServer = httpServer
+	s.listenerAddr = nil
+	s.mu.Unlock()
+	return httpServer
+}
+
+func (s *Server) newHTTPServer(addr string) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           s.buildServerHandler(),
+		ReadTimeout:       s.config.readTimeout,
+		ReadHeaderTimeout: s.config.readHeaderTimeout,
+		WriteTimeout:      s.config.writeTimeout,
+		IdleTimeout:       s.config.idleTimeout,
+		MaxHeaderBytes:    s.config.maxHeaderBytes,
+		TLSConfig:         s.config.tlsConfig,
+		BaseContext:       s.config.baseContext,
+		ConnContext:       s.config.connContext,
+		ErrorLog:          s.config.errorLog,
+	}
+}
+
+func (s *Server) serveListener(httpServer *http.Server, ln net.Listener, serve func(net.Listener) error) error {
+	s.mu.Lock()
+	s.listenerAddr = ln.Addr()
+	if s.listenerAddr != nil {
+		httpServer.Addr = s.listenerAddr.String()
+	}
 	s.mu.Unlock()
 
-	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
@@ -131,23 +210,61 @@ func (s *Server) Close() error {
 	return nil
 }
 
+// Addr returns the active listener address, including the actual port for :0.
+func (s *Server) Addr() net.Addr {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.listenerAddr
+}
+
 // Use adds middleware to the server.
 func (s *Server) Use(mws ...Middleware) {
 	s.middlewares = append(s.middlewares, mws...)
+}
+
+// Consumes declares the default request Content-Types for automatic body decoding.
+func (s *Server) Consumes(contentTypes ...string) *Server {
+	s.consumes = normalizeContentTypes(contentTypes)
+	return s
 }
 
 func (s *Server) handleRoute(method, path string, handler http.Handler, mws ...Middleware) error {
 	return s.router.Register(method, path, Wrap(handler, mws...))
 }
 
-func (s *Server) addRouteSpec(method, path, doc string, tags []string, operationID string, reqType, pathType, queryType reflect.Type, produces string, responses []responseSpec) {
+func (s *Server) recordSetupError(err error) {
+	if err == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.setupErr = errors.Join(s.setupErr, err)
+}
+
+func (s *Server) panicSetupErrorLocked() {
+	if s.setupErr != nil {
+		panic(s.setupErr)
+	}
+}
+
+func (s *Server) panicSetupError() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.panicSetupErrorLocked()
+}
+
+func (s *Server) addRouteSpec(method, path, doc string, tags []string, operationID string, reqType, pathType, queryType reflect.Type, consumes []string, produces string, responses []responseSpec) {
 	if s.openAPI != nil {
-		s.openAPI.AddRoute(method, path, doc, tags, operationID, reqType, pathType, queryType, produces, responses)
+		s.openAPI.AddRoute(method, path, doc, tags, operationID, reqType, pathType, queryType, consumes, produces, responses)
 	}
 }
 
 func (s *Server) producesContentType() string {
 	return s.produces
+}
+
+func (s *Server) consumesContentTypes() []string {
+	return s.consumes
 }
 
 func (s *Server) owner() *Server {
@@ -157,6 +274,7 @@ func (s *Server) owner() *Server {
 func (s *Server) finalizeRoutes() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.panicSetupErrorLocked()
 	if s.routed {
 		return
 	}
@@ -164,10 +282,13 @@ func (s *Server) finalizeRoutes() {
 
 	if s.openAPI != nil {
 		spec := s.openAPI.Build()
-		_ = s.router.Register(http.MethodGet, "/openapi.json", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := s.router.Register(http.MethodGet, "/openapi.json", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(spec)
-		}))
+		})); err != nil {
+			s.setupErr = errors.Join(s.setupErr, err)
+			panic(s.setupErr)
+		}
 	}
 }
 
@@ -183,4 +304,11 @@ func (s *Server) Group(prefix string, mws ...Middleware) *Group {
 		prefix:      prefix,
 		middlewares: mws,
 	}
+}
+
+func listenerAddress(ln net.Listener) string {
+	if ln == nil || ln.Addr() == nil {
+		return ""
+	}
+	return ln.Addr().String()
 }

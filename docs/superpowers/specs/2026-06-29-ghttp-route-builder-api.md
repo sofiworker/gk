@@ -223,31 +223,15 @@ The OpenAPI path must match the final registered path. Therefore `addRouteSpec` 
 
 ## Error Handling
 
-`RouteBuilder.To` should return `error`.
+Superseded decision: route terminators such as `To`, `ToHTTP`, `ToRaw`,
+`ToSSE`, and `ToWebSocket` do not return `error`.
 
-Current behavior ignores router registration failures:
-
-```go
-_ = b.server.router.Register(...)
-```
-
-The builder should surface duplicate route errors, invalid path errors, nil handler errors, and router-specific validation errors:
-
-```go
-if err := ghttp.Route[Req, Resp](app).
-	POST("/users/{id}").
-	To(handler); err != nil {
-	return err
-}
-```
-
-For tests and examples, ignoring the error is still possible:
-
-```go
-_ = ghttp.Route[Req, Resp](app).POST("/users/{id}").To(handler)
-```
-
-This is a source-level breaking change for existing call sites that currently use `To(handler)` as a statement. The migration is mechanical: either handle the error or assign it to `_`.
+The builder records setup errors such as duplicate routes, invalid methods,
+unsupported response content types, and invalid `ghttp.Params` usage. Startup
+validation panics with the recorded error from `Run`, `Serve`,
+`ListenAndServeTLS`, `ServeTLS`, or the first direct `ServeHTTP` call. This
+keeps route declarations idiomatic for Go HTTP frameworks without requiring
+`if err != nil` after every route registration.
 
 ## Middleware
 

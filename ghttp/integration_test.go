@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -20,12 +21,7 @@ func TestIntegration_GetUser(t *testing.T) {
 	s := New(WithProduces(MIMEJSON))
 
 	type input struct {
-		Path struct {
-			ID int `path:"id"`
-		}
-		Query struct {
-			Role string `query:"role"`
-		}
+		Params `json:"-"`
 	}
 
 	type output struct {
@@ -34,11 +30,12 @@ func TestIntegration_GetUser(t *testing.T) {
 		Role string `json:"role"`
 	}
 
-	_ = Route[input, output](s).GET("/users/{id}").To(func(ctx context.Context, req input) (output, error) {
+	Route[input, output](s).GET("/users/{id}").To(func(ctx context.Context, req input) (output, error) {
+		id, _ := strconv.Atoi(req.Path("id"))
 		return output{
-			ID:   req.Path.ID,
+			ID:   id,
 			Name: "Alice",
-			Role: req.Query.Role,
+			Role: req.Query("role"),
 		}, nil
 	})
 
@@ -65,9 +62,8 @@ func TestIntegration_CreateUser(t *testing.T) {
 	s := New(WithProduces(MIMEJSON))
 
 	type input struct {
-		Path struct {
-			ID int `path:"id"`
-		}
+		Params `json:"-"`
+
 		Body struct {
 			Name string `json:"name"`
 		}
@@ -78,9 +74,10 @@ func TestIntegration_CreateUser(t *testing.T) {
 		Name string `json:"name"`
 	}
 
-	_ = Route[input, output](s).POST("/users/{id}").To(func(ctx context.Context, req input) (output, error) {
+	Route[input, output](s).POST("/users/{id}").To(func(ctx context.Context, req input) (output, error) {
+		id, _ := strconv.Atoi(req.Path("id"))
 		return output{
-			ID:   req.Path.ID,
+			ID:   id,
 			Name: req.Body.Name,
 		}, nil
 	})
@@ -107,7 +104,7 @@ func TestIntegration_ValidationError(t *testing.T) {
 	s := New(WithProduces(MIMEJSON))
 	s.validator = &mockValidator{}
 
-	_ = Route[struct{ Body struct{} }, struct{ Body struct{} }](s).GET("/users/{id}").To(func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
+	Route[struct{ Body struct{} }, struct{ Body struct{} }](s).GET("/users/{id}").To(func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
 		return struct{ Body struct{} }{}, nil
 	},
 	)
@@ -137,7 +134,7 @@ func (m *mockValidator) Validate(ctx context.Context, i interface{}) error {
 
 func TestIntegration_NotFound(t *testing.T) {
 	s := New(WithProduces(MIMEJSON))
-	_ = Route[struct{}, struct{}](s).GET("/exists").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+	Route[struct{}, struct{}](s).GET("/exists").To(func(ctx context.Context, req struct{}) (struct{}, error) {
 		return struct{}{}, nil
 	})
 
@@ -155,22 +152,19 @@ func TestIntegration_NotFound(t *testing.T) {
 func TestIntegration_OpenAPIEndpoint(t *testing.T) {
 	s := New(WithOpenAPI("test", "1.0.0"), WithProduces(MIMEJSON))
 
-	_ = Route[struct {
-		Path struct {
-			ID int `path:"id"`
-		}
+	Route[struct {
+		Params `json:"-"`
 	}, struct {
 		ID int `json:"id"`
 	}](s).GET("/users/{id}").To(func(ctx context.Context, req struct {
-		Path struct {
-			ID int `path:"id"`
-		}
+		Params `json:"-"`
 	}) (struct {
 		ID int `json:"id"`
 	}, error) {
+		id, _ := strconv.Atoi(req.Path("id"))
 		return struct {
 			ID int `json:"id"`
-		}{req.Path.ID}, nil
+		}{id}, nil
 	},
 	)
 
@@ -208,16 +202,13 @@ func TestIntegration_ClientGetAndUnwrapEnvelope(t *testing.T) {
 		Name string `json:"name"`
 	}
 
-	_ = Route[struct {
-		Path struct {
-			ID int `path:"id"`
-		}
+	Route[struct {
+		Params `json:"-"`
 	}, output](s).GET("/users/{id}").To(func(ctx context.Context, req struct {
-		Path struct {
-			ID int `path:"id"`
-		}
+		Params `json:"-"`
 	}) (output, error) {
-		return output{ID: req.Path.ID, Name: "Client-Test"}, nil
+		id, _ := strconv.Atoi(req.Path("id"))
+		return output{ID: id, Name: "Client-Test"}, nil
 	},
 	)
 
@@ -246,22 +237,13 @@ func TestIntegration_ClientGetChain(t *testing.T) {
 		Role string `json:"role"`
 	}
 
-	_ = Route[struct {
-		Path struct {
-			ID int `path:"id"`
-		}
-		Query struct {
-			Role string `query:"role"`
-		}
+	Route[struct {
+		Params `json:"-"`
 	}, output](s).GET("/users/{id}").To(func(ctx context.Context, req struct {
-		Path struct {
-			ID int `path:"id"`
-		}
-		Query struct {
-			Role string `query:"role"`
-		}
+		Params `json:"-"`
 	}) (output, error) {
-		return output{ID: req.Path.ID, Name: "Chain", Role: req.Query.Role}, nil
+		id, _ := strconv.Atoi(req.Path("id"))
+		return output{ID: id, Name: "Chain", Role: req.Query("role")}, nil
 	},
 	)
 
@@ -290,9 +272,8 @@ func TestIntegration_GenericClientPOST(t *testing.T) {
 	s := New(WithProduces(MIMEJSON))
 
 	type createReq struct {
-		Path struct {
-			ID int `path:"id"`
-		}
+		Params `json:"-"`
+
 		Body struct {
 			Name string `json:"name"`
 		}
@@ -304,8 +285,9 @@ func TestIntegration_GenericClientPOST(t *testing.T) {
 		Role string `json:"role"`
 	}
 
-	_ = Route[createReq, createResp](s).POST("/users").To(func(ctx context.Context, req createReq) (createResp, error) {
-		return createResp{ID: req.Path.ID, Name: req.Body.Name, Role: "generic"}, nil
+	Route[createReq, createResp](s).POST("/users").To(func(ctx context.Context, req createReq) (createResp, error) {
+		id, _ := strconv.Atoi(req.Path("id"))
+		return createResp{ID: id, Name: req.Body.Name, Role: "generic"}, nil
 	},
 	)
 
@@ -335,12 +317,11 @@ func TestIntegration_GenericClientPOST(t *testing.T) {
 func TestIntegration_SSE(t *testing.T) {
 	s := New(WithProduces(MIMEJSON))
 
-	err := Route[struct{}, struct{}](s).GET("/events").ToSSE(func(ctx Context, stream *SSEWriter) error {
+	Route[struct{}, struct{}](s).GET("/events").ToSSE(func(ctx context.Context, params Params, stream *SSEWriter) error {
 		_ = stream.WriteEvent("message", "hello")
 		_ = stream.WriteEvent("message", "world")
 		return nil
 	})
-	require.NoError(t, err)
 
 	ts := httptest.NewServer(s)
 	defer ts.Close()
@@ -379,7 +360,7 @@ func TestIntegration_MiddlewareOrder(t *testing.T) {
 		})
 	})
 
-	_ = Route[struct{ Body struct{} }, struct {
+	Route[struct{ Body struct{} }, struct {
 		ID int `json:"id"`
 	}](s).GET("/test").To(func(ctx context.Context, req struct{ Body struct{} }) (struct {
 		ID int `json:"id"`
@@ -416,7 +397,7 @@ func TestIntegration_RouteBuilderChainWithOpenAPI(t *testing.T) {
 		Email string `json:"email"`
 	}
 
-	_ = Route[createRequest, createResponse](s).
+	Route[createRequest, createResponse](s).
 		POST("/api/users/new").
 		Doc("Create a new user").
 		Reads(createRequest{}).
@@ -460,8 +441,7 @@ func TestIntegration_RouteBuilderChainWithOpenAPI(t *testing.T) {
 func TestIntegration_StaticFile(t *testing.T) {
 	s := New(WithProduces(MIMEJSON))
 
-	err := Route[struct{}, struct{}](s).GET("/static").ToStatic("./testdata")
-	require.NoError(t, err)
+	Route[struct{}, struct{}](s).GET("/static").ToStatic("./testdata")
 
 	ts := httptest.NewServer(s)
 	defer ts.Close()
@@ -477,7 +457,7 @@ func TestIntegration_StaticFile(t *testing.T) {
 func TestIntegration_ErrorHandling(t *testing.T) {
 	s := New(WithProduces(MIMEJSON))
 
-	_ = Route[struct{ Body struct{} }, struct{ Body struct{} }](s).GET("/error").To(func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
+	Route[struct{ Body struct{} }, struct{ Body struct{} }](s).GET("/error").To(func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
 		return struct{ Body struct{} }{}, Err(http.StatusBadRequest, "invalid input", WithCause(fmt.Errorf("name is required")))
 	},
 	)
@@ -501,9 +481,7 @@ func TestIntegration_CustomEnvelope(t *testing.T) {
 		Data interface{} `json:"data,omitempty"`
 	}
 
-	s := New(WithEnvelope(func(ctx Context, statusCode int, resp interface{}, err error, codecMgr *CodecManager) {
-		w := ctx.ResponseWriter()
-		r := ctx.Request()
+	s := New(WithEnvelope(func(w http.ResponseWriter, r *http.Request, statusCode int, resp interface{}, err error, codecMgr *CodecManager) {
 		codec := codecMgr.Negotiate(r.Header.Get("Accept"))
 		w.Header().Set("Content-Type", codec.ContentTypes()[0])
 		if err != nil {
@@ -519,7 +497,7 @@ func TestIntegration_CustomEnvelope(t *testing.T) {
 		Pong string `json:"pong"`
 	}
 
-	_ = Route[struct{ Body struct{} }, pongResp](s).GET("/ping").To(func(ctx context.Context, req struct{ Body struct{} }) (pongResp, error) {
+	Route[struct{ Body struct{} }, pongResp](s).GET("/ping").To(func(ctx context.Context, req struct{ Body struct{} }) (pongResp, error) {
 		return pongResp{Pong: "ok"}, nil
 	},
 	)

@@ -82,3 +82,10 @@ func TestResponseWriterMultipleWrites(t *testing.T) {
 	assert.Equal(t, 3, rw.Size())
 	assert.Equal(t, "abc", w.Body.String())
 }
+
+func TestResponseWriterUnwrap(t *testing.T) {
+	w := httptest.NewRecorder()
+	rw := NewResponseWriter(w)
+
+	assert.Same(t, w, rw.Unwrap())
+}

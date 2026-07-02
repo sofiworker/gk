@@ -54,7 +54,7 @@ func NewOpenAPI(title, version string) *OpenAPI {
 	}
 }
 
-func (o *OpenAPI) AddRoute(method, path, doc string, tags []string, operationID string, reqType, pathType, queryType reflect.Type, produces string, responses []responseSpec) {
+func (o *OpenAPI) AddRoute(method, path, doc string, tags []string, operationID string, reqType, pathType, queryType reflect.Type, consumes []string, produces string, responses []responseSpec) {
 	if o == nil {
 		return
 	}
@@ -76,19 +76,22 @@ func (o *OpenAPI) AddRoute(method, path, doc string, tags []string, operationID 
 	if pathType != nil || queryType != nil {
 		op.Parameters = append(op.Parameters, extractParametersFromType(pathType, "path", true)...)
 		op.Parameters = append(op.Parameters, extractParametersFromType(queryType, "query", false)...)
-		op.Parameters = append(op.Parameters, extractParametersFromType(reqType, "header", false)...)
-	} else if reqType != nil {
-		op.Parameters = extractParameters(reqType)
 	}
 
 	if reqType != nil {
 		bodySchema := extractBodySchema(reqType)
 		if bodySchema != nil {
+			contentTypes := consumes
+			if len(contentTypes) == 0 {
+				contentTypes = []string{MIMEJSON}
+			}
+			content := make(map[string]*mediaType, len(contentTypes))
+			for _, contentType := range contentTypes {
+				content[contentType] = &mediaType{Schema: bodySchema}
+			}
 			op.RequestBody = &requestBody{
 				Required: true,
-				Content: map[string]*mediaType{
-					"application/json": {Schema: bodySchema},
-				},
+				Content:  content,
 			}
 		}
 	}
@@ -141,39 +144,6 @@ func convertToOpenAPIPath(path string) string {
 		}
 	}
 	return strings.Join(parts, "/")
-}
-
-func extractParameters(t reflect.Type) []*parameter {
-	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
-	}
-	if t.Kind() != reflect.Struct {
-		return nil
-	}
-
-	var params []*parameter
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		switch field.Name {
-		case "Path":
-			params = append(params, extractParametersFromType(field.Type, "path", true)...)
-		case "Query":
-			params = append(params, extractParametersFromType(field.Type, "query", false)...)
-		case "Header":
-			params = append(params, extractParametersFromType(field.Type, "header", false)...)
-		default:
-			if field.Tag.Get("path") != "" {
-				params = append(params, fieldToParameter(field, "path", true))
-			}
-			if field.Tag.Get("query") != "" {
-				params = append(params, fieldToParameter(field, "query", false))
-			}
-			if field.Tag.Get("header") != "" {
-				params = append(params, fieldToParameter(field, "header", false))
-			}
-		}
-	}
-	return params
 }
 
 func extractParametersFromType(t reflect.Type, in string, required bool) []*parameter {

@@ -4,33 +4,42 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 )
 
 type testLogger struct {
 	lastLevel string
 	lastMsg   string
+	lastCtx   context.Context
+	lastArgs  []interface{}
 }
 
-func (l *testLogger) Debugf(format string, args ...interface{}) {
+func (l *testLogger) DebugContext(ctx context.Context, msg string, args ...interface{}) {
 	l.lastLevel = "debug"
-	l.lastMsg = format
+	l.lastCtx = ctx
+	l.lastMsg = msg
+	l.lastArgs = args
 }
 
-func (l *testLogger) Infof(format string, args ...interface{}) {
+func (l *testLogger) InfoContext(ctx context.Context, msg string, args ...interface{}) {
 	l.lastLevel = "info"
-	l.lastMsg = format
+	l.lastCtx = ctx
+	l.lastMsg = msg
+	l.lastArgs = args
 }
 
-func (l *testLogger) Warnf(format string, args ...interface{}) {
+func (l *testLogger) WarnContext(ctx context.Context, msg string, args ...interface{}) {
 	l.lastLevel = "warn"
-	l.lastMsg = format
+	l.lastCtx = ctx
+	l.lastMsg = msg
+	l.lastArgs = args
 }
 
-func (l *testLogger) Errorf(format string, args ...interface{}) {
+func (l *testLogger) ErrorContext(ctx context.Context, msg string, args ...interface{}) {
 	l.lastLevel = "error"
-	l.lastMsg = format
+	l.lastCtx = ctx
+	l.lastMsg = msg
+	l.lastArgs = args
 }
 
 func TestLoggerInterface(t *testing.T) {
@@ -42,23 +51,24 @@ func TestLoggerInterface(t *testing.T) {
 
 func TestLoggerLevels(t *testing.T) {
 	tl := &testLogger{}
+	ctx := context.Background()
 
-	tl.Debugf("debug %d", 1)
+	tl.DebugContext(ctx, "debug", "n", 1)
 	if tl.lastLevel != "debug" {
 		t.Errorf("expected debug, got %s", tl.lastLevel)
 	}
 
-	tl.Infof("info %d", 2)
+	tl.InfoContext(ctx, "info", "n", 2)
 	if tl.lastLevel != "info" {
 		t.Errorf("expected info, got %s", tl.lastLevel)
 	}
 
-	tl.Warnf("warn %d", 3)
+	tl.WarnContext(ctx, "warn", "n", 3)
 	if tl.lastLevel != "warn" {
 		t.Errorf("expected warn, got %s", tl.lastLevel)
 	}
 
-	tl.Errorf("error %d", 4)
+	tl.ErrorContext(ctx, "error", "n", 4)
 	if tl.lastLevel != "error" {
 		t.Errorf("expected error, got %s", tl.lastLevel)
 	}
@@ -69,11 +79,9 @@ func TestRequestLoggerUsesInjectedLogger(t *testing.T) {
 	app := New(WithLogger(tl), WithProduces(MIMEJSON))
 	app.Use(RequestLogger())
 
-	if err := Route[struct{}, struct{}](app).GET("/log").To(func(context.Context, struct{}) (struct{}, error) {
+	Route[struct{}, struct{}](app).GET("/log").To(func(context.Context, struct{}) (struct{}, error) {
 		return struct{}{}, nil
-	}); err != nil {
-		t.Fatalf("To failed: %v", err)
-	}
+	})
 
 	rec := httptest.NewRecorder()
 	app.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/log", nil))
@@ -81,8 +89,26 @@ func TestRequestLoggerUsesInjectedLogger(t *testing.T) {
 	if tl.lastLevel != "info" {
 		t.Fatalf("lastLevel = %q, want info", tl.lastLevel)
 	}
-	if !strings.Contains(tl.lastMsg, "%s %s %s") {
-		t.Fatalf("lastMsg = %q, want request log format", tl.lastMsg)
+	if tl.lastCtx == nil {
+		t.Fatal("expected request context")
+	}
+	if tl.lastMsg != "http request" {
+		t.Fatalf("lastMsg = %q, want http request", tl.lastMsg)
+	}
+	if !hasLogArg(tl.lastArgs, "method", http.MethodGet) {
+		t.Fatalf("lastArgs = %#v, want method", tl.lastArgs)
+	}
+	if !hasLogArg(tl.lastArgs, "path", "/log") {
+		t.Fatalf("lastArgs = %#v, want path", tl.lastArgs)
+	}
+	if !hasLogArg(tl.lastArgs, "status", http.StatusOK) {
+		t.Fatalf("lastArgs = %#v, want status", tl.lastArgs)
+	}
+	if !hasLogKey(tl.lastArgs, "size") {
+		t.Fatalf("lastArgs = %#v, want size", tl.lastArgs)
+	}
+	if !hasLogKey(tl.lastArgs, "duration") {
+		t.Fatalf("lastArgs = %#v, want duration", tl.lastArgs)
 	}
 }
 
@@ -90,11 +116,9 @@ func TestRequestLoggerWithoutInjectedLoggerIsNoop(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	app.Use(RequestLogger())
 
-	if err := Route[struct{}, struct{}](app).GET("/log").To(func(context.Context, struct{}) (struct{}, error) {
+	Route[struct{}, struct{}](app).GET("/log").To(func(context.Context, struct{}) (struct{}, error) {
 		return struct{}{}, nil
-	}); err != nil {
-		t.Fatalf("To failed: %v", err)
-	}
+	})
 
 	rec := httptest.NewRecorder()
 	app.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/log", nil))
@@ -109,11 +133,9 @@ func TestRecovererUsesInjectedLogger(t *testing.T) {
 	app := New(WithLogger(tl), WithProduces(MIMEJSON))
 	app.Use(Recoverer())
 
-	if err := Route[struct{}, struct{}](app).GET("/panic").To(func(context.Context, struct{}) (struct{}, error) {
+	Route[struct{}, struct{}](app).GET("/panic").To(func(context.Context, struct{}) (struct{}, error) {
 		panic("boom")
-	}); err != nil {
-		t.Fatalf("To failed: %v", err)
-	}
+	})
 
 	rec := httptest.NewRecorder()
 	app.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/panic", nil))
@@ -124,4 +146,28 @@ func TestRecovererUsesInjectedLogger(t *testing.T) {
 	if tl.lastLevel != "error" {
 		t.Fatalf("lastLevel = %q, want error", tl.lastLevel)
 	}
+	if tl.lastMsg != "panic recovered" {
+		t.Fatalf("lastMsg = %q, want panic recovered", tl.lastMsg)
+	}
+	if !hasLogArg(tl.lastArgs, "panic", "boom") {
+		t.Fatalf("lastArgs = %#v, want panic", tl.lastArgs)
+	}
+}
+
+func hasLogArg(args []interface{}, key string, value interface{}) bool {
+	for i := 0; i+1 < len(args); i += 2 {
+		if args[i] == key && args[i+1] == value {
+			return true
+		}
+	}
+	return false
+}
+
+func hasLogKey(args []interface{}, key string) bool {
+	for i := 0; i+1 < len(args); i += 2 {
+		if args[i] == key {
+			return true
+		}
+	}
+	return false
 }

@@ -1,9 +1,11 @@
 package ghttp
 
+import "context"
+
 // Logger is the logging interface used by ghttp.
 type Logger interface {
-	Debugf(format string, args ...interface{})
-	Infof(format string, args ...interface{})
-	Warnf(format string, args ...interface{})
-	Errorf(format string, args ...interface{})
+	DebugContext(ctx context.Context, msg string, args ...interface{})
+	InfoContext(ctx context.Context, msg string, args ...interface{})
+	WarnContext(ctx context.Context, msg string, args ...interface{})
+	ErrorContext(ctx context.Context, msg string, args ...interface{})
 }

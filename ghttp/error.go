@@ -6,10 +6,14 @@ import (
 )
 
 var (
-	ErrConflict   = errors.New("conflict")
-	ErrNotFound   = errors.New("not found")
-	ErrHandled    = errors.New("response already handled")
-	ErrNilContext = errors.New("context is nil")
+	ErrConflict    = errors.New("conflict")
+	ErrNotFound    = errors.New("not found")
+	ErrHandled     = errors.New("response already handled")
+	ErrNilContext  = errors.New("context is nil")
+	ErrNilListener = errors.New("listener is nil")
+
+	ErrInvalidParamsUsage   = errors.New("invalid params usage")
+	ErrUnsupportedMediaType = errors.New("unsupported media type")
 
 	ErrRendererNotConfigured = errors.New("renderer is not configured")
 	ErrStaticRootRequired    = errors.New("static root cannot be empty")

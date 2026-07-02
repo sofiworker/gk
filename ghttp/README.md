@@ -7,8 +7,8 @@
 ## 特性
 
 - **泛型优先 API** — `Route[Req,Resp]` 链式构建器，编译期类型安全
-- **四段输入绑定** — `Path`, `Query`, `Header`, `Body` 自动解析到嵌套结构体
-- **内容协商** — `Accept`/`Content-Type` 驱动 Codec（JSON、XML、Plain、Form），可扩展
+- **显式输入读取** — `Params` 读取 path/query/header/cookie，`Body` 字段解析请求体
+- **内容协商** — `Accept` 驱动响应 Codec，`Consumes` 约束请求 `Content-Type`
 - **灵活输出** — 支持响应体结构体和自定义 Envelope 包装（code/msg/data 模式）
 - **路由器可插拔** — 内建高性能 Radix 树路由器和 Go 1.22+ `http.ServeMux` 适配
 - **OpenAPI 3.1** — 从路由元数据自动生成 JSON Schema 和 OAS 文档
@@ -46,12 +46,7 @@ import (
 )
 
 type GreetInput struct {
-    ghttp.Path
-    ghttp.Query
-    ghttp.Header
-    ghttp.Body
-
-    Name string `path:"name"`
+    ghttp.Params `json:"-"`
 }
 
 type GreetOutput struct {
@@ -62,7 +57,7 @@ func main() {
     s := ghttp.New(ghttp.WithProduces(ghttp.MIMEJSON))
 
     // 链式构建器（支持 OpenAPI 元数据）
-    if err := ghttp.Route[GreetInput, GreetOutput](s).
+    ghttp.Route[GreetInput, GreetOutput](s).
         GET("/hello/{name}").
         Produces(ghttp.MIMEJSON).
         Doc("返回个性化的问候消息").
@@ -70,10 +65,8 @@ func main() {
         Responds(200).With(GreetOutput{}).Desc("成功").
         End().
         To(func(ctx context.Context, req GreetInput) (GreetOutput, error) {
-            return GreetOutput{Message: "Hello, " + req.Name}, nil
-        }); err != nil {
-        panic(err)
-    }
+            return GreetOutput{Message: "Hello, " + req.Path("name")}, nil
+        })
 
     s.Run(":8080")
 }
@@ -94,7 +87,7 @@ result, err := client.R().
     Get("/hello/world")
 
 // 结构化请求
-input := &GreetInput{Name: "World"}
+input := &GreetInput{}
 resp, err := ghttp.Do[GreetInput, GreetOutput](client, "POST", "/hello", input)
 ```
 
@@ -128,13 +121,14 @@ resp, err := ghttp.Do[GreetInput, GreetOutput](client, "POST", "/hello", input)
 | `.CUSTOM(method, path)` | 设置自定义 HTTP 方法和路由路径 |
 | `.Doc("描述")` | 操作描述 |
 | `.Reads(input)` | 请求体类型（用于 OpenAPI） |
+| `.Consumes(contentTypes...)` | 声明可自动解析的请求 Content-Type，可在 server/group/route 上声明 |
 | `.Produces(contentType)` | 自动响应编码的 Content-Type，可在 server/group/route 上声明 |
 | `.Responds(code)` | 响应状态码 |
 | `.With(output)` | 响应体类型 |
 | `.Desc("说明")` | 响应说明 |
 | `.Tags("标签")` | OpenAPI 标签 |
 | `.End()` | 结束方法声明，等待 `To()` |
-| `.To(handler)` | 注册处理函数并返回错误 |
+| `.To(handler)` | 注册处理函数，配置错误会在 `Run` / `Serve` / 首次 `ServeHTTP` 时 panic |
 
 ### 路由参数
 
@@ -154,27 +148,95 @@ ghttp.Route[Req, Resp](s).GET("/files/{path...}").To(handler)  // 通配符
 
 ```go
 type CreateUserInput struct {
-    ghttp.Path
-    ghttp.Query
-    ghttp.Header
-    ghttp.Body
+    ghttp.Params `json:"-"`
 
-    ID     int    `path:"id"`              // URL 路径参数
-    Role   string `query:"role"`           // 查询参数
-    Token  string `header:"Authorization"` // 请求头
-    Name   string `json:"name"`            // 请求体字段
-    Age    int    `json:"age"`
-    Active bool   `json:"active"`
+    Body struct {
+        Name   string `json:"name"`
+        Age    int    `json:"age"`
+        Active bool   `json:"active"`
+    } `json:"body"`
+}
+
+func createUser(ctx context.Context, req CreateUserInput) (UserOutput, error) {
+    id := req.Path("id")
+    role := req.DefaultQuery("role", "guest")
+    token := req.Header("Authorization")
+    sessionID := req.Cookie("session_id")
+    _ = role
+    _ = token
+    _ = sessionID
+    return UserOutput{ID: id, Name: req.Body.Name}, nil
 }
 ```
+
+请求体媒体类型使用 `Consumes` 声明，语义对应请求头 `Content-Type`；响应媒体类型继续使用 `Produces`，语义对应响应 `Content-Type` 和客户端 `Accept`：
+
+```go
+ghttp.Route[CreateUserInput, UserOutput](s).
+    POST("/users/{id}").
+    Consumes(ghttp.MIMEJSON, ghttp.MIMEXML).
+    Produces(ghttp.MIMEJSON).
+    To(createUser)
+```
+
+`Consumes` 只约束带 `Body` 的自动解析路由。请求 `Content-Type` 为空时仍按默认 JSON 解析；显式传入不匹配的媒体类型会返回 `415 Unsupported Media Type`。
+
+`Params` 是请求输入快照，不持有 `ResponseWriter`，也不负责中断请求或写响应；cookie 写入通过输出对象完成。
+
+只有 path/query/header/cookie 参数、没有请求体时，可以直接使用值类型 `ghttp.Params` 作为输入类型：
+
+```go
+ghttp.Route[ghttp.Params, UserOutput](s).
+    GET("/users/{id}").
+    To(func(ctx context.Context, params ghttp.Params) (UserOutput, error) {
+        return UserOutput{
+            ID: params.Path("id"),
+        }, nil
+    })
+```
+
+需要请求体时，使用匿名值嵌入：
+
+```go
+type Input struct {
+    ghttp.Params `json:"-"`
+    Body struct {
+        Name string `json:"name"`
+    } `json:"body"`
+}
+```
+
+`Route[*ghttp.Params, Resp]`、`Params ghttp.Params` 命名字段、`*ghttp.Params` 匿名指针字段、间接嵌入 `Params` 都会在 `Run` / `Serve` / 首次 `ServeHTTP` 时 panic，panic error 可用 `errors.Is(err, ghttp.ErrInvalidParamsUsage)` 判断。
 
 ### 输出
 
 ```go
 type UserOutput struct {
-    ID    int    `json:"id"`
+    ID    string `json:"id"`
     Name  string `json:"name"`
     Email string `json:"email"`
+}
+```
+
+响应对象实现 `Cookies() []*http.Cookie` 时，框架会在写响应前统一设置 `Set-Cookie`：
+
+```go
+type LoginOutput struct {
+    Token string `json:"token"`
+}
+
+func (o LoginOutput) Cookies() []*http.Cookie {
+    return []*http.Cookie{
+        {
+            Name:     "session_id",
+            Value:    o.Token,
+            Path:     "/",
+            HttpOnly: true,
+            Secure:   true,
+            SameSite: http.SameSiteLaxMode,
+        },
+        ghttp.DeleteCookie("old_session"),
+    }
 }
 ```
 
@@ -200,6 +262,9 @@ type UserOutput struct {
 ### 中间件
 
 ```go
+// 注入结构化 logger，glog.Default() 可直接满足 ghttp.Logger。
+s := ghttp.New(ghttp.WithLogger(glog.Default()))
+
 s.Use(ghttp.RequestID())
 s.Use(ghttp.CORS(ghttp.CORSConfig{
     AllowOrigins: []string{"*"},
@@ -216,11 +281,12 @@ group.Use(authMiddleware)
 ### WebSocket
 
 ```go
-ghttp.Route[struct{}, struct{}](s).GET("/ws").ToWebSocket(func(ctx ghttp.Context, conn *ghttp.WebSocketConn) error {
+ghttp.Route[struct{}, struct{}](s).GET("/ws").ToWebSocket(func(ctx context.Context, params ghttp.Params, conn *ghttp.WebSocketConn) error {
     for {
-        msg, err := ctx.ReadMessage()
+        var msg map[string]interface{}
+        err := conn.ReadJSON(&msg)
         if err != nil { return err }
-        ctx.WriteMessage(msg)
+        conn.WriteJSON(msg)
     }
 })
 ```
@@ -228,7 +294,7 @@ ghttp.Route[struct{}, struct{}](s).GET("/ws").ToWebSocket(func(ctx ghttp.Context
 ### SSE
 
 ```go
-ghttp.Route[struct{}, struct{}](s).GET("/events").ToSSE(func(ctx context.Context, w *ghttp.SSEWriter) error {
+ghttp.Route[struct{}, struct{}](s).GET("/events").ToSSE(func(ctx context.Context, params ghttp.Params, w *ghttp.SSEWriter) error {
     for i := 0; i < 10; i++ {
         w.WriteEvent("message", fmt.Sprintf("event %d", i))
         time.Sleep(time.Second)
@@ -304,14 +370,32 @@ s := ghttp.New(
     ghttp.WithRouter(ghttp.NewRadixRouter()),                // 路由器
     ghttp.WithValidator(myValidator),                        // 验证器
     ghttp.WithEnvelope(myEnvelope),                          // Envelope 函数
-    ghttp.WithBodyDecoder(func(io.ReadCloser, any) error {   // 自定义 Body 解码
-        return customDecoder.Decode(r, v)
+    ghttp.WithConsumes(ghttp.MIMEJSON),                      // 默认请求 Content-Type
+    ghttp.WithBodyDecoder(func(r io.Reader, contentType string, target interface{}) error { // 自定义 Body 解码
+        return customDecoder.Decode(r, target)
     }),
     ghttp.WithRenderer(myRenderer),                          // 模板渲染器
+    ghttp.WithReadHeaderTimeout(5*time.Second),              // 请求头读取超时
     ghttp.WithReadTimeout(30*time.Second),                   // 读取超时
     ghttp.WithWriteTimeout(30*time.Second),                  // 写入超时
+    ghttp.WithIdleTimeout(60*time.Second),                   // keep-alive 空闲超时
     ghttp.WithMaxHeaderBytes(1<<20),                         // 最大请求头
+    ghttp.WithTLSConfig(tlsConfig),                          // TLS 配置
+    ghttp.WithBaseContext(baseContext),                      // 底层 Server BaseContext
+    ghttp.WithConnContext(connContext),                      // 连接级 Context
+    ghttp.WithErrorLog(errorLog),                            // 底层 Server 错误日志
 )
+```
+
+```go
+ln, err := net.Listen("tcp", "127.0.0.1:0")
+if err != nil {
+    return err
+}
+go s.Serve(ln)
+fmt.Println(s.Addr()) // 包含 :0 自动分配后的真实端口
+
+err = s.ListenAndServeTLS(":8443", "server.crt", "server.key")
 ```
 
 ---
@@ -325,7 +409,6 @@ ghttp/
 ├── codec*.go         # Codec 接口与实现（JSON/XML/Plain/Form）
 ├── config.go         # 配置与选项
 ├── constants.go      # MIME 类型常量
-├── context.go        # Context 接口
 ├── error.go          # HTTP 错误类型
 ├── form.go           # multipart/form 解析
 ├── handler.go        # HandlerFunc 类型定义
