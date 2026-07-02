@@ -58,7 +58,7 @@ func TestServerNewInitializesDefaultsAndOptions(t *testing.T) {
 	validator := serverValidatorFunc(func(context.Context, interface{}) error { return nil })
 	envelope := func(Context, int, interface{}, error, *CodecManager) {}
 
-	app := New(WithAddress("127.0.0.1:0"), WithRouter(router), WithValidator(validator), WithEnvelope(envelope))
+	app := New(WithAddress("127.0.0.1:0"), WithRouter(router), WithValidator(validator), WithEnvelope(envelope), WithProduces(MIMEJSON))
 
 	if app == nil {
 		t.Fatal("New returned nil")
@@ -134,7 +134,7 @@ func TestServerServeHTTPDelegatesToRouterWithoutOpenAPIByDefault(t *testing.T) {
 
 func TestServerWithOpenAPIRegistersEndpointOnFinalize(t *testing.T) {
 	router := &recordingRouter{}
-	app := New(WithOpenAPI("api", "1.0.0"), WithRouter(router))
+	app := New(WithOpenAPI("api", "1.0.0"), WithRouter(router), WithProduces(MIMEJSON))
 
 	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
 	rec := httptest.NewRecorder()
@@ -146,7 +146,7 @@ func TestServerWithOpenAPIRegistersEndpointOnFinalize(t *testing.T) {
 }
 
 func TestServerMiddlewareChainOrder(t *testing.T) {
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 	var calls []string
 
 	app.Use(func(next http.Handler) http.Handler {
@@ -219,7 +219,7 @@ func TestServerRegistersAllStandardHTTPMethods(t *testing.T) {
 		}},
 	}
 
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 	for _, tt := range tests {
 		tt.register(app, tt.path)
 	}
@@ -235,9 +235,9 @@ func TestServerRegistersAllStandardHTTPMethods(t *testing.T) {
 }
 
 func TestRouteBuilderANYRegistersAllStandardHTTPMethods(t *testing.T) {
-	app := New()
-	mustRoute(t, Route[struct{}, standardMethodOutput](app).ANY("/any").To(func(ctx context.Context, req *struct{}) (*standardMethodOutput, error) {
-		return &standardMethodOutput{Method: ""}, nil
+	app := New(WithProduces(MIMEJSON))
+	mustRoute(t, Route[struct{}, standardMethodOutput](app).ANY("/any").To(func(ctx context.Context, req struct{}) (standardMethodOutput, error) {
+		return standardMethodOutput{Method: ""}, nil
 	}))
 
 	methods := []string{
@@ -262,9 +262,9 @@ func TestRouteBuilderANYRegistersAllStandardHTTPMethods(t *testing.T) {
 }
 
 func TestRouteBuilderToRequiresMethod(t *testing.T) {
-	app := New()
-	err := Route[struct{}, struct{}](app).To(func(context.Context, *struct{}) (*struct{}, error) {
-		return &struct{}{}, nil
+	app := New(WithProduces(MIMEJSON))
+	err := Route[struct{}, struct{}](app).To(func(context.Context, struct{}) (struct{}, error) {
+		return struct{}{}, nil
 	})
 	if !errors.Is(err, ErrRouteMethodRequired) {
 		t.Fatalf("To error = %v, want ErrRouteMethodRequired", err)
@@ -272,7 +272,7 @@ func TestRouteBuilderToRequiresMethod(t *testing.T) {
 }
 
 func TestRouteBuilderCUSTOMRegistersCustomMethod(t *testing.T) {
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 	mustRoute(t, Route[struct{}, standardMethodOutput](app).CUSTOM("PROPFIND", "/custom").To(methodOutputHandler("PROPFIND")))
 
 	req := httptest.NewRequest("PROPFIND", "/custom", nil)
@@ -285,9 +285,9 @@ func TestRouteBuilderCUSTOMRegistersCustomMethod(t *testing.T) {
 }
 
 func TestRouteBuilderCUSTOMRejectsInvalidMethod(t *testing.T) {
-	app := New()
-	err := Route[struct{}, struct{}](app).CUSTOM("BAD METHOD", "/custom").To(func(context.Context, *struct{}) (*struct{}, error) {
-		return &struct{}{}, nil
+	app := New(WithProduces(MIMEJSON))
+	err := Route[struct{}, struct{}](app).CUSTOM("BAD METHOD", "/custom").To(func(context.Context, struct{}) (struct{}, error) {
+		return struct{}{}, nil
 	})
 	if !errors.Is(err, ErrRouteMethodInvalid) {
 		t.Fatalf("To error = %v, want ErrRouteMethodInvalid", err)
@@ -295,8 +295,8 @@ func TestRouteBuilderCUSTOMRejectsInvalidMethod(t *testing.T) {
 }
 
 func methodOutputHandler(method string) HandlerFunc[struct{}, standardMethodOutput] {
-	return func(context.Context, *struct{}) (*standardMethodOutput, error) {
-		return &standardMethodOutput{Method: method}, nil
+	return func(context.Context, struct{}) (standardMethodOutput, error) {
+		return standardMethodOutput{Method: method}, nil
 	}
 }
 
@@ -317,15 +317,15 @@ func TestServerOpenAPIEndpoint(t *testing.T) {
 		Name string `json:"name"`
 	}
 
-	app := New(WithOpenAPI("accounts", "2.0.0"))
+	app := New(WithOpenAPI("accounts", "2.0.0"), WithProduces(MIMEJSON))
 	mustRoute(t, Route[req, resp](app).
 		GET("/users/{id}").
 		Doc("get user").
 		OperationID("getUser").
 		Tags("users").
 		Responds(http.StatusOK).With(resp{}).Desc("user").End().
-		To(func(context.Context, *req) (*resp, error) {
-			return &resp{Name: "alice"}, nil
+		To(func(context.Context, req) (resp, error) {
+			return resp{Name: "alice"}, nil
 		}))
 
 	httpReq := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
@@ -357,10 +357,10 @@ func TestServerRouteUsesValidator(t *testing.T) {
 	wantErr := errors.New("invalid input")
 	app := New(WithValidator(serverValidatorFunc(func(ctx context.Context, input interface{}) error {
 		return wantErr
-	})))
-	mustRoute(t, Route[struct{}, struct{}](app).GET("/validate").To(func(context.Context, *struct{}) (*struct{}, error) {
+	})), WithProduces(MIMEJSON))
+	mustRoute(t, Route[struct{}, struct{}](app).GET("/validate").To(func(context.Context, struct{}) (struct{}, error) {
 		t.Fatal("handler should not run after validation error")
-		return nil, nil
+		return struct{}{}, nil
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/validate", nil)
@@ -380,10 +380,10 @@ func TestServerUsesDefaultGoPlaygroundValidator(t *testing.T) {
 	}
 	type output struct{}
 
-	app := New()
-	mustRoute(t, Route[input, output](app).GET("/validate/default").To(func(context.Context, *input) (*output, error) {
+	app := New(WithProduces(MIMEJSON))
+	mustRoute(t, Route[input, output](app).GET("/validate/default").To(func(context.Context, input) (output, error) {
 		t.Fatal("handler should not run after default validation error")
-		return nil, nil
+		return output{}, nil
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/validate/default", nil)
@@ -414,7 +414,7 @@ func TestServerRunInitializesHTTPServerWithOverrideAddress(t *testing.T) {
 }
 
 func TestServerShutdownWithoutRunAndAfterRunFailure(t *testing.T) {
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 	if err := app.Shutdown(context.Background()); err != nil {
 		t.Fatalf("Shutdown before Run failed: %v", err)
 	}
@@ -429,7 +429,7 @@ func TestServerShutdownWithoutRunAndAfterRunFailure(t *testing.T) {
 }
 
 func TestServerShutdownRequiresContext(t *testing.T) {
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 
 	err := app.Shutdown(nil)
 
@@ -439,7 +439,7 @@ func TestServerShutdownRequiresContext(t *testing.T) {
 }
 
 func TestServerShutdownStopsRunningServerGracefully(t *testing.T) {
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 	errCh := make(chan error, 1)
 
 	go func() {
@@ -465,7 +465,7 @@ func TestServerShutdownStopsRunningServerGracefully(t *testing.T) {
 }
 
 func TestServerCloseStopsRunningServerWithoutErrServerClosed(t *testing.T) {
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 	errCh := make(chan error, 1)
 
 	go func() {
@@ -505,7 +505,7 @@ func waitForHTTPServer(t *testing.T, app *Server) {
 }
 
 func TestServerGroupStoresPrefixAndMiddlewares(t *testing.T) {
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 	mw := func(next http.Handler) http.Handler { return next }
 
 	group := app.Group("/api", mw)
@@ -522,7 +522,7 @@ func TestServerGroupStoresPrefixAndMiddlewares(t *testing.T) {
 }
 
 func TestGroupRouteRegistersRouteWithPrefixAndMiddleware(t *testing.T) {
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 	group := app.Group("/api", func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Group", "api")
@@ -532,10 +532,10 @@ func TestGroupRouteRegistersRouteWithPrefixAndMiddleware(t *testing.T) {
 
 	mustRoute(t, Route[struct{}, struct {
 		OK bool `json:"ok"`
-	}](group).GET("/ping").To(func(context.Context, *struct{}) (*struct {
+	}](group).GET("/ping").To(func(context.Context, struct{}) (struct {
 		OK bool `json:"ok"`
 	}, error) {
-		return &struct {
+		return struct {
 			OK bool `json:"ok"`
 		}{OK: true}, nil
 	}))
@@ -553,7 +553,7 @@ func TestGroupRouteRegistersRouteWithPrefixAndMiddleware(t *testing.T) {
 }
 
 func TestNestedGroupCombinesPrefixAndMiddlewares(t *testing.T) {
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 	var calls []string
 	v1 := app.Group("/api", func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -600,12 +600,12 @@ func TestGroupRouteBuilderUsesGroupPath(t *testing.T) {
 		ID string `json:"id"`
 	}
 
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 	group := app.Group("/api")
 	mustRoute(t, Route[input, output](group).
 		GET("/users/{id}").
-		To(func(ctx context.Context, req *input) (*output, error) {
-			return &output{ID: req.Path.ID}, nil
+		To(func(ctx context.Context, req input) (output, error) {
+			return output{ID: req.Path.ID}, nil
 		}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/users/42", nil)
@@ -624,14 +624,14 @@ func TestGroupRouteBuilderUsesGroupPathInOpenAPI(t *testing.T) {
 	type input struct{}
 	type output struct{}
 
-	app := New(WithOpenAPI("api", "1.0.0"))
+	app := New(WithOpenAPI("api", "1.0.0"), WithProduces(MIMEJSON))
 	group := app.Group("/api")
 
 	mustRoute(t, Route[input, output](group).
 		POST("/users").
 		Doc("create user").
-		To(func(context.Context, *input) (*output, error) {
-			return &output{}, nil
+		To(func(context.Context, input) (output, error) {
+			return output{}, nil
 		}))
 
 	spec := app.openAPI.Build()

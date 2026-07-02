@@ -33,7 +33,7 @@ func (scenarioValidator) Validate(context.Context, interface{}) error {
 }
 
 func TestScenario_ServerGroupRouteMiddlewareOpenAPIAndStatic(t *testing.T) {
-	app := New(WithOpenAPI("scenario", "1.0.0"), WithValidator(scenarioValidator{}))
+	app := New(WithOpenAPI("scenario", "1.0.0"), WithValidator(scenarioValidator{}), WithProduces(MIMEJSON))
 
 	app.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -69,18 +69,18 @@ func TestScenario_ServerGroupRouteMiddlewareOpenAPIAndStatic(t *testing.T) {
 		Tags("users").
 		OperationID("createUser").
 		Responds(http.StatusCreated).With(output{}).Desc("created").End().
-		To(func(ctx context.Context, req *input) (*output, error) {
-			return &output{ID: req.Path.ID, Name: req.Body.Name}, nil
+		To(func(ctx context.Context, req input) (output, error) {
+			return output{ID: req.Path.ID, Name: req.Body.Name}, nil
 		}))
 
 	mustScenarioRoute(t, Route[struct{}, struct {
 		OK bool `json:"ok"`
 	}](app).
 		ANY("/health").
-		To(func(ctx context.Context, req *struct{}) (*struct {
+		To(func(ctx context.Context, req struct{}) (struct {
 			OK bool `json:"ok"`
 		}, error) {
-			return &struct {
+			return struct {
 				OK bool `json:"ok"`
 			}{OK: true}, nil
 		}))
@@ -89,10 +89,10 @@ func TestScenario_ServerGroupRouteMiddlewareOpenAPIAndStatic(t *testing.T) {
 		Verb string `json:"verb"`
 	}](app).
 		CUSTOM("PROPFIND", "/custom").
-		To(func(ctx context.Context, req *struct{}) (*struct {
+		To(func(ctx context.Context, req struct{}) (struct {
 			Verb string `json:"verb"`
 		}, error) {
-			return &struct {
+			return struct {
 				Verb string `json:"verb"`
 			}{Verb: "PROPFIND"}, nil
 		}))

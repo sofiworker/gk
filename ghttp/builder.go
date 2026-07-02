@@ -9,9 +9,11 @@ import (
 )
 
 var (
-	ErrRouteMethodRequired = errors.New("route method is required")
-	ErrRouteMethodEmpty    = errors.New("route method is empty")
-	ErrRouteMethodInvalid  = errors.New("route method is invalid")
+	ErrRouteMethodRequired      = errors.New("route method is required")
+	ErrRouteMethodEmpty         = errors.New("route method is empty")
+	ErrRouteMethodInvalid       = errors.New("route method is invalid")
+	ErrRouteProducesRequired    = errors.New("route produces content type is required")
+	ErrRouteProducesUnsupported = errors.New("route produces content type is unsupported")
 
 	allHTTPMethods = []string{
 		http.MethodGet,
@@ -37,14 +39,16 @@ type RouteBuilder[Req, Resp any] struct {
 	reqType     reflect.Type
 	pathType    reflect.Type
 	queryType   reflect.Type
+	produces    string
 	responses   []responseSpec
 	handler     HandlerFunc[Req, Resp]
-	middlewares []MiddlewareFunc
+	middlewares []Middleware
 }
 
 type routeTarget interface {
-	handleRoute(method, path string, handler http.Handler, mws ...MiddlewareFunc) error
-	addRouteSpec(method, path, doc string, tags []string, operationID string, reqType, pathType, queryType reflect.Type, responses []responseSpec)
+	handleRoute(method, path string, handler http.Handler, mws ...Middleware) error
+	addRouteSpec(method, path, doc string, tags []string, operationID string, reqType, pathType, queryType reflect.Type, produces string, responses []responseSpec)
+	producesContentType() string
 	owner() *Server
 }
 
@@ -171,6 +175,12 @@ func (b *RouteBuilder[Req, Resp]) QuerySchema(input interface{}) *RouteBuilder[R
 	return b
 }
 
+// Produces declares the response Content-Type for automatic response encoding.
+func (b *RouteBuilder[Req, Resp]) Produces(contentType string) *RouteBuilder[Req, Resp] {
+	b.produces = contentType
+	return b
+}
+
 // Responds starts a response specification block.
 func (b *RouteBuilder[Req, Resp]) Responds(code int) *responseSpecBuilder[Req, Resp] {
 	return &responseSpecBuilder[Req, Resp]{
@@ -199,21 +209,19 @@ func (rb *responseSpecBuilder[Req, Resp]) End() *RouteBuilder[Req, Resp] {
 }
 
 // Use adds route-level middleware.
-func (b *RouteBuilder[Req, Resp]) Use(mws ...MiddlewareFunc) *RouteBuilder[Req, Resp] {
+func (b *RouteBuilder[Req, Resp]) Use(mws ...Middleware) *RouteBuilder[Req, Resp] {
 	b.middlewares = append(b.middlewares, mws...)
-	return b
-}
-
-// UseFunc adds handler-function middleware to the route.
-func (b *RouteBuilder[Req, Resp]) UseFunc(mws ...HandlerMiddlewareFunc) *RouteBuilder[Req, Resp] {
-	for _, mw := range mws {
-		b.middlewares = append(b.middlewares, HandlerMiddleware(mw))
-	}
 	return b
 }
 
 // To registers the handler and finalizes the route.
 func (b *RouteBuilder[Req, Resp]) To(handler HandlerFunc[Req, Resp]) error {
+	if err := b.validateMethods(); err != nil {
+		return err
+	}
+	if err := b.resolveProduces(); err != nil {
+		return err
+	}
 	b.handler = handler
 	return b.toHandler(b.buildHandlerChain())
 }
@@ -226,6 +234,41 @@ func (b *RouteBuilder[Req, Resp]) ToHTTP(handler http.Handler) error {
 // ToRaw registers a raw handler function with the selected route method and path.
 func (b *RouteBuilder[Req, Resp]) ToRaw(handler RawHandler) error {
 	return b.ToHTTP(http.HandlerFunc(handler))
+}
+
+// ToHTTPFunc registers a parsed-input handler that writes the HTTP response itself.
+func (b *RouteBuilder[Req, Resp]) ToHTTPFunc(handler HTTPHandlerFunc[Req]) error {
+	return b.toHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		input, ok := b.parseAndValidateInput(w, r)
+		if !ok {
+			return
+		}
+		if err := handler(w, r, input); err != nil {
+			if isErrHandled(err) {
+				return
+			}
+			writeError(w, r, b.target.owner(), http.StatusInternalServerError, err)
+		}
+	}))
+}
+
+// ToRedirect registers a fixed redirect response.
+func (b *RouteBuilder[Req, Resp]) ToRedirect(code int, location string) error {
+	return b.ToRedirectFunc(code, func(Req) (string, error) {
+		return location, nil
+	})
+}
+
+// ToRedirectFunc registers a redirect response whose target uses parsed input.
+func (b *RouteBuilder[Req, Resp]) ToRedirectFunc(code int, redirect RedirectFunc[Req]) error {
+	return b.ToHTTPFunc(func(w http.ResponseWriter, r *http.Request, input Req) error {
+		location, err := redirect(input)
+		if err != nil {
+			return err
+		}
+		http.Redirect(w, r, location, code)
+		return nil
+	})
 }
 
 // ToSSE registers a Server-Sent Events handler with the selected route method and path.
@@ -271,6 +314,19 @@ func (b *RouteBuilder[Req, Resp]) ToHTML(status int, name string, data interface
 }
 
 func (b *RouteBuilder[Req, Resp]) toHandler(handler http.Handler) error {
+	if err := b.validateMethods(); err != nil {
+		return err
+	}
+	for _, method := range b.methods {
+		if err := b.target.handleRoute(method, b.path, handler, b.middlewares...); err != nil {
+			return err
+		}
+		b.register(method)
+	}
+	return nil
+}
+
+func (b *RouteBuilder[Req, Resp]) validateMethods() error {
 	if len(b.methods) == 0 {
 		return ErrRouteMethodRequired
 	}
@@ -281,10 +337,6 @@ func (b *RouteBuilder[Req, Resp]) toHandler(handler http.Handler) error {
 		if !isHTTPMethodToken(method) {
 			return ErrRouteMethodInvalid
 		}
-		if err := b.target.handleRoute(method, b.path, handler, b.middlewares...); err != nil {
-			return err
-		}
-		b.register(method)
 	}
 	return nil
 }
@@ -295,26 +347,18 @@ func (b *RouteBuilder[Req, Resp]) buildHandlerChain() http.Handler {
 }
 
 func (b *RouteBuilder[Req, Resp]) register(method string) {
-	b.target.addRouteSpec(method, b.path, b.doc, b.tags, b.operationID, b.reqType, b.pathType, b.queryType, b.responses)
+	b.target.addRouteSpec(method, b.path, b.doc, b.tags, b.operationID, b.reqType, b.pathType, b.queryType, b.produces, b.responses)
 }
 
 func (b *RouteBuilder[Req, Resp]) buildHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var input Req
-		server := b.target.owner()
-		if err := parseInputWithConfig(r, &input, server.config); err != nil {
-			writeError(w, r, b.target.owner(), http.StatusBadRequest, err)
+		input, ok := b.parseAndValidateInput(w, r)
+		if !ok {
 			return
 		}
 
-		if server.validator != nil {
-			if err := server.validator.Validate(r.Context(), &input); err != nil {
-				writeError(w, r, server, http.StatusUnprocessableEntity, err)
-				return
-			}
-		}
-
-		resp, err := b.handler(contextWithRequest(r.Context(), r), &input)
+		server := b.target.owner()
+		resp, err := b.handler(contextWithRequest(r.Context(), r), input)
 		if err != nil {
 			if isErrHandled(err) {
 				return
@@ -327,8 +371,71 @@ func (b *RouteBuilder[Req, Resp]) buildHandler() http.Handler {
 			server.envelope(requestContext{w: w, r: r}, resolveStatusCode(resp), resp, nil, server.codecMgr)
 			return
 		}
-		writeResponse(w, r, server, resolveStatusCode(resp), resp)
+		writeResponse(w, r, server, resolveStatusCode(resp), b.produces, resp)
 	})
+}
+
+func (b *RouteBuilder[Req, Resp]) resolveProduces() error {
+	if b.produces == "" {
+		b.produces = b.target.producesContentType()
+	}
+	if b.produces == "" {
+		return ErrRouteProducesRequired
+	}
+	if _, ok := b.target.owner().codecMgr.Resolve(b.produces); !ok {
+		return ErrRouteProducesUnsupported
+	}
+	return nil
+}
+
+func (b *RouteBuilder[Req, Resp]) parseAndValidateInput(w http.ResponseWriter, r *http.Request) (Req, bool) {
+	input, target := newInputTarget[Req]()
+	server := b.target.owner()
+	if err := parseInputWithConfig(r, target, server.config); err != nil {
+		writeError(w, r, server, http.StatusBadRequest, err)
+		var zero Req
+		return zero, false
+	}
+
+	if server.validator != nil {
+		if err := server.validator.Validate(r.Context(), target); err != nil {
+			writeError(w, r, server, http.StatusUnprocessableEntity, err)
+			var zero Req
+			return zero, false
+		}
+	}
+
+	return inputFromTarget[Req](input, target), true
+}
+
+func newInputTarget[Req any]() (Req, interface{}) {
+	var input Req
+	t := reflect.TypeOf(input)
+	if t == nil {
+		return input, &input
+	}
+	if t.Kind() == reflect.Ptr && t.Elem().Kind() == reflect.Struct {
+		target := reflect.New(t.Elem()).Interface()
+		return target.(Req), target
+	}
+	if t.Kind() == reflect.Struct {
+		return input, reflect.New(t).Interface()
+	}
+	return input, &input
+}
+
+func inputFromTarget[Req any](input Req, target interface{}) Req {
+	t := reflect.TypeOf(input)
+	if t == nil {
+		return input
+	}
+	if t.Kind() == reflect.Ptr && t.Elem().Kind() == reflect.Struct {
+		return target.(Req)
+	}
+	if t.Kind() == reflect.Struct {
+		return reflect.ValueOf(target).Elem().Interface().(Req)
+	}
+	return input
 }
 
 func isHTTPMethodToken(method string) bool {
@@ -364,10 +471,13 @@ func statusCodeFromError(defaultCode int, err error) int {
 	return defaultCode
 }
 
-func writeResponse(w http.ResponseWriter, r *http.Request, s *Server, statusCode int, resp interface{}) {
-	accept := r.Header.Get("Accept")
-	codec := s.codecMgr.Negotiate(accept)
-	w.Header().Set("Content-Type", codec.ContentTypes()[0])
+func writeResponse(w http.ResponseWriter, r *http.Request, s *Server, statusCode int, produces string, resp interface{}) {
+	codec, ok := s.codecMgr.Resolve(produces)
+	if !ok {
+		writeError(w, r, s, http.StatusInternalServerError, ErrRouteProducesUnsupported)
+		return
+	}
+	w.Header().Set("Content-Type", produces)
 	w.WriteHeader(statusCode)
 	_ = codec.Marshal(w, resp)
 }

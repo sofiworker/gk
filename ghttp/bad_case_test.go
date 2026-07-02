@@ -35,7 +35,7 @@ type badCaseOutput struct {
 }
 
 func TestRouteBuilderBadCasesMalformedJSONReturnsBadRequest(t *testing.T) {
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 	mustRoute(t, Route[badCaseInput, badCaseOutput](app).POST("/users/{id}").To(badCaseEchoHandler))
 
 	rec := httptest.NewRecorder()
@@ -49,7 +49,7 @@ func TestRouteBuilderBadCasesMalformedJSONReturnsBadRequest(t *testing.T) {
 }
 
 func TestRouteBuilderBadCasesInvalidScalarInputFallsBackToZeroValue(t *testing.T) {
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 	mustRoute(t, Route[badCaseInput, badCaseOutput](app).POST("/users/{id}").To(badCaseEchoHandler))
 
 	rec := httptest.NewRecorder()
@@ -74,7 +74,7 @@ func TestRouteBuilderBadCasesValidatorErrorReturnsUnprocessableEntity(t *testing
 	wantErr := errors.New("validation failed")
 	app := New(WithValidator(serverValidatorFunc(func(context.Context, interface{}) error {
 		return wantErr
-	})))
+	})), WithProduces(MIMEJSON))
 	mustRoute(t, Route[badCaseInput, badCaseOutput](app).POST("/users/{id}").To(badCaseEchoHandler))
 
 	rec := httptest.NewRecorder()
@@ -88,9 +88,9 @@ func TestRouteBuilderBadCasesValidatorErrorReturnsUnprocessableEntity(t *testing
 }
 
 func TestRouteBuilderBadCasesHandlerHTTPErrorStatusIsPreserved(t *testing.T) {
-	app := New()
-	mustRoute(t, Route[struct{}, struct{}](app).GET("/conflict").To(func(context.Context, *struct{}) (*struct{}, error) {
-		return nil, Conflict("already exists")
+	app := New(WithProduces(MIMEJSON))
+	mustRoute(t, Route[struct{}, struct{}](app).GET("/conflict").To(func(context.Context, struct{}) (struct{}, error) {
+		return struct{}{}, Conflict("already exists")
 	}))
 
 	rec := httptest.NewRecorder()
@@ -102,7 +102,7 @@ func TestRouteBuilderBadCasesHandlerHTTPErrorStatusIsPreserved(t *testing.T) {
 }
 
 func TestRouteBuilderBadCasesMiddlewareCanShortCircuitRoute(t *testing.T) {
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 	mustRoute(t, Route[struct{}, struct{}](app).
 		GET("/blocked").
 		Use(func(http.Handler) http.Handler {
@@ -111,9 +111,9 @@ func TestRouteBuilderBadCasesMiddlewareCanShortCircuitRoute(t *testing.T) {
 				_, _ = w.Write([]byte("blocked"))
 			})
 		}).
-		To(func(context.Context, *struct{}) (*struct{}, error) {
+		To(func(context.Context, struct{}) (struct{}, error) {
 			t.Fatal("handler should not be called")
-			return &struct{}{}, nil
+			return struct{}{}, nil
 		}))
 
 	rec := httptest.NewRecorder()
@@ -139,10 +139,10 @@ func TestRouteBuilderBadCasesGroupPathJoiningEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			app := New()
+			app := New(WithProduces(MIMEJSON))
 			group := app.Group(tt.prefix)
-			mustRoute(t, Route[struct{}, badCaseOutput](group).GET(tt.routePath).To(func(context.Context, *struct{}) (*badCaseOutput, error) {
-				return &badCaseOutput{Name: tt.name}, nil
+			mustRoute(t, Route[struct{}, badCaseOutput](group).GET(tt.routePath).To(func(context.Context, struct{}) (badCaseOutput, error) {
+				return badCaseOutput{Name: tt.name}, nil
 			}))
 
 			rec := httptest.NewRecorder()
@@ -155,14 +155,14 @@ func TestRouteBuilderBadCasesGroupPathJoiningEdgeCases(t *testing.T) {
 }
 
 func TestRouteBuilderBadCasesCORSPreflightShortCircuitsOptionsRoute(t *testing.T) {
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 	app.Use(CORS(CORSConfig{
 		AllowOrigins: []string{"*"},
 		AllowMethods: []string{http.MethodOptions},
 	}))
-	mustRoute(t, Route[struct{}, badCaseOutput](app).OPTIONS("/options").To(func(context.Context, *struct{}) (*badCaseOutput, error) {
+	mustRoute(t, Route[struct{}, badCaseOutput](app).OPTIONS("/options").To(func(context.Context, struct{}) (badCaseOutput, error) {
 		t.Fatal("OPTIONS handler should not be called for CORS preflight")
-		return &badCaseOutput{}, nil
+		return badCaseOutput{}, nil
 	}))
 
 	rec := httptest.NewRecorder()
@@ -178,8 +178,8 @@ func TestRouteBuilderBadCasesCORSPreflightShortCircuitsOptionsRoute(t *testing.T
 	}
 }
 
-func badCaseEchoHandler(ctx context.Context, req *badCaseInput) (*badCaseOutput, error) {
-	return &badCaseOutput{
+func badCaseEchoHandler(ctx context.Context, req badCaseInput) (badCaseOutput, error) {
+	return badCaseOutput{
 		ID:      req.Path.ID,
 		Page:    req.Query.Page,
 		Flag:    req.Query.Flag,

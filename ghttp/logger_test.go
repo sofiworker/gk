@@ -66,11 +66,11 @@ func TestLoggerLevels(t *testing.T) {
 
 func TestRequestLoggerUsesInjectedLogger(t *testing.T) {
 	tl := &testLogger{}
-	app := New(WithLogger(tl))
+	app := New(WithLogger(tl), WithProduces(MIMEJSON))
 	app.Use(RequestLogger())
 
-	if err := Route[struct{}, struct{}](app).GET("/log").To(func(context.Context, *struct{}) (*struct{}, error) {
-		return &struct{}{}, nil
+	if err := Route[struct{}, struct{}](app).GET("/log").To(func(context.Context, struct{}) (struct{}, error) {
+		return struct{}{}, nil
 	}); err != nil {
 		t.Fatalf("To failed: %v", err)
 	}
@@ -87,11 +87,11 @@ func TestRequestLoggerUsesInjectedLogger(t *testing.T) {
 }
 
 func TestRequestLoggerWithoutInjectedLoggerIsNoop(t *testing.T) {
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 	app.Use(RequestLogger())
 
-	if err := Route[struct{}, struct{}](app).GET("/log").To(func(context.Context, *struct{}) (*struct{}, error) {
-		return &struct{}{}, nil
+	if err := Route[struct{}, struct{}](app).GET("/log").To(func(context.Context, struct{}) (struct{}, error) {
+		return struct{}{}, nil
 	}); err != nil {
 		t.Fatalf("To failed: %v", err)
 	}
@@ -106,10 +106,10 @@ func TestRequestLoggerWithoutInjectedLoggerIsNoop(t *testing.T) {
 
 func TestRecovererUsesInjectedLogger(t *testing.T) {
 	tl := &testLogger{}
-	app := New(WithLogger(tl))
+	app := New(WithLogger(tl), WithProduces(MIMEJSON))
 	app.Use(Recoverer())
 
-	if err := Route[struct{}, struct{}](app).GET("/panic").To(func(context.Context, *struct{}) (*struct{}, error) {
+	if err := Route[struct{}, struct{}](app).GET("/panic").To(func(context.Context, struct{}) (struct{}, error) {
 		panic("boom")
 	}); err != nil {
 		t.Fatalf("To failed: %v", err)

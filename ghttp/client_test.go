@@ -8,14 +8,14 @@ import (
 )
 
 func TestClientBasicGet(t *testing.T) {
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 	type helloResp struct {
 		Body struct {
 			Message string `json:"message"`
 		}
 	}
-	if err := Route[struct{ Body struct{} }, helloResp](app).GET("/hello").To(func(ctx context.Context, req *struct{ Body struct{} }) (*helloResp, error) {
-		return &helloResp{Body: struct {
+	if err := Route[struct{ Body struct{} }, helloResp](app).GET("/hello").To(func(ctx context.Context, req struct{ Body struct{} }) (helloResp, error) {
+		return helloResp{Body: struct {
 			Message string `json:"message"`
 		}{Message: "Hello"}}, nil
 	}); err != nil {
@@ -39,12 +39,12 @@ func TestClientBasicGet(t *testing.T) {
 }
 
 func TestClientBaseURL(t *testing.T) {
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 	type pongResp struct {
 		Body struct{ Pong string }
 	}
-	if err := Route[struct{ Body struct{} }, pongResp](app).GET("/ping").To(func(ctx context.Context, req *struct{ Body struct{} }) (*pongResp, error) {
-		return &pongResp{Body: struct{ Pong string }{Pong: "ok"}}, nil
+	if err := Route[struct{ Body struct{} }, pongResp](app).GET("/ping").To(func(ctx context.Context, req struct{ Body struct{} }) (pongResp, error) {
+		return pongResp{Body: struct{ Pong string }{Pong: "ok"}}, nil
 	}); err != nil {
 		t.Fatalf("To failed: %v", err)
 	}
@@ -74,9 +74,9 @@ type clientGreetResp struct {
 }
 
 func TestClientGenericEndpoint(t *testing.T) {
-	app := New()
-	if err := Route[clientGreetReq, clientGreetResp](app).POST("/greet").To(func(ctx context.Context, req *clientGreetReq) (*clientGreetResp, error) {
-		return &clientGreetResp{Body: struct {
+	app := New(WithProduces(MIMEJSON))
+	if err := Route[clientGreetReq, clientGreetResp](app).POST("/greet").To(func(ctx context.Context, req clientGreetReq) (clientGreetResp, error) {
+		return clientGreetResp{Body: struct {
 			Message string `json:"message"`
 		}{Message: "Hello, " + req.Body.Name}}, nil
 	}); err != nil {

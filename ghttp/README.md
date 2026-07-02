@@ -59,17 +59,18 @@ type GreetOutput struct {
 }
 
 func main() {
-    s := ghttp.New()
+    s := ghttp.New(ghttp.WithProduces(ghttp.MIMEJSON))
 
     // 链式构建器（支持 OpenAPI 元数据）
     if err := ghttp.Route[GreetInput, GreetOutput](s).
         GET("/hello/{name}").
+        Produces(ghttp.MIMEJSON).
         Doc("返回个性化的问候消息").
         Reads(GreetInput{}).
         Responds(200).With(GreetOutput{}).Desc("成功").
         End().
-        To(func(ctx context.Context, req *GreetInput) (*GreetOutput, error) {
-            return &GreetOutput{Message: "Hello, " + req.Name}, nil
+        To(func(ctx context.Context, req GreetInput) (GreetOutput, error) {
+            return GreetOutput{Message: "Hello, " + req.Name}, nil
         }); err != nil {
         panic(err)
     }
@@ -127,6 +128,7 @@ resp, err := ghttp.Do[GreetInput, GreetOutput](client, "POST", "/hello", input)
 | `.CUSTOM(method, path)` | 设置自定义 HTTP 方法和路由路径 |
 | `.Doc("描述")` | 操作描述 |
 | `.Reads(input)` | 请求体类型（用于 OpenAPI） |
+| `.Produces(contentType)` | 自动响应编码的 Content-Type，可在 server/group/route 上声明 |
 | `.Responds(code)` | 响应状态码 |
 | `.With(output)` | 响应体类型 |
 | `.Desc("说明")` | 响应说明 |
@@ -250,9 +252,8 @@ renderer := ghttp.NewRenderer("./templates/*.html")
 s = ghttp.New(ghttp.WithRenderer(renderer))
 
 // 处理函数中
-ghttp.Route[NoInput, NoOutput](s).GET("/page").To(func(ctx context.Context, req *NoInput) (*NoOutput, error) {
-    return nil
-    return nil, nil
+ghttp.Route[NoInput, NoOutput](s).GET("/page").Produces(ghttp.MIMEJSON).To(func(ctx context.Context, req NoInput) (NoOutput, error) {
+    return NoOutput{}, nil
 })
 ```
 

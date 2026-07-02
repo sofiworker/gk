@@ -17,7 +17,7 @@ import (
 // ---- Integration test types ----
 
 func TestIntegration_GetUser(t *testing.T) {
-	s := New()
+	s := New(WithProduces(MIMEJSON))
 
 	type input struct {
 		Path struct {
@@ -34,8 +34,8 @@ func TestIntegration_GetUser(t *testing.T) {
 		Role string `json:"role"`
 	}
 
-	_ = Route[input, output](s).GET("/users/{id}").To(func(ctx context.Context, req *input) (*output, error) {
-		return &output{
+	_ = Route[input, output](s).GET("/users/{id}").To(func(ctx context.Context, req input) (output, error) {
+		return output{
 			ID:   req.Path.ID,
 			Name: "Alice",
 			Role: req.Query.Role,
@@ -62,7 +62,7 @@ func TestIntegration_GetUser(t *testing.T) {
 }
 
 func TestIntegration_CreateUser(t *testing.T) {
-	s := New()
+	s := New(WithProduces(MIMEJSON))
 
 	type input struct {
 		Path struct {
@@ -78,8 +78,8 @@ func TestIntegration_CreateUser(t *testing.T) {
 		Name string `json:"name"`
 	}
 
-	_ = Route[input, output](s).POST("/users/{id}").To(func(ctx context.Context, req *input) (*output, error) {
-		return &output{
+	_ = Route[input, output](s).POST("/users/{id}").To(func(ctx context.Context, req input) (output, error) {
+		return output{
 			ID:   req.Path.ID,
 			Name: req.Body.Name,
 		}, nil
@@ -104,11 +104,11 @@ func TestIntegration_CreateUser(t *testing.T) {
 }
 
 func TestIntegration_ValidationError(t *testing.T) {
-	s := New()
+	s := New(WithProduces(MIMEJSON))
 	s.validator = &mockValidator{}
 
-	_ = Route[struct{ Body struct{} }, struct{ Body struct{} }](s).GET("/users/{id}").To(func(ctx context.Context, req *struct{ Body struct{} }) (*struct{ Body struct{} }, error) {
-		return &struct{ Body struct{} }{}, nil
+	_ = Route[struct{ Body struct{} }, struct{ Body struct{} }](s).GET("/users/{id}").To(func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
+		return struct{ Body struct{} }{}, nil
 	},
 	)
 
@@ -123,9 +123,9 @@ func TestIntegration_ValidationError(t *testing.T) {
 	// references b.server.validator - this should work if set before route registration.
 	// Let's check: Server.validator is set but To() already captured it.
 	// The issue: post-registration set won't affect already-built handlers.
-	// So we need to rebuild server with validator passed via New().
+	// So we need to rebuild server with validator passed via New(WithProduces(MIMEJSON)).
 	// For now skip this test as it requires design consideration.
-	t.Skip("Validator requires New() option - needs test refactor")
+	t.Skip("Validator requires New(WithProduces(MIMEJSON)) option - needs test refactor")
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 }
 
@@ -136,9 +136,9 @@ func (m *mockValidator) Validate(ctx context.Context, i interface{}) error {
 }
 
 func TestIntegration_NotFound(t *testing.T) {
-	s := New()
-	_ = Route[struct{}, struct{}](s).GET("/exists").To(func(ctx context.Context, req *struct{}) (*struct{}, error) {
-		return &struct{}{}, nil
+	s := New(WithProduces(MIMEJSON))
+	_ = Route[struct{}, struct{}](s).GET("/exists").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+		return struct{}{}, nil
 	})
 
 	ts := httptest.NewServer(s)
@@ -153,7 +153,7 @@ func TestIntegration_NotFound(t *testing.T) {
 }
 
 func TestIntegration_OpenAPIEndpoint(t *testing.T) {
-	s := New(WithOpenAPI("test", "1.0.0"))
+	s := New(WithOpenAPI("test", "1.0.0"), WithProduces(MIMEJSON))
 
 	_ = Route[struct {
 		Path struct {
@@ -161,14 +161,14 @@ func TestIntegration_OpenAPIEndpoint(t *testing.T) {
 		}
 	}, struct {
 		ID int `json:"id"`
-	}](s).GET("/users/{id}").To(func(ctx context.Context, req *struct {
+	}](s).GET("/users/{id}").To(func(ctx context.Context, req struct {
 		Path struct {
 			ID int `path:"id"`
 		}
-	}) (*struct {
+	}) (struct {
 		ID int `json:"id"`
 	}, error) {
-		return &struct {
+		return struct {
 			ID int `json:"id"`
 		}{req.Path.ID}, nil
 	},
@@ -201,7 +201,7 @@ func TestIntegration_OpenAPIEndpoint(t *testing.T) {
 }
 
 func TestIntegration_ClientGetAndUnwrapEnvelope(t *testing.T) {
-	s := New()
+	s := New(WithProduces(MIMEJSON))
 
 	type output struct {
 		ID   int    `json:"id"`
@@ -212,12 +212,12 @@ func TestIntegration_ClientGetAndUnwrapEnvelope(t *testing.T) {
 		Path struct {
 			ID int `path:"id"`
 		}
-	}, output](s).GET("/users/{id}").To(func(ctx context.Context, req *struct {
+	}, output](s).GET("/users/{id}").To(func(ctx context.Context, req struct {
 		Path struct {
 			ID int `path:"id"`
 		}
-	}) (*output, error) {
-		return &output{ID: req.Path.ID, Name: "Client-Test"}, nil
+	}) (output, error) {
+		return output{ID: req.Path.ID, Name: "Client-Test"}, nil
 	},
 	)
 
@@ -238,7 +238,7 @@ func TestIntegration_ClientGetAndUnwrapEnvelope(t *testing.T) {
 }
 
 func TestIntegration_ClientGetChain(t *testing.T) {
-	s := New()
+	s := New(WithProduces(MIMEJSON))
 
 	type output struct {
 		ID   int    `json:"id"`
@@ -253,15 +253,15 @@ func TestIntegration_ClientGetChain(t *testing.T) {
 		Query struct {
 			Role string `query:"role"`
 		}
-	}, output](s).GET("/users/{id}").To(func(ctx context.Context, req *struct {
+	}, output](s).GET("/users/{id}").To(func(ctx context.Context, req struct {
 		Path struct {
 			ID int `path:"id"`
 		}
 		Query struct {
 			Role string `query:"role"`
 		}
-	}) (*output, error) {
-		return &output{ID: req.Path.ID, Name: "Chain", Role: req.Query.Role}, nil
+	}) (output, error) {
+		return output{ID: req.Path.ID, Name: "Chain", Role: req.Query.Role}, nil
 	},
 	)
 
@@ -287,7 +287,7 @@ func TestIntegration_ClientGetChain(t *testing.T) {
 }
 
 func TestIntegration_GenericClientPOST(t *testing.T) {
-	s := New()
+	s := New(WithProduces(MIMEJSON))
 
 	type createReq struct {
 		Path struct {
@@ -304,8 +304,8 @@ func TestIntegration_GenericClientPOST(t *testing.T) {
 		Role string `json:"role"`
 	}
 
-	_ = Route[createReq, createResp](s).POST("/users").To(func(ctx context.Context, req *createReq) (*createResp, error) {
-		return &createResp{ID: req.Path.ID, Name: req.Body.Name, Role: "generic"}, nil
+	_ = Route[createReq, createResp](s).POST("/users").To(func(ctx context.Context, req createReq) (createResp, error) {
+		return createResp{ID: req.Path.ID, Name: req.Body.Name, Role: "generic"}, nil
 	},
 	)
 
@@ -333,7 +333,7 @@ func TestIntegration_GenericClientPOST(t *testing.T) {
 }
 
 func TestIntegration_SSE(t *testing.T) {
-	s := New()
+	s := New(WithProduces(MIMEJSON))
 
 	err := Route[struct{}, struct{}](s).GET("/events").ToSSE(func(ctx Context, stream *SSEWriter) error {
 		_ = stream.WriteEvent("message", "hello")
@@ -359,7 +359,7 @@ func TestIntegration_SSE(t *testing.T) {
 }
 
 func TestIntegration_MiddlewareOrder(t *testing.T) {
-	s := New()
+	s := New(WithProduces(MIMEJSON))
 
 	var order []string
 
@@ -381,11 +381,11 @@ func TestIntegration_MiddlewareOrder(t *testing.T) {
 
 	_ = Route[struct{ Body struct{} }, struct {
 		ID int `json:"id"`
-	}](s).GET("/test").To(func(ctx context.Context, req *struct{ Body struct{} }) (*struct {
+	}](s).GET("/test").To(func(ctx context.Context, req struct{ Body struct{} }) (struct {
 		ID int `json:"id"`
 	}, error) {
 		order = append(order, "handler")
-		return &struct {
+		return struct {
 			ID int `json:"id"`
 		}{1}, nil
 	},
@@ -401,7 +401,7 @@ func TestIntegration_MiddlewareOrder(t *testing.T) {
 }
 
 func TestIntegration_RouteBuilderChainWithOpenAPI(t *testing.T) {
-	s := New(WithOpenAPI("test", "1.0.0"))
+	s := New(WithOpenAPI("test", "1.0.0"), WithProduces(MIMEJSON))
 
 	type createRequest struct {
 		Body struct {
@@ -422,8 +422,8 @@ func TestIntegration_RouteBuilderChainWithOpenAPI(t *testing.T) {
 		Reads(createRequest{}).
 		Responds(201).With(createResponse{}).Desc("User created").End().
 		Tags("users").
-		To(func(ctx context.Context, req *createRequest) (*createResponse, error) {
-			return &createResponse{ID: 1, Name: req.Body.Name, Email: req.Body.Email}, nil
+		To(func(ctx context.Context, req createRequest) (createResponse, error) {
+			return createResponse{ID: 1, Name: req.Body.Name, Email: req.Body.Email}, nil
 		})
 
 	ts := httptest.NewServer(s)
@@ -458,7 +458,7 @@ func TestIntegration_RouteBuilderChainWithOpenAPI(t *testing.T) {
 }
 
 func TestIntegration_StaticFile(t *testing.T) {
-	s := New()
+	s := New(WithProduces(MIMEJSON))
 
 	err := Route[struct{}, struct{}](s).GET("/static").ToStatic("./testdata")
 	require.NoError(t, err)
@@ -475,10 +475,10 @@ func TestIntegration_StaticFile(t *testing.T) {
 }
 
 func TestIntegration_ErrorHandling(t *testing.T) {
-	s := New()
+	s := New(WithProduces(MIMEJSON))
 
-	_ = Route[struct{ Body struct{} }, struct{ Body struct{} }](s).GET("/error").To(func(ctx context.Context, req *struct{ Body struct{} }) (*struct{ Body struct{} }, error) {
-		return nil, Err(http.StatusBadRequest, "invalid input", WithCause(fmt.Errorf("name is required")))
+	_ = Route[struct{ Body struct{} }, struct{ Body struct{} }](s).GET("/error").To(func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
+		return struct{ Body struct{} }{}, Err(http.StatusBadRequest, "invalid input", WithCause(fmt.Errorf("name is required")))
 	},
 	)
 
@@ -513,14 +513,14 @@ func TestIntegration_CustomEnvelope(t *testing.T) {
 			w.WriteHeader(statusCode)
 			codec.Marshal(w, &myEnvelope{OK: true, Data: resp})
 		}
-	}))
+	}), WithProduces(MIMEJSON))
 
 	type pongResp struct {
 		Pong string `json:"pong"`
 	}
 
-	_ = Route[struct{ Body struct{} }, pongResp](s).GET("/ping").To(func(ctx context.Context, req *struct{ Body struct{} }) (*pongResp, error) {
-		return &pongResp{Pong: "ok"}, nil
+	_ = Route[struct{ Body struct{} }, pongResp](s).GET("/ping").To(func(ctx context.Context, req struct{ Body struct{} }) (pongResp, error) {
+		return pongResp{Pong: "ok"}, nil
 	},
 	)
 

@@ -13,7 +13,7 @@ func TestStaticServesFile(t *testing.T) {
 	testFile := filepath.Join(tmpDir, "hello.txt")
 	os.WriteFile(testFile, []byte("Hello, World!"), 0644)
 
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 	if err := Route[struct{}, struct{}](app).GET("/static").ToStatic(tmpDir); err != nil {
 		t.Fatalf("ToStatic failed: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestStaticFileSingle(t *testing.T) {
 	testFile := filepath.Join(tmpDir, "favicon.ico")
 	os.WriteFile(testFile, []byte("icon-data"), 0644)
 
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 	if err := Route[struct{}, struct{}](app).GET("/favicon.ico").ToStaticFile(testFile); err != nil {
 		t.Fatalf("ToStaticFile failed: %v", err)
 	}

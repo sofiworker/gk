@@ -31,8 +31,8 @@ type testOutput struct {
 	}
 }
 
-func testHandler(ctx context.Context, req *testInput) (*testOutput, error) {
-	return &testOutput{
+func testHandler(ctx context.Context, req testInput) (testOutput, error) {
+	return testOutput{
 		Body: struct {
 			ID   string `json:"id"`
 			Name string `json:"name"`
@@ -44,7 +44,7 @@ func testHandler(ctx context.Context, req *testInput) (*testOutput, error) {
 }
 
 func TestRouteBuilderWithPOST(t *testing.T) {
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 
 	if err := Route[testInput, testOutput](app).
 		POST("/users/{id}").
@@ -86,7 +86,7 @@ func TestRouteBuilderWithPOST(t *testing.T) {
 }
 
 func TestRouteBuilderPostShortcutReplacement(t *testing.T) {
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 
 	if err := Route[testInput, testOutput](app).POST("/users/{id}").To(testHandler); err != nil {
 		t.Fatalf("To failed: %v", err)
@@ -111,10 +111,152 @@ func TestRouteBuilderPostShortcutReplacement(t *testing.T) {
 	}
 }
 
+func TestRouteBuilderPointerResponseType(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+
+	type output struct {
+		Message string `json:"message"`
+	}
+
+	if err := Route[struct{}, *output](app).GET("/pointer-response").To(func(ctx context.Context, req struct{}) (*output, error) {
+		return &output{Message: "ok"}, nil
+	}); err != nil {
+		t.Fatalf("To failed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/pointer-response", nil)
+	app.ServeHTTP(rec, req)
+
+	var data output
+	if err := json.Unmarshal(rec.Body.Bytes(), &data); err != nil {
+		t.Fatalf("unmarshal response failed: %v", err)
+	}
+	if data.Message != "ok" {
+		t.Fatalf("message = %q, want ok", data.Message)
+	}
+}
+
+func TestRouteBuilderPointerRequestType(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+
+	type input struct {
+		Query struct {
+			Name string `query:"name"`
+		}
+	}
+	type output struct {
+		Name string `json:"name"`
+	}
+
+	if err := Route[*input, output](app).GET("/pointer-request").To(func(ctx context.Context, req *input) (output, error) {
+		if req == nil {
+			t.Fatal("request input is nil")
+		}
+		return output{Name: req.Query.Name}, nil
+	}); err != nil {
+		t.Fatalf("To failed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/pointer-request?name=alice", nil)
+	app.ServeHTTP(rec, req)
+
+	var data output
+	if err := json.Unmarshal(rec.Body.Bytes(), &data); err != nil {
+		t.Fatalf("unmarshal response failed: %v", err)
+	}
+	if data.Name != "alice" {
+		t.Fatalf("name = %q, want alice", data.Name)
+	}
+}
+
+func TestRouteBuilderToRequiresProduces(t *testing.T) {
+	app := New()
+
+	err := Route[struct{}, string](app).GET("/ping").To(func(ctx context.Context, req struct{}) (string, error) {
+		return "pong", nil
+	})
+	if !errors.Is(err, ErrRouteProducesRequired) {
+		t.Fatalf("To error = %v, want ErrRouteProducesRequired", err)
+	}
+}
+
+func TestRouteBuilderProducesPlainString(t *testing.T) {
+	app := New()
+
+	if err := Route[struct{}, string](app).
+		GET("/ping").
+		Produces(MIMEPlain).
+		To(func(ctx context.Context, req struct{}) (string, error) {
+			return "pong", nil
+		}); err != nil {
+		t.Fatalf("To failed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	req.Header.Set("Accept", "*/*")
+	app.ServeHTTP(rec, req)
+
+	if ct := rec.Header().Get("Content-Type"); ct != MIMEPlain {
+		t.Fatalf("Content-Type = %q, want %s", ct, MIMEPlain)
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != "pong" {
+		t.Fatalf("body = %q, want pong", got)
+	}
+}
+
+func TestRouteBuilderProducesInheritance(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	group := app.Group("/api").Produces(MIMEPlain)
+
+	if err := Route[struct{}, string](app).GET("/server").To(func(context.Context, struct{}) (string, error) {
+		return "server", nil
+	}); err != nil {
+		t.Fatalf("server route To failed: %v", err)
+	}
+
+	if err := Route[struct{}, string](group).GET("/group").To(func(context.Context, struct{}) (string, error) {
+		return "group", nil
+	}); err != nil {
+		t.Fatalf("group route To failed: %v", err)
+	}
+
+	if err := Route[struct{}, string](group).GET("/route").Produces(MIMEJSON).To(func(context.Context, struct{}) (string, error) {
+		return "route", nil
+	}); err != nil {
+		t.Fatalf("route override To failed: %v", err)
+	}
+
+	tests := []struct {
+		path string
+		ct   string
+		body string
+	}{
+		{path: "/server", ct: MIMEJSON, body: `"server"`},
+		{path: "/api/group", ct: MIMEPlain, body: "group"},
+		{path: "/api/route", ct: MIMEJSON, body: `"route"`},
+	}
+	for _, tt := range tests {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+		req.Header.Set("Accept", "*/*")
+		app.ServeHTTP(rec, req)
+
+		if ct := rec.Header().Get("Content-Type"); ct != tt.ct {
+			t.Fatalf("%s Content-Type = %q, want %s", tt.path, ct, tt.ct)
+		}
+		if got := strings.TrimSpace(rec.Body.String()); got != tt.body {
+			t.Fatalf("%s body = %q, want %q", tt.path, got, tt.body)
+		}
+	}
+}
+
 func TestRouteBuilderToReturnsRegisterErrorAndSkipsOpenAPI(t *testing.T) {
 	wantErr := errors.New("register failed")
 	router := &failingRouter{err: wantErr}
-	app := New(WithOpenAPI("test", "1.0.0"), WithRouter(router))
+	app := New(WithOpenAPI("test", "1.0.0"), WithRouter(router), WithProduces(MIMEJSON))
 
 	err := Route[testInput, testOutput](app).
 		POST("/users/{id}").
@@ -137,7 +279,7 @@ func TestRouteBuilderToReturnsRegisterErrorAndSkipsOpenAPI(t *testing.T) {
 }
 
 func TestRouteBuilderToRaw(t *testing.T) {
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 
 	err := Route[struct{}, struct{}](app).GET("/raw").ToRaw(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -155,7 +297,7 @@ func TestRouteBuilderToRaw(t *testing.T) {
 }
 
 func TestRouteBuilderToSSE(t *testing.T) {
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 
 	if err := Route[struct{}, struct{}](app).GET("/events").ToSSE(func(ctx Context, stream *SSEWriter) error {
 		return stream.WriteEvent("message", "hello")
@@ -197,7 +339,7 @@ func TestRouteBuilderToHTML(t *testing.T) {
 }
 
 func TestRouteBuilderPathAndQueryPopulateOpenAPI(t *testing.T) {
-	app := New(WithOpenAPI("api", "1.0.0"))
+	app := New(WithOpenAPI("api", "1.0.0"), WithProduces(MIMEJSON))
 
 	type pathParams struct {
 		ID string `path:"id"`
@@ -210,8 +352,8 @@ func TestRouteBuilderPathAndQueryPopulateOpenAPI(t *testing.T) {
 		GET("/users/{id}").
 		PathSchema(pathParams{}).
 		QuerySchema(queryParams{}).
-		To(func(context.Context, *struct{}) (*struct{}, error) {
-			return &struct{}{}, nil
+		To(func(context.Context, struct{}) (struct{}, error) {
+			return struct{}{}, nil
 		}); err != nil {
 		t.Fatalf("To failed: %v", err)
 	}
@@ -233,7 +375,7 @@ func TestRouteBuilderPathAndQueryPopulateOpenAPI(t *testing.T) {
 func TestRouteBuilderParamsBindFlatFields(t *testing.T) {
 	app := New(WithClientIPResolver(func(r *http.Request) string {
 		return r.Header.Get("X-Client-IP")
-	}))
+	}), WithProduces(MIMEJSON))
 
 	type input struct {
 		Params `json:"-"`
@@ -259,8 +401,8 @@ func TestRouteBuilderParamsBindFlatFields(t *testing.T) {
 
 	if err := Route[input, output](app).
 		PUT("/user/{name}").
-		To(func(ctx context.Context, in *input) (*output, error) {
-			return &output{
+		To(func(ctx context.Context, in input) (output, error) {
+			return output{
 				Name:     in.Name,
 				RawName:  in.Path("name"),
 				Role:     in.Role,
@@ -295,7 +437,7 @@ func TestRouteBuilderParamsBindFlatFields(t *testing.T) {
 }
 
 func TestRouteBuilderHandlerContextParams(t *testing.T) {
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 
 	type output struct {
 		ID      string `json:"id"`
@@ -303,8 +445,8 @@ func TestRouteBuilderHandlerContextParams(t *testing.T) {
 		Missing string `json:"missing"`
 	}
 
-	if err := Route[struct{}, output](app).GET("/users/{id}").To(func(ctx context.Context, req *struct{}) (*output, error) {
-		return &output{
+	if err := Route[struct{}, output](app).GET("/users/{id}").To(func(ctx context.Context, req struct{}) (output, error) {
+		return output{
 			ID:      Path(ctx, "id"),
 			Role:    DefaultQuery(ctx, "role", "guest"),
 			Missing: DefaultPath(ctx, "missing", "fallback"),
@@ -326,8 +468,89 @@ func TestRouteBuilderHandlerContextParams(t *testing.T) {
 	}
 }
 
+func TestRouteBuilderToHTTPFunc(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+
+	type input struct {
+		Value string `query:"value"`
+	}
+
+	if err := Route[input, struct{}](app).GET("/raw-context").ToHTTPFunc(func(w http.ResponseWriter, r *http.Request, req input) error {
+		if r.Method != http.MethodGet {
+			t.Fatalf("method = %s, want %s", r.Method, http.MethodGet)
+		}
+		if req.Value != "yes" {
+			t.Fatalf("value = %q, want yes", req.Value)
+		}
+		w.Header().Set("X-Raw-Context", req.Value)
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte("handled"))
+		return nil
+	}); err != nil {
+		t.Fatalf("ToHTTPFunc failed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/raw-context?value=yes", nil)
+	app.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusAccepted)
+	}
+	if got := rec.Header().Get("X-Raw-Context"); got != "yes" {
+		t.Fatalf("X-Raw-Context = %q, want yes", got)
+	}
+	if rec.Body.String() != "handled" {
+		t.Fatalf("body = %q, want handled", rec.Body.String())
+	}
+}
+
+func TestRouteBuilderToRedirect(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+
+	if err := Route[struct{}, struct{}](app).GET("/old").ToRedirect(http.StatusFound, "/new"); err != nil {
+		t.Fatalf("ToRedirect failed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/old", nil)
+	app.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusFound)
+	}
+	if got := rec.Header().Get("Location"); got != "/new" {
+		t.Fatalf("Location = %q, want /new", got)
+	}
+}
+
+func TestRouteBuilderToRedirectFunc(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+
+	type input struct {
+		ID string `path:"id"`
+	}
+
+	if err := Route[input, struct{}](app).GET("/old/{id}").ToRedirectFunc(http.StatusMovedPermanently, func(req input) (string, error) {
+		return "/new/" + req.ID, nil
+	}); err != nil {
+		t.Fatalf("ToRedirectFunc failed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/old/42", nil)
+	app.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMovedPermanently {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMovedPermanently)
+	}
+	if got := rec.Header().Get("Location"); got != "/new/42" {
+		t.Fatalf("Location = %q, want /new/42", got)
+	}
+}
+
 func TestRequestContextParams(t *testing.T) {
-	app := New()
+	app := New(WithProduces(MIMEJSON))
 
 	if err := Route[struct{}, struct{}](app).GET("/events/{id}").ToSSE(func(ctx Context, stream *SSEWriter) error {
 		if err := stream.WriteEvent("path", ctx.Path("id")); err != nil {

@@ -8,7 +8,7 @@ import (
 )
 
 func TestOpenAPIBuildsValidSpec(t *testing.T) {
-	app := New(WithOpenAPI("My API", "1.0.0"))
+	app := New(WithOpenAPI("My API", "1.0.0"), WithProduces(MIMEJSON))
 
 	type CreateUserReq struct {
 		Path struct {
@@ -23,8 +23,8 @@ func TestOpenAPIBuildsValidSpec(t *testing.T) {
 		Name string `json:"name"`
 	}
 
-	if err := Route[CreateUserReq, struct{ Body UserData }](app).POST("/orgs/{orgId}/users").To(func(ctx context.Context, req *CreateUserReq) (*struct{ Body UserData }, error) {
-		return nil, nil
+	if err := Route[CreateUserReq, struct{ Body UserData }](app).POST("/orgs/{orgId}/users").To(func(ctx context.Context, req CreateUserReq) (struct{ Body UserData }, error) {
+		return struct{ Body UserData }{}, nil
 	}); err != nil {
 		t.Fatalf("route registration failed: %v", err)
 	}

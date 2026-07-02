@@ -25,8 +25,9 @@ type Server struct {
 	envelope  EnvelopeFunc
 	validator Validator
 	logger    Logger
+	produces  string
 
-	middlewares []MiddlewareFunc
+	middlewares []Middleware
 
 	httpServer *http.Server
 	mu         sync.Mutex
@@ -51,6 +52,7 @@ func New(opts ...ServerOption) *Server {
 		envelope:  c.envelope,
 		validator: newDefaultValidator(),
 		logger:    c.logger,
+		produces:  c.produces,
 	}
 	if c.validator != nil {
 		s.validator = c.validator
@@ -78,11 +80,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // buildHandlerChain wraps the router with all middlewares.
 func (s *Server) buildHandlerChain() http.Handler {
-	h := http.Handler(s.router)
-	for i := len(s.middlewares) - 1; i >= 0; i-- {
-		h = s.middlewares[i](h)
-	}
-	return h
+	return Wrap(s.router, s.middlewares...)
 }
 
 // Run starts the HTTP server on the given address (or config address).
@@ -134,27 +132,22 @@ func (s *Server) Close() error {
 }
 
 // Use adds middleware to the server.
-func (s *Server) Use(mw MiddlewareFunc) {
-	s.middlewares = append(s.middlewares, mw)
+func (s *Server) Use(mws ...Middleware) {
+	s.middlewares = append(s.middlewares, mws...)
 }
 
-// UseFunc adds handler-function middleware to the server.
-func (s *Server) UseFunc(mw HandlerMiddlewareFunc) {
-	s.Use(HandlerMiddleware(mw))
+func (s *Server) handleRoute(method, path string, handler http.Handler, mws ...Middleware) error {
+	return s.router.Register(method, path, Wrap(handler, mws...))
 }
 
-func (s *Server) handleRoute(method, path string, handler http.Handler, mws ...MiddlewareFunc) error {
-	h := handler
-	for i := len(mws) - 1; i >= 0; i-- {
-		h = mws[i](h)
-	}
-	return s.router.Register(method, path, h)
-}
-
-func (s *Server) addRouteSpec(method, path, doc string, tags []string, operationID string, reqType, pathType, queryType reflect.Type, responses []responseSpec) {
+func (s *Server) addRouteSpec(method, path, doc string, tags []string, operationID string, reqType, pathType, queryType reflect.Type, produces string, responses []responseSpec) {
 	if s.openAPI != nil {
-		s.openAPI.AddRoute(method, path, doc, tags, operationID, reqType, pathType, queryType, responses)
+		s.openAPI.AddRoute(method, path, doc, tags, operationID, reqType, pathType, queryType, produces, responses)
 	}
+}
+
+func (s *Server) producesContentType() string {
+	return s.produces
 }
 
 func (s *Server) owner() *Server {
@@ -184,7 +177,7 @@ func (s *Server) Router() Router {
 }
 
 // Group creates a route group with a prefix and optional middlewares.
-func (s *Server) Group(prefix string, mws ...MiddlewareFunc) *Group {
+func (s *Server) Group(prefix string, mws ...Middleware) *Group {
 	return &Group{
 		server:      s,
 		prefix:      prefix,

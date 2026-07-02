@@ -54,7 +54,7 @@ func NewOpenAPI(title, version string) *OpenAPI {
 	}
 }
 
-func (o *OpenAPI) AddRoute(method, path, doc string, tags []string, operationID string, reqType, pathType, queryType reflect.Type, responses []responseSpec) {
+func (o *OpenAPI) AddRoute(method, path, doc string, tags []string, operationID string, reqType, pathType, queryType reflect.Type, produces string, responses []responseSpec) {
 	if o == nil {
 		return
 	}
@@ -97,12 +97,15 @@ func (o *OpenAPI) AddRoute(method, path, doc string, tags []string, operationID 
 	for _, r := range responses {
 		code := strconv.Itoa(r.Code)
 		respSchema := generateSchema(r.ModelType)
-		op.Responses[code] = &response{
+		opResp := &response{
 			Description: r.Description,
-			Content: map[string]*mediaType{
-				"application/json": {Schema: respSchema},
-			},
 		}
+		if produces != "" {
+			opResp.Content = map[string]*mediaType{
+				produces: {Schema: respSchema},
+			}
+		}
+		op.Responses[code] = opResp
 	}
 
 	if _, ok := op.Responses["200"]; !ok && len(responses) == 0 {

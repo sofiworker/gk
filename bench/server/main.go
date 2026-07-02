@@ -1,8 +1,9 @@
-// Package main — HTTP framework benchmark (ghttp vs gin/fiber/chi/echo/go-restful/default/fasthttp)
+// Package main -HTTP framework benchmark (ghttp vs gin/fiber/chi/echo/go-restful/default/fasthttp)
 //
-// Each framework registers GET /hello → "hello world", respecting sleepTime/cpuBound globals.
+// Each framework registers GET /hello ->"hello world", respecting sleepTime/cpuBound globals.
 // Usage: gowebbenchmark <framework> [sleep_ms] [port]
-//   sleep_ms=0 (default): runtime.Gosched(),  sleep_ms>0: time.Sleep(), sleep_ms=-1: CPU-bound (pow)
+//
+//	sleep_ms=0 (default): runtime.Gosched(),  sleep_ms>0: time.Sleep(), sleep_ms=-1: CPU-bound (pow)
 package main
 
 import (
@@ -19,15 +20,15 @@ import (
 	// ghttp
 	"github.com/sofiworker/gk/ghttp"
 
+	"github.com/abemedia/go-don"
+	_ "github.com/abemedia/go-don/encoding/text"
+	"github.com/emicklei/go-restful"
 	// Comparison frameworks
 	"github.com/gin-gonic/gin"
 	"github.com/go-chi/chi/v5"
-	"github.com/labstack/echo/v4"
-	"github.com/emicklei/go-restful"
-	"github.com/valyala/fasthttp"
 	"github.com/gofiber/fiber/v2"
-	"github.com/abemedia/go-don"
-	_ "github.com/abemedia/go-don/encoding/text"
+	"github.com/labstack/echo/v4"
+	"github.com/valyala/fasthttp"
 )
 
 var (
@@ -41,26 +42,27 @@ var (
 )
 
 func main() {
-	args := os.Args
-	if len(args) < 2 {
-		fmt.Println("Usage: gowebbenchmark <framework> [sleep_ms] [port]")
-		fmt.Println("Frameworks: default, gin, chi, echo, fiber, gorestful, fasthttp, don, ghttp")
-		os.Exit(1)
-	}
+	//args := os.Args
+	//if len(args) < 2 {
+	//	fmt.Println("Usage: gowebbenchmark <framework> [sleep_ms] [port]")
+	//	fmt.Println("Frameworks: default, gin, chi, echo, fiber, gorestful, fasthttp, don, ghttp")
+	//	os.Exit(1)
+	//}
+	//
+	//webFramework := args[1]
+	//if len(args) > 2 {
+	//	sleepTime, _ = strconv.Atoi(args[2])
+	//	if sleepTime == -1 {
+	//		cpuBound = true
+	//		sleepTime = 0
+	//	}
+	//}
+	//if len(args) > 3 {
+	//	port, _ = strconv.Atoi(args[3])
+	//}
+	//sleepTimeDuration = time.Duration(sleepTime) * time.Millisecond
 
-	webFramework := args[1]
-	if len(args) > 2 {
-		sleepTime, _ = strconv.Atoi(args[2])
-		if sleepTime == -1 {
-			cpuBound = true
-			sleepTime = 0
-		}
-	}
-	if len(args) > 3 {
-		port, _ = strconv.Atoi(args[3])
-	}
-	sleepTimeDuration = time.Duration(sleepTime) * time.Millisecond
-
+	webFramework := "ghttp"
 	switch strings.ToLower(webFramework) {
 	case "default":
 		startDefault()
@@ -118,6 +120,7 @@ func startGin() {
 	mux.GET("/hello", func(c *gin.Context) {
 		handleRequest()
 		c.Writer.Write(message)
+		c.String(200, "hello world")
 	})
 	mux.Run(":" + strconv.Itoa(port))
 }
@@ -198,7 +201,83 @@ func ghttpHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func startGhttp() {
-	s := ghttp.New("gk", "1.0.0")
-	s.Router().Register(http.MethodGet, "/hello", http.HandlerFunc(ghttpHandler))
+	s := ghttp.New(ghttp.WithProduces(ghttp.MIMEPlain))
+	defer s.Shutdown(context.Background())
+
+	mustRoute(ghttp.Route[struct{}, struct{}](s).
+		GET("/hello").
+		ToHTTP(http.HandlerFunc(ghttpHandler)))
+
+	group := s.Group("/test", func(handler http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handler.ServeHTTP(w, r)
+		})
+	})
+	group.Use(func(handler http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handler.ServeHTTP(w, r)
+		})
+	})
+
+	type uploadInput struct {
+		Body struct {
+			Name   string              `form:"name"`
+			Age    int                 `form:"age"`
+			Tags   []string            `form:"tag"`
+			Avatar *ghttp.FileHeader   `form:"avatar"`
+			Files  []*ghttp.FileHeader `form:"files"`
+		}
+	}
+
+	mustRoute(ghttp.Route[uploadInput, struct{}](group).
+		POST("/upload").
+		ToHTTPFunc(func(w http.ResponseWriter, r *http.Request, in uploadInput) error {
+			avatar := ""
+			if in.Body.Avatar != nil {
+				avatar = in.Body.Avatar.Filename
+			}
+
+			fileNames := make([]string, 0, len(in.Body.Files))
+			for _, file := range in.Body.Files {
+				fileNames = append(fileNames, file.Filename)
+			}
+
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			_, _ = fmt.Fprintf(w, "name=%s age=%d tags=%s avatar=%s files=%s",
+				in.Body.Name,
+				in.Body.Age,
+				strings.Join(in.Body.Tags, ","),
+				avatar,
+				strings.Join(fileNames, ","),
+			)
+			return nil
+		}))
+
+	mustRoute(ghttp.Route[struct{}, struct{}](group).
+		POST("/form").
+		ToHTTPFunc(func(w http.ResponseWriter, r *http.Request, in struct{}) error {
+			if err := r.ParseForm(); err != nil {
+				return err
+			}
+
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			_, _ = fmt.Fprintf(w, "name=%s age=%s tags=%s",
+				r.FormValue("name"),
+				r.FormValue("age"),
+				strings.Join(r.Form["tag"], ","),
+			)
+			return nil
+		}))
+
+	mustRoute(ghttp.Route[struct{}, string](s).GET("/ping").To(func(ctx context.Context, input struct{}) (string, error) {
+		return "pong", nil
+	}))
+
 	http.ListenAndServe(":"+strconv.Itoa(port), s)
+}
+
+func mustRoute(err error) {
+	if err != nil {
+		log.Fatal(err)
+	}
 }

@@ -8,7 +8,7 @@ import (
 )
 
 func TestEnvelopeDefault_Success(t *testing.T) {
-	app := New(WithEnvelope(DefaultEnvelope))
+	app := New(WithEnvelope(DefaultEnvelope), WithProduces(MIMEJSON))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/test", nil)
@@ -31,7 +31,7 @@ func TestEnvelopeDefault_Success(t *testing.T) {
 }
 
 func TestEnvelopeDefault_Error(t *testing.T) {
-	app := New(WithEnvelope(DefaultEnvelope))
+	app := New(WithEnvelope(DefaultEnvelope), WithProduces(MIMEJSON))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/test", nil)

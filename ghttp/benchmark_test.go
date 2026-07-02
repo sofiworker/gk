@@ -244,7 +244,7 @@ func BenchmarkEnvelope(b *testing.B) {
 }
 
 func BenchmarkFullServer(b *testing.B) {
-	s := New()
+	s := New(WithProduces(MIMEJSON))
 
 	type benchInput struct {
 		Path struct {
@@ -260,14 +260,14 @@ func BenchmarkFullServer(b *testing.B) {
 		Name string `json:"name"`
 	}
 
-	if err := Route[benchInput, benchOutput](s).POST("/bench/{id}").To(func(ctx context.Context, req *benchInput) (*benchOutput, error) {
-		return &benchOutput{ID: req.Path.ID, Name: req.Body.Name}, nil
+	if err := Route[benchInput, benchOutput](s).POST("/bench/{id}").To(func(ctx context.Context, req benchInput) (benchOutput, error) {
+		return benchOutput{ID: req.Path.ID, Name: req.Body.Name}, nil
 	}); err != nil {
 		b.Fatalf("route registration failed: %v", err)
 	}
 
-	if err := Route[struct{ Body struct{} }, struct{ Pong string }](s).GET("/bench/ping").To(func(ctx context.Context, req *struct{ Body struct{} }) (*struct{ Pong string }, error) {
-		return &struct{ Pong string }{"ok"}, nil
+	if err := Route[struct{ Body struct{} }, struct{ Pong string }](s).GET("/bench/ping").To(func(ctx context.Context, req struct{ Body struct{} }) (struct{ Pong string }, error) {
+		return struct{ Pong string }{"ok"}, nil
 	}); err != nil {
 		b.Fatalf("route registration failed: %v", err)
 	}

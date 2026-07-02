@@ -8,28 +8,41 @@ import (
 	"time"
 )
 
-// MiddlewareFunc is the standard net/http middleware signature.
-type MiddlewareFunc func(http.Handler) http.Handler
+// Middleware is the standard net/http middleware signature.
+type Middleware func(http.Handler) http.Handler
 
-// HandlerMiddlewareFunc is a lightweight middleware signature for common
-// handler-function wrapping.
-type HandlerMiddlewareFunc func(http.HandlerFunc) http.HandlerFunc
-
-// HandlerMiddleware adapts a HandlerMiddlewareFunc into the standard
-// MiddlewareFunc shape.
-func HandlerMiddleware(fn HandlerMiddlewareFunc) MiddlewareFunc {
-	if fn == nil {
-		return func(next http.Handler) http.Handler {
-			return next
-		}
-	}
+// Chain composes middlewares in registration order.
+func Chain(mws ...Middleware) Middleware {
 	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(fn(next.ServeHTTP))
+		return wrap(next, mws...)
 	}
 }
 
+// Wrap wraps handler with mws in registration order.
+func Wrap(handler http.Handler, mws ...Middleware) http.Handler {
+	return wrap(handler, mws...)
+}
+
+// WrapFunc wraps handler with mws in registration order.
+func WrapFunc(handler http.HandlerFunc, mws ...Middleware) http.Handler {
+	return Wrap(handler, mws...)
+}
+
+func wrap(handler http.Handler, mws ...Middleware) http.Handler {
+	if handler == nil {
+		handler = http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	}
+	for i := len(mws) - 1; i >= 0; i-- {
+		if mws[i] == nil {
+			continue
+		}
+		handler = mws[i](handler)
+	}
+	return handler
+}
+
 // RequestID adds a unique X-Request-ID header to every response.
-func RequestID() MiddlewareFunc {
+func RequestID() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id := r.Header.Get("X-Request-ID")
@@ -54,7 +67,7 @@ type CORSConfig struct {
 }
 
 // CORS returns a CORS middleware.
-func CORS(cfg CORSConfig) MiddlewareFunc {
+func CORS(cfg CORSConfig) Middleware {
 	allowMethods := joinStrings(cfg.AllowMethods)
 	allowHeaders := joinStrings(cfg.AllowHeaders)
 	maxAge := ""
@@ -96,7 +109,7 @@ func CORS(cfg CORSConfig) MiddlewareFunc {
 }
 
 // RequestLogger logs each request.
-func RequestLogger() MiddlewareFunc {
+func RequestLogger() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
@@ -109,7 +122,7 @@ func RequestLogger() MiddlewareFunc {
 }
 
 // Recoverer catches panics and returns 500.
-func Recoverer() MiddlewareFunc {
+func Recoverer() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
@@ -134,7 +147,7 @@ func loggerFromRequest(r *http.Request) Logger {
 }
 
 // Timeout adds a timeout to the request context.
-func Timeout(d time.Duration) MiddlewareFunc {
+func Timeout(d time.Duration) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()

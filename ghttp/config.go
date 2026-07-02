@@ -13,6 +13,7 @@ type Config struct {
 	validator        Validator
 	logger           Logger
 	envelope         EnvelopeFunc
+	produces         string
 	clientIPResolver ClientIPResolver
 	openAPIEnabled   bool
 	openAPITitle     string
@@ -64,6 +65,13 @@ func WithLogger(logger Logger) ServerOption {
 func WithEnvelope(fn EnvelopeFunc) ServerOption {
 	return func(c *Config) {
 		c.envelope = fn
+	}
+}
+
+// WithProduces sets the default response Content-Type for automatic route encoding.
+func WithProduces(contentType string) ServerOption {
+	return func(c *Config) {
+		c.produces = contentType
 	}
 }
 

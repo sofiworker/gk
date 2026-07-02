@@ -67,6 +67,7 @@ func main() {
 		ghttp.WithValidator(scenarioValidator{}),
 		ghttp.WithAddress(":8080"),
 		ghttp.WithRenderer(ghttp.NewRenderer(templateDir, ".html", nil, false)),
+		ghttp.WithProduces(ghttp.MIMEJSON),
 	)
 
 	app.Use(ghttp.RequestID())
@@ -89,11 +90,11 @@ func main() {
 	app.Use(ghttp.Timeout(2 * time.Second))
 	app.Use(ghttp.Recoverer())
 
-	api := app.Group("/api").UseFunc(func(next http.HandlerFunc) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
+	api := app.Group("/api").Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Example-Group", "api")
-			next(w, r)
-		}
+			next.ServeHTTP(w, r)
+		})
 	})
 
 	mustRoute(ghttp.Route[userInput, userOutput](api).
@@ -103,8 +104,8 @@ func main() {
 		OperationID("createUser").
 		Reads(userInput{}).
 		Responds(http.StatusCreated).With(userOutput{}).Desc("created").End().
-		To(func(ctx context.Context, req *userInput) (*userOutput, error) {
-			return &userOutput{
+		To(func(ctx context.Context, req userInput) (userOutput, error) {
+			return userOutput{
 				ID:   req.Path.ID,
 				Name: req.Body.Name,
 				Role: req.Query.Role,
@@ -115,16 +116,16 @@ func main() {
 		ANY("/health").
 		Doc("health check").
 		Responds(http.StatusOK).With(healthOutput{}).Desc("healthy").End().
-		To(func(ctx context.Context, req *struct{}) (*healthOutput, error) {
-			return &healthOutput{OK: true}, nil
+		To(func(ctx context.Context, req struct{}) (healthOutput, error) {
+			return healthOutput{OK: true}, nil
 		}))
 
 	mustRoute(ghttp.Route[struct{}, customOutput](app).
 		CUSTOM("PROPFIND", "/custom").
 		Doc("custom method").
 		Responds(http.StatusOK).With(customOutput{}).Desc("custom").End().
-		To(func(ctx context.Context, req *struct{}) (*customOutput, error) {
-			return &customOutput{Method: "PROPFIND"}, nil
+		To(func(ctx context.Context, req struct{}) (customOutput, error) {
+			return customOutput{Method: "PROPFIND"}, nil
 		}))
 
 	registerMethodRoutes(app)
@@ -154,8 +155,8 @@ func registerMethodRoutes(app *ghttp.Server) {
 		GET("/methods/get").
 		Doc("GET example").
 		Responds(http.StatusOK).With(methodOutput{}).End().
-		To(func(ctx context.Context, req *struct{}) (*methodOutput, error) {
-			return &methodOutput{Verb: "GET", Path: "/methods/get"}, nil
+		To(func(ctx context.Context, req struct{}) (methodOutput, error) {
+			return methodOutput{Verb: "GET", Path: "/methods/get"}, nil
 		}))
 
 	mustRoute(ghttp.Route[userInput, methodOutput](app).
@@ -163,24 +164,24 @@ func registerMethodRoutes(app *ghttp.Server) {
 		Doc("GET with body").
 		Reads(userInput{}).
 		Responds(http.StatusOK).With(methodOutput{}).End().
-		To(func(ctx context.Context, req *userInput) (*methodOutput, error) {
-			return &methodOutput{Verb: "GET", Path: "/methods/get-body", Name: req.Body.Name, Role: req.Query.Role}, nil
+		To(func(ctx context.Context, req userInput) (methodOutput, error) {
+			return methodOutput{Verb: "GET", Path: "/methods/get-body", Name: req.Body.Name, Role: req.Query.Role}, nil
 		}))
 
 	mustRoute(ghttp.Route[struct{}, methodOutput](app).
 		HEAD("/methods/head").
 		Doc("HEAD example").
 		Responds(http.StatusOK).With(methodOutput{}).End().
-		To(func(ctx context.Context, req *struct{}) (*methodOutput, error) {
-			return &methodOutput{Verb: "HEAD", Path: "/methods/head"}, nil
+		To(func(ctx context.Context, req struct{}) (methodOutput, error) {
+			return methodOutput{Verb: "HEAD", Path: "/methods/head"}, nil
 		}))
 
 	mustRoute(ghttp.Route[struct{}, methodOutput](app).
 		POST("/methods/post").
 		Doc("POST example").
 		Responds(http.StatusOK).With(methodOutput{}).End().
-		To(func(ctx context.Context, req *struct{}) (*methodOutput, error) {
-			return &methodOutput{Verb: "POST", Path: "/methods/post"}, nil
+		To(func(ctx context.Context, req struct{}) (methodOutput, error) {
+			return methodOutput{Verb: "POST", Path: "/methods/post"}, nil
 		}))
 
 	mustRoute(ghttp.Route[userInput, methodOutput](app).
@@ -188,56 +189,56 @@ func registerMethodRoutes(app *ghttp.Server) {
 		Doc("POST without body").
 		Reads(userInput{}).
 		Responds(http.StatusOK).With(methodOutput{}).End().
-		To(func(ctx context.Context, req *userInput) (*methodOutput, error) {
-			return &methodOutput{Verb: "POST", Path: "/methods/post-empty", Name: req.Body.Name}, nil
+		To(func(ctx context.Context, req userInput) (methodOutput, error) {
+			return methodOutput{Verb: "POST", Path: "/methods/post-empty", Name: req.Body.Name}, nil
 		}))
 
 	mustRoute(ghttp.Route[struct{}, methodOutput](app).
 		PUT("/methods/put/{id}").
 		Doc("PUT example").
 		Responds(http.StatusOK).With(methodOutput{}).End().
-		To(func(ctx context.Context, req *struct{}) (*methodOutput, error) {
-			return &methodOutput{Verb: "PUT", Path: "/methods/put/{id}"}, nil
+		To(func(ctx context.Context, req struct{}) (methodOutput, error) {
+			return methodOutput{Verb: "PUT", Path: "/methods/put/{id}"}, nil
 		}))
 
 	mustRoute(ghttp.Route[struct{}, methodOutput](app).
 		PATCH("/methods/patch/{id}").
 		Doc("PATCH example").
 		Responds(http.StatusOK).With(methodOutput{}).End().
-		To(func(ctx context.Context, req *struct{}) (*methodOutput, error) {
-			return &methodOutput{Verb: "PATCH", Path: "/methods/patch/{id}"}, nil
+		To(func(ctx context.Context, req struct{}) (methodOutput, error) {
+			return methodOutput{Verb: "PATCH", Path: "/methods/patch/{id}"}, nil
 		}))
 
 	mustRoute(ghttp.Route[struct{}, methodOutput](app).
 		DELETE("/methods/delete/{id}").
 		Doc("DELETE example").
 		Responds(http.StatusOK).With(methodOutput{}).End().
-		To(func(ctx context.Context, req *struct{}) (*methodOutput, error) {
-			return &methodOutput{Verb: "DELETE", Path: "/methods/delete/{id}"}, nil
+		To(func(ctx context.Context, req struct{}) (methodOutput, error) {
+			return methodOutput{Verb: "DELETE", Path: "/methods/delete/{id}"}, nil
 		}))
 
 	mustRoute(ghttp.Route[struct{}, methodOutput](app).
 		OPTIONS("/methods/options").
 		Doc("OPTIONS example").
 		Responds(http.StatusOK).With(methodOutput{}).End().
-		To(func(ctx context.Context, req *struct{}) (*methodOutput, error) {
-			return &methodOutput{Verb: "OPTIONS", Path: "/methods/options"}, nil
+		To(func(ctx context.Context, req struct{}) (methodOutput, error) {
+			return methodOutput{Verb: "OPTIONS", Path: "/methods/options"}, nil
 		}))
 
 	mustRoute(ghttp.Route[struct{}, methodOutput](app).
 		TRACE("/methods/trace").
 		Doc("TRACE example").
 		Responds(http.StatusOK).With(methodOutput{}).End().
-		To(func(ctx context.Context, req *struct{}) (*methodOutput, error) {
-			return &methodOutput{Verb: "TRACE", Path: "/methods/trace"}, nil
+		To(func(ctx context.Context, req struct{}) (methodOutput, error) {
+			return methodOutput{Verb: "TRACE", Path: "/methods/trace"}, nil
 		}))
 
 	mustRoute(ghttp.Route[struct{}, methodOutput](app).
 		CONNECT("/methods/connect").
 		Doc("CONNECT example").
 		Responds(http.StatusOK).With(methodOutput{}).End().
-		To(func(ctx context.Context, req *struct{}) (*methodOutput, error) {
-			return &methodOutput{Verb: "CONNECT", Path: "/methods/connect"}, nil
+		To(func(ctx context.Context, req struct{}) (methodOutput, error) {
+			return methodOutput{Verb: "CONNECT", Path: "/methods/connect"}, nil
 		}))
 }
 
