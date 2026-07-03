@@ -21,6 +21,7 @@ type Config struct {
 	produces          string
 	consumes          []string
 	clientIPResolver  ClientIPResolver
+	vfsPath           string
 	openAPIEnabled    bool
 	openAPITitle      string
 	openAPIVersion    string
@@ -117,6 +118,13 @@ func WithOpenAPI(title, version string) ServerOption {
 func WithClientIPResolver(resolver ClientIPResolver) ServerOption {
 	return func(c *Config) {
 		c.clientIPResolver = resolver
+	}
+}
+
+// WithVFSPath sets the default safe static-file root for ToStatic().
+func WithVFSPath(root string) ServerOption {
+	return func(c *Config) {
+		c.vfsPath = root
 	}
 }
 

@@ -1,7 +1,6 @@
 package ghttp
 
 import (
-	"context"
 	"net/http"
 	"strings"
 )
@@ -60,33 +59,33 @@ func (m *MethodMatcher) add(path string, handler http.Handler) {
 	m.radixTree.insert(entry)
 }
 
-func (m *MethodMatcher) lookup(path string) (map[string]string, *routeEntry) {
+func (m *MethodMatcher) lookup(path string, params *pathParamList) *routeEntry {
 	// 1. Static match first
 	if entry, ok := m.staticGroup[path]; ok {
-		return nil, entry
+		params.Reset()
+		return entry
 	}
 
 	// 2. Parameterized match by segment count
 	segCount := pathSegmentCount(path)
-	params := make(map[string]string)
 
 	if tree, ok := m.segmentIndex[segCount]; ok {
-		segments := splitPathSegments(path)
-		if entry := tree.lookup(segments, params); entry != nil {
-			return params, entry
+		params.Reset()
+		if entry := tree.lookup(path, params); entry != nil {
+			return entry
 		}
 	}
 
 	// 3. Wildcard match
 	if m.radixTree != nil {
-		segments := splitPathSegments(path)
-		params = make(map[string]string)
-		if entry := m.radixTree.lookup(segments, params); entry != nil {
-			return params, entry
+		params.Reset()
+		if entry := m.radixTree.lookup(path, params); entry != nil {
+			return entry
 		}
 	}
 
-	return nil, nil
+	params.Reset()
+	return nil
 }
 
 // RadixRouter implements Router using the three-layer matching engine.
@@ -126,15 +125,16 @@ func (r *RadixRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	params, entry := m.lookup(path)
+	var params pathParamList
+	entry := m.lookup(path, &params)
 	if entry == nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
-	if len(params) > 0 {
-		ctx := context.WithValue(req.Context(), pathParamsKey, params)
-		req = req.WithContext(ctx)
+	if handler, ok := entry.handler.(pathParamHandler); ok {
+		handler.ServeHTTPWithPathParams(w, req, params)
+		return
 	}
 
 	entry.handler.ServeHTTP(w, req)

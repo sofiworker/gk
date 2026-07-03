@@ -262,8 +262,8 @@ func (b *RouteBuilder[Req, Resp]) ToHTTPFunc(handler HTTPHandlerFunc[Req]) {
 		return
 	}
 	b.resolveConsumes()
-	b.toHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		input, ok := b.parseAndValidateInput(w, r)
+	b.toHandler(pathParamHandlerFunc(func(w http.ResponseWriter, r *http.Request, params pathParamList) {
+		input, ok := b.parseAndValidateInputWithPathParams(w, r, params)
 		if !ok {
 			return
 		}
@@ -305,13 +305,22 @@ func (b *RouteBuilder[Req, Resp]) ToWebSocket(handler WebSocketHandler) {
 	b.toHandler(buildWebSocketHandler(b.target.owner(), handler))
 }
 
-// ToStatic registers a file server with the selected route path as its URL prefix.
-func (b *RouteBuilder[Req, Resp]) ToStatic(root string) {
-	if root == "" {
+// ToStatic registers a safe file server with the selected route path as its URL prefix.
+func (b *RouteBuilder[Req, Resp]) ToStatic(root ...string) {
+	staticRoot := b.target.owner().config.vfsPath
+	if len(root) > 0 {
+		staticRoot = root[0]
+	}
+	if staticRoot == "" {
 		b.recordSetupError(ErrStaticRootRequired)
 		return
 	}
-	b.ToStaticFS(http.Dir(root))
+	fsys, err := NewSafeFS(staticRoot)
+	if err != nil {
+		b.recordSetupError(err)
+		return
+	}
+	b.ToStaticFS(fsys)
 }
 
 // ToStaticFS registers a file server with the selected route path as its URL prefix.
@@ -381,8 +390,8 @@ func (b *RouteBuilder[Req, Resp]) register(method string) {
 }
 
 func (b *RouteBuilder[Req, Resp]) buildHandler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		input, ok := b.parseAndValidateInput(w, r)
+	return pathParamHandlerFunc(func(w http.ResponseWriter, r *http.Request, params pathParamList) {
+		input, ok := b.parseAndValidateInputWithPathParams(w, r, params)
 		if !ok {
 			return
 		}
@@ -427,6 +436,10 @@ func (b *RouteBuilder[Req, Resp]) resolveConsumes() {
 }
 
 func (b *RouteBuilder[Req, Resp]) parseAndValidateInput(w http.ResponseWriter, r *http.Request) (Req, bool) {
+	return b.parseAndValidateInputWithPathParams(w, r, pathParamList{})
+}
+
+func (b *RouteBuilder[Req, Resp]) parseAndValidateInputWithPathParams(w http.ResponseWriter, r *http.Request, params pathParamList) (Req, bool) {
 	input, target := newInputTarget[Req]()
 	server := b.target.owner()
 	if err := validateRequestContentType(r, target, b.consumes); err != nil {
@@ -434,7 +447,7 @@ func (b *RouteBuilder[Req, Resp]) parseAndValidateInput(w http.ResponseWriter, r
 		var zero Req
 		return zero, false
 	}
-	if err := parseInputWithConfig(r, target, server.config); err != nil {
+	if err := parseInputWithConfigAndPathParams(r, target, server.config, params); err != nil {
 		writeError(w, r, server, http.StatusBadRequest, err)
 		var zero Req
 		return zero, false
@@ -605,7 +618,7 @@ func renderHTML(w http.ResponseWriter, s *Server, status int, name string, data 
 }
 
 func buildSSEHandler(s *Server, handler SSEHandler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return pathParamHandlerFunc(func(w http.ResponseWriter, r *http.Request, params pathParamList) {
 		flusher, ok := w.(http.Flusher)
 		if !ok {
 			http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
@@ -618,15 +631,16 @@ func buildSSEHandler(s *Server, handler SSEHandler) http.Handler {
 		w.WriteHeader(http.StatusOK)
 
 		stream := &SSEWriter{w: w, flusher: flusher}
-		_ = handler(r.Context(), paramsFromRequest(r, s.config), stream)
+		_ = handler(r.Context(), paramsFromRequestWithPathParams(r, s.config, params), stream)
 	})
 }
 
 func buildWebSocketHandler(s *Server, handler WebSocketHandler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return pathParamHandlerFunc(func(w http.ResponseWriter, r *http.Request, params pathParamList) {
 		_ = handler
 		_ = s
 		_ = r
+		_ = params
 		w.WriteHeader(http.StatusNotImplemented)
 	})
 }

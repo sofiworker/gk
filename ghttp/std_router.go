@@ -1,7 +1,6 @@
 package ghttp
 
 import (
-	"context"
 	"net/http"
 	"strings"
 )
@@ -33,16 +32,24 @@ func bridgeStdPathParams(paramNames []string, handler http.Handler) http.Handler
 		return handler
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		params := make(map[string]string, len(paramNames))
+		if paramsHandler, ok := handler.(pathParamHandler); ok {
+			var params pathParamList
+			for _, name := range paramNames {
+				if value := req.PathValue(name); value != "" {
+					params.Add(name, value)
+				}
+			}
+			paramsHandler.ServeHTTPWithPathParams(w, req, params)
+			return
+		}
+
+		var params pathParamList
 		for _, name := range paramNames {
 			if value := req.PathValue(name); value != "" {
-				params[name] = value
+				params.Add(name, value)
 			}
 		}
-		if len(params) > 0 {
-			req = req.WithContext(context.WithValue(req.Context(), pathParamsKey, params))
-		}
-		handler.ServeHTTP(w, req)
+		handler.ServeHTTP(w, requestWithPathParams(req, params))
 	})
 }
 

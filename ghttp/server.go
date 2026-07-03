@@ -229,7 +229,20 @@ func (s *Server) Consumes(contentTypes ...string) *Server {
 }
 
 func (s *Server) handleRoute(method, path string, handler http.Handler, mws ...Middleware) error {
-	return s.router.Register(method, path, Wrap(handler, mws...))
+	return s.router.Register(method, path, wrapRouteHandler(handler, mws...))
+}
+
+func wrapRouteHandler(handler http.Handler, mws ...Middleware) http.Handler {
+	if len(mws) == 0 {
+		return handler
+	}
+	wrapped := Wrap(handler, mws...)
+	if _, ok := handler.(pathParamHandler); !ok {
+		return wrapped
+	}
+	return pathParamHandlerFunc(func(w http.ResponseWriter, r *http.Request, params pathParamList) {
+		wrapped.ServeHTTP(w, requestWithPathParams(r, params))
+	})
 }
 
 func (s *Server) recordSetupError(err error) {

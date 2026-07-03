@@ -9,6 +9,18 @@ import (
 	"testing"
 )
 
+type discardResponseWriter struct{}
+
+func (discardResponseWriter) Header() http.Header {
+	return http.Header{}
+}
+
+func (discardResponseWriter) Write(p []byte) (int, error) {
+	return len(p), nil
+}
+
+func (discardResponseWriter) WriteHeader(int) {}
+
 func TestRadixRouterStaticParamWildcard(t *testing.T) {
 	r := NewRadixRouter()
 
@@ -56,9 +68,9 @@ func TestRadixRouterStaticParamWildcard(t *testing.T) {
 func TestRadixRouterPathParams(t *testing.T) {
 	r := NewRadixRouter()
 
-	var capturedParams map[string]string
-	r.Register("GET", "/users/{id}", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		capturedParams = pathParams(req)
+	var capturedParams pathParamList
+	r.Register("GET", "/users/{id}", pathParamHandlerFunc(func(w http.ResponseWriter, req *http.Request, params pathParamList) {
+		capturedParams = params
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -66,11 +78,33 @@ func TestRadixRouterPathParams(t *testing.T) {
 	defer ts.Close()
 
 	http.Get(ts.URL + "/users/42")
-	if capturedParams == nil {
-		t.Fatal("params should not be nil")
+	if capturedParams.Len() == 0 {
+		t.Fatal("params should not be empty")
 	}
-	if capturedParams["id"] != "42" {
-		t.Fatalf("expected id=42, got %s", capturedParams["id"])
+	if capturedParams.Get("id") != "42" {
+		t.Fatalf("expected id=42, got %s", capturedParams.Get("id"))
+	}
+}
+
+func TestRadixRouterParamRouteDoesNotAllocateOnHotPath(t *testing.T) {
+	r := NewRadixRouter()
+	if err := r.Register("GET", "/users/{id}", pathParamHandlerFunc(func(w http.ResponseWriter, req *http.Request, params pathParamList) {
+		if got := params.Get("id"); got != "42" {
+			t.Fatalf("id param = %q, want 42", got)
+		}
+	})); err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/users/42", nil)
+	w := discardResponseWriter{}
+	r.ServeHTTP(w, req)
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		r.ServeHTTP(w, req)
+	})
+	if allocs != 0 {
+		t.Fatalf("allocs per param route = %v, want 0", allocs)
 	}
 }
 
@@ -115,9 +149,9 @@ func TestRouteParamColonSyntaxIsCompatibleWithWarning(t *testing.T) {
 	defer log.SetOutput(oldWriter)
 
 	r := NewRadixRouter()
-	var capturedParams map[string]string
-	if err := r.Register("GET", "/users/:id", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		capturedParams = pathParams(req)
+	var capturedParams pathParamList
+	if err := r.Register("GET", "/users/:id", pathParamHandlerFunc(func(w http.ResponseWriter, req *http.Request, params pathParamList) {
+		capturedParams = params
 		w.WriteHeader(http.StatusOK)
 	})); err != nil {
 		t.Fatalf("Register failed: %v", err)
@@ -130,8 +164,8 @@ func TestRouteParamColonSyntaxIsCompatibleWithWarning(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
-	if capturedParams["id"] != "42" {
-		t.Fatalf("id param = %q, want 42", capturedParams["id"])
+	if capturedParams.Get("id") != "42" {
+		t.Fatalf("id param = %q, want 42", capturedParams.Get("id"))
 	}
 	if got := buf.String(); !strings.Contains(got, "deprecated :param syntax") || !strings.Contains(got, "use {param}") {
 		t.Fatalf("warning log = %q, want deprecated :param warning", got)

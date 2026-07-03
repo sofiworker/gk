@@ -5,7 +5,7 @@ import "net/http"
 
 // Params stores per-request path, query, header, cookie, and client IP snapshots.
 type Params struct {
-	path     map[string]string
+	path     pathParamList
 	query    url.Values
 	header   http.Header
 	cookies  []*http.Cookie
@@ -13,8 +13,16 @@ type Params struct {
 }
 
 func newParams(path map[string]string, query url.Values, header http.Header, cookies []*http.Cookie, clientIP string) Params {
+	var pathParams pathParamList
+	for key, value := range path {
+		pathParams.Add(key, value)
+	}
+	return newParamsFromPathParams(pathParams, query, header, cookies, clientIP)
+}
+
+func newParamsFromPathParams(path pathParamList, query url.Values, header http.Header, cookies []*http.Cookie, clientIP string) Params {
 	return Params{
-		path:     clonePathParams(path),
+		path:     path.Clone(),
 		query:    cloneQueryParams(query),
 		header:   header.Clone(),
 		cookies:  cloneCookies(cookies),
@@ -23,12 +31,19 @@ func newParams(path map[string]string, query url.Values, header http.Header, coo
 }
 
 func paramsFromRequest(r *http.Request, c *Config) Params {
+	return paramsFromRequestWithPathParams(r, c, pathParamList{})
+}
+
+func paramsFromRequestWithPathParams(r *http.Request, c *Config, routeParams pathParamList) Params {
 	if r == nil {
 		return newParams(nil, nil, nil, nil, "")
 	}
 	clientIP := defaultClientIPResolver(r)
 	if c != nil && c.clientIPResolver != nil {
 		clientIP = c.clientIPResolver(r)
+	}
+	if routeParams.Len() > 0 {
+		return newParamsFromPathParams(routeParams, r.URL.Query(), r.Header, r.Cookies(), clientIP)
 	}
 	return newParams(pathParams(r), r.URL.Query(), r.Header, r.Cookies(), clientIP)
 }
@@ -73,7 +88,7 @@ func cloneCookies(src []*http.Cookie) []*http.Cookie {
 
 // Path returns a path parameter value.
 func (p Params) Path(key string) string {
-	return p.path[key]
+	return p.path.Get(key)
 }
 
 // DefaultPath returns a path parameter value or defaultValue when it is empty.

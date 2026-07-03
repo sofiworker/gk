@@ -108,24 +108,23 @@ func (t *CompressedRadixTree) insert(entry *routeEntry) {
 	}
 }
 
-func (t *CompressedRadixTree) lookup(segments []string, params map[string]string) *routeEntry {
-	return t.lookupRecursive(t.root, segments, 0, params)
+func (t *CompressedRadixTree) lookup(path string, params *pathParamList) *routeEntry {
+	return t.lookupRecursive(t.root, path, 0, params)
 }
 
-func (t *CompressedRadixTree) lookupRecursive(node *CompressedRadixNode, segments []string, depth int, params map[string]string) *routeEntry {
-	if depth >= len(segments) {
+func (t *CompressedRadixTree) lookupRecursive(node *CompressedRadixNode, path string, index int, params *pathParamList) *routeEntry {
+	seg, next, ok := nextPathSegment(path, index)
+	if !ok {
 		if node.entry != nil {
 			return node.entry
 		}
 		return nil
 	}
 
-	seg := segments[depth]
-
 	// 1. Try static child
 	if node.children != nil {
 		if child, ok := node.children[seg]; ok {
-			if result := t.lookupRecursive(child, segments, depth+1, params); result != nil {
+			if result := t.lookupRecursive(child, path, next, params); result != nil {
 				return result
 			}
 		}
@@ -133,24 +132,43 @@ func (t *CompressedRadixTree) lookupRecursive(node *CompressedRadixNode, segment
 
 	// 2. Try param child
 	if node.paramChild != nil {
-		if node.paramChild.entry != nil && depth == len(segments)-1 {
-			params[node.paramChild.paramName] = seg
-			return node.paramChild.entry
-		}
-		if result := t.lookupRecursive(node.paramChild, segments, depth+1, params); result != nil {
-			params[node.paramChild.paramName] = seg
+		paramCount := params.Len()
+		params.Add(node.paramChild.paramName, seg)
+		if result := t.lookupRecursive(node.paramChild, path, next, params); result != nil {
 			return result
 		}
+		params.Truncate(paramCount)
 	}
 
 	// 3. Try wildcard child
 	if node.wildcardChild != nil && node.wildcardChild.entry != nil {
-		remaining := strings.Join(segments[depth:], "/")
-		params[node.wildcardChild.entry.paramNames[0]] = remaining
+		remaining := remainingPath(path, index)
+		params.Add(node.wildcardChild.entry.paramNames[0], remaining)
 		return node.wildcardChild.entry
 	}
 
 	return nil
+}
+
+func nextPathSegment(path string, index int) (string, int, bool) {
+	for index < len(path) && path[index] == '/' {
+		index++
+	}
+	if index >= len(path) {
+		return "", index, false
+	}
+	end := index
+	for end < len(path) && path[end] != '/' {
+		end++
+	}
+	return path[index:end], end, true
+}
+
+func remainingPath(path string, index int) string {
+	for index < len(path) && path[index] == '/' {
+		index++
+	}
+	return path[index:]
 }
 
 func (t *CompressedRadixTree) remove(path string) {

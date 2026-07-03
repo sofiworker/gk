@@ -5,3 +5,4 @@
 .worktrees/
 *.exe
 experiments
+.junie

@@ -306,10 +306,18 @@ ghttp.Route[struct{}, struct{}](s).GET("/events").ToSSE(func(ctx context.Context
 ### 静态文件
 
 ```go
+// 使用服务器级 VFS 根目录：/a.txt 会解析到 /srv/files/a.txt
+s := ghttp.New(ghttp.WithVFSPath("/srv/files"))
+ghttp.Route[struct{}, struct{}](s).GET("/").ToStatic()
+
+// 也可以为单条静态路由显式指定根目录
 ghttp.Route[struct{}, struct{}](s).GET("/static").ToStatic("./public")
 ghttp.Route[struct{}, struct{}](s).GET("/assets").ToStaticFS(http.FS(embeddedAssets))
 ghttp.Route[struct{}, struct{}](s).GET("/favicon.ico").ToStaticFile("./favicon.ico")
 ```
+
+`ToStatic` 默认使用安全 VFS，所有请求路径都会作为相对路径解析到静态根目录下。
+`../`、URL 编码后的路径穿越、Windows 反斜杠分隔符等越界访问会被拒绝。
 
 ### 模板渲染
 

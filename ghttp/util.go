@@ -33,7 +33,17 @@ func pathSegmentCount(p string) int {
 	if p == "/" || p == "" {
 		return 0
 	}
-	return len(strings.Split(strings.Trim(p, "/"), "/"))
+	p = strings.Trim(p, "/")
+	if p == "" {
+		return 0
+	}
+	count := 1
+	for i := 0; i < len(p); i++ {
+		if p[i] == '/' {
+			count++
+		}
+	}
+	return count
 }
 
 // extractParamNames extracts :param, {param}, and *wildcard names from a path.

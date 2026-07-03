@@ -133,6 +133,10 @@ func parseInput(r *http.Request, input interface{}) error {
 }
 
 func parseInputWithConfig(r *http.Request, input interface{}, c *Config) error {
+	return parseInputWithConfigAndPathParams(r, input, c, pathParamList{})
+}
+
+func parseInputWithConfigAndPathParams(r *http.Request, input interface{}, c *Config, routeParams pathParamList) error {
 	v := reflect.ValueOf(input)
 	if v.Kind() != reflect.Ptr || v.IsNil() {
 		return nil
@@ -147,7 +151,7 @@ func parseInputWithConfig(r *http.Request, input interface{}, c *Config) error {
 
 	t := v.Type()
 	if t == reflect.TypeOf(Params{}) {
-		v.Set(reflect.ValueOf(paramsFromRequest(r, c)))
+		v.Set(reflect.ValueOf(paramsFromRequestWithPathParams(r, c, routeParams)))
 		return nil
 	}
 	info := getStructInfo(t)
@@ -155,7 +159,7 @@ func parseInputWithConfig(r *http.Request, input interface{}, c *Config) error {
 		return info.err
 	}
 	if info.paramsIdx >= 0 {
-		v.Field(info.paramsIdx).Set(reflect.ValueOf(paramsFromRequest(r, c)))
+		v.Field(info.paramsIdx).Set(reflect.ValueOf(paramsFromRequestWithPathParams(r, c, routeParams)))
 	}
 
 	// Parse Body

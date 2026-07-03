@@ -204,9 +204,9 @@ func startGhttp() {
 	s := ghttp.New(ghttp.WithProduces(ghttp.MIMEPlain))
 	defer s.Shutdown(context.Background())
 
-	mustRoute(ghttp.Route[struct{}, struct{}](s).
+	ghttp.Route[struct{}, struct{}](s).
 		GET("/hello").
-		ToHTTP(http.HandlerFunc(ghttpHandler)))
+		ToHTTP(http.HandlerFunc(ghttpHandler))
 
 	group := s.Group("/test", func(handler http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -229,7 +229,7 @@ func startGhttp() {
 		}
 	}
 
-	mustRoute(ghttp.Route[uploadInput, struct{}](group).
+	ghttp.Route[uploadInput, struct{}](group).
 		POST("/upload").
 		ToHTTPFunc(func(w http.ResponseWriter, r *http.Request, in uploadInput) error {
 			avatar := ""
@@ -251,9 +251,9 @@ func startGhttp() {
 				strings.Join(fileNames, ","),
 			)
 			return nil
-		}))
+		})
 
-	mustRoute(ghttp.Route[struct{}, struct{}](group).
+	ghttp.Route[struct{}, struct{}](group).
 		POST("/form").
 		ToHTTPFunc(func(w http.ResponseWriter, r *http.Request, in struct{}) error {
 			if err := r.ParseForm(); err != nil {
@@ -267,17 +267,11 @@ func startGhttp() {
 				strings.Join(r.Form["tag"], ","),
 			)
 			return nil
-		}))
+		})
 
-	mustRoute(ghttp.Route[struct{}, string](s).GET("/ping").To(func(ctx context.Context, input struct{}) (string, error) {
+	ghttp.Route[struct{}, string](s).GET("/ping").To(func(ctx context.Context, input struct{}) (string, error) {
 		return "pong", nil
-	}))
+	})
 
 	http.ListenAndServe(":"+strconv.Itoa(port), s)
-}
-
-func mustRoute(err error) {
-	if err != nil {
-		log.Fatal(err)
-	}
 }
