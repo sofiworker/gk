@@ -98,6 +98,131 @@ func TestParamsFromRequestCapturesCookies(t *testing.T) {
 	}
 }
 
+func TestParamsZeroValueIsReadSafe(t *testing.T) {
+	var p Params
+	if got := p.Path("id"); got != "" {
+		t.Fatalf("Path = %q, want empty", got)
+	}
+	if got := p.Query("q"); got != "" {
+		t.Fatalf("Query = %q, want empty", got)
+	}
+	if got := p.QueryList("q"); got != nil {
+		t.Fatalf("QueryList = %#v, want nil", got)
+	}
+	if got := p.Header("X-Token"); got != "" {
+		t.Fatalf("Header = %q, want empty", got)
+	}
+	if got := p.HeaderList("X-Token"); got != nil {
+		t.Fatalf("HeaderList = %#v, want nil", got)
+	}
+	if got := p.Cookie("session_id"); got != "" {
+		t.Fatalf("Cookie = %q, want empty", got)
+	}
+	if got := p.Cookies(); got != nil {
+		t.Fatalf("Cookies = %#v, want nil", got)
+	}
+	if got := p.ClientIP(); got != "" {
+		t.Fatalf("ClientIP = %q, want empty", got)
+	}
+	detached := p.Detach()
+	if got := detached.Query("q"); got != "" {
+		t.Fatalf("Detach().Query = %q, want empty", got)
+	}
+}
+
+func TestParamsViewIsLazyAndCached(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/users/42?page=1&sort=asc", nil)
+	req.Header.Set("Authorization", "token-1")
+	req.AddCookie(&http.Cookie{Name: "session_id", Value: "s1"})
+	req.RemoteAddr = "192.0.2.7:9999"
+
+	params := paramsFromRequest(req, nil)
+
+	if got := params.Query("page"); got != "1" {
+		t.Fatalf("Query(page) = %q, want 1", got)
+	}
+	// The first access parses and caches; later URL mutation is not observed.
+	req.URL.RawQuery = "page=999"
+	if got := params.Query("page"); got != "1" {
+		t.Fatalf("Query(page) after RawQuery mutation = %q, want cached 1", got)
+	}
+
+	if got := params.Cookie("session_id"); got != "s1" {
+		t.Fatalf("Cookie = %q, want s1", got)
+	}
+	req.Header.Set("Cookie", "session_id=changed")
+	if got := params.Cookie("session_id"); got != "s1" {
+		t.Fatalf("Cookie after header mutation = %q, want cached s1", got)
+	}
+
+	if got := params.ClientIP(); got != "192.0.2.7" {
+		t.Fatalf("ClientIP = %q, want 192.0.2.7", got)
+	}
+	req.RemoteAddr = "198.51.100.1:1"
+	if got := params.ClientIP(); got != "192.0.2.7" {
+		t.Fatalf("ClientIP after RemoteAddr mutation = %q, want cached", got)
+	}
+
+	// Headers read through to the live request (view semantics).
+	req.Header.Set("Authorization", "token-2")
+	if got := params.Header("Authorization"); got != "token-2" {
+		t.Fatalf("Header = %q, want live token-2", got)
+	}
+
+	// Copies of the view share the lazily built caches.
+	copied := params
+	if got := copied.Query("sort"); got != "asc" {
+		t.Fatalf("copied Query(sort) = %q, want asc", got)
+	}
+}
+
+func TestParamsDetachSnapshotsAndDropsRequest(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/users/42?page=1", nil)
+	req.Header.Set("Authorization", "token-1")
+	req.AddCookie(&http.Cookie{Name: "session_id", Value: "s1"})
+	req.RemoteAddr = "192.0.2.7:9999"
+
+	view := paramsFromRequest(req, nil)
+	detached := view.Detach()
+
+	if detached.state == nil || detached.state.req != nil {
+		t.Fatalf("Detach must drop the request reference")
+	}
+
+	// Mutating the request after Detach must not affect the snapshot.
+	req.Header.Set("Authorization", "token-2")
+	req.URL.RawQuery = "page=999"
+	req.Header.Set("Cookie", "session_id=changed")
+
+	if got := detached.Header("Authorization"); got != "token-1" {
+		t.Fatalf("detached Header = %q, want token-1", got)
+	}
+	if got := detached.Query("page"); got != "1" {
+		t.Fatalf("detached Query = %q, want 1", got)
+	}
+	if got := detached.Cookie("session_id"); got != "s1" {
+		t.Fatalf("detached Cookie = %q, want s1", got)
+	}
+	if got := detached.ClientIP(); got != "192.0.2.7" {
+		t.Fatalf("detached ClientIP = %q, want 192.0.2.7", got)
+	}
+}
+
+func TestParamsPathParamsFromRoute(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/users/42", nil)
+	var route pathParamList
+	route.Add("id", "42")
+
+	params := paramsFromRequestWithPathParams(req, nil, route)
+	if got := params.Path("id"); got != "42" {
+		t.Fatalf("Path = %q, want 42", got)
+	}
+	detached := params.Detach()
+	if got := detached.Path("id"); got != "42" {
+		t.Fatalf("detached Path = %q, want 42", got)
+	}
+}
+
 func TestDefaultClientIPResolverUsesRemoteAddr(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = "192.0.2.1:12345"

@@ -3,15 +3,18 @@ package gconfig
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
-	_ "github.com/spf13/viper/remote" // 匿名导入以支持远程配置
-	"os"
 )
+
+// ErrRemoteProviderUnavailable is returned when remote config is requested but
+// no Viper remote provider has been explicitly registered by the application.
+var ErrRemoteProviderUnavailable = errors.New("gconfig: remote provider unavailable")
 
 // Config 是一个配置加载器，封装了 viper 的功能。
 type Config struct {
@@ -333,10 +336,13 @@ func (c *Config) Load() error {
 	// (可选) 读取远程配置
 	if options.RemoteProvider != "" && options.RemoteEndpoint != "" && options.RemotePath != "" {
 		if err := v.AddRemoteProvider(options.RemoteProvider, options.RemoteEndpoint, options.RemotePath); err != nil {
-			return fmt.Errorf("failed to add remote provider: %w", err)
+			return fmt.Errorf("%w: import github.com/spf13/viper/remote before using WithRemoteProvider: %v", ErrRemoteProviderUnavailable, err)
 		}
 		v.SetConfigType(options.Type) // 远程配置也需要指定类型，如 "yaml"
 		if err := v.ReadRemoteConfig(); err != nil {
+			if isRemoteProviderUnavailable(err) {
+				return fmt.Errorf("%w: import github.com/spf13/viper/remote before using WithRemoteProvider: %v", ErrRemoteProviderUnavailable, err)
+			}
 			// 如果远程配置读取失败，可以根据策略选择是报错还是继续
 			options.Logger.Printf("Warning: failed to read remote config, proceeding with local/env config. Error: %v", err)
 		}
@@ -380,4 +386,13 @@ func (c *Config) watch() {
 			}
 		}()
 	}
+}
+
+func isRemoteProviderUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "Enable the remote features") ||
+		strings.Contains(msg, "blank import of the viper/remote package")
 }

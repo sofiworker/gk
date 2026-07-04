@@ -89,6 +89,18 @@ result, err := client.R().
 // 结构化请求
 input := &GreetInput{}
 resp, err := ghttp.Do[GreetInput, GreetOutput](client, "POST", "/hello", input)
+
+// 自定义底层客户端或 Transport
+client = ghttp.NewClient(
+    ghttp.WithHTTPClient(&http.Client{Timeout: 10 * time.Second}),
+    ghttp.WithTransport(customTransport),
+)
+
+// 流式响应由调用方关闭 RawBody
+streamResp, err := client.R().SetStreamResponse(true).Get("/download")
+if err != nil { return err }
+defer streamResp.RawBody().Close()
+_, err = io.Copy(dst, streamResp.RawBody())
 ```
 
 ---
@@ -122,6 +134,7 @@ resp, err := ghttp.Do[GreetInput, GreetOutput](client, "POST", "/hello", input)
 | `.Doc("描述")` | 操作描述 |
 | `.Reads(input)` | 请求体类型（用于 OpenAPI） |
 | `.Consumes(contentTypes...)` | 声明可自动解析的请求 Content-Type，可在 server/group/route 上声明 |
+| `.MaxBodyBytes(n)` | 覆盖当前路由自动解析请求体的大小上限；`n <= 0` 表示不限制 |
 | `.Produces(contentType)` | 自动响应编码的 Content-Type，可在 server/group/route 上声明 |
 | `.Responds(code)` | 响应状态码 |
 | `.With(output)` | 响应体类型 |
@@ -181,7 +194,17 @@ ghttp.Route[CreateUserInput, UserOutput](s).
 
 `Consumes` 只约束带 `Body` 的自动解析路由。请求 `Content-Type` 为空时仍按默认 JSON 解析；显式传入不匹配的媒体类型会返回 `415 Unsupported Media Type`。
 
-`Params` 是请求输入快照，不持有 `ResponseWriter`，也不负责中断请求或写响应；cookie 写入通过输出对象完成。
+`Params` 是请求输入的**惰性视图**：query/cookie/客户端 IP 在首次访问时解析并缓存，header 直接透读请求，构造本身几乎零开销。它不持有 `ResponseWriter`，也不负责中断请求或写响应；cookie 写入通过输出对象完成。
+
+视图在 handler 存活期内有效，且应在单个 goroutine 中使用；如需在 handler 返回后留存、或跨 goroutine 传递，先调用 `Detach()` 获得不再引用底层请求的不可变快照：
+
+```go
+func handler(ctx context.Context, p ghttp.Params) (Out, error) {
+    snapshot := p.Detach() // 深拷贝，安全跨 goroutine / 超生命周期使用
+    go audit(snapshot)
+    return Out{}, nil
+}
+```
 
 只有 path/query/header/cookie 参数、没有请求体时，可以直接使用值类型 `ghttp.Params` 作为输入类型：
 
@@ -301,6 +324,15 @@ ghttp.Route[struct{}, struct{}](s).GET("/events").ToSSE(func(ctx context.Context
     }
     return nil
 })
+
+stream, err := client.SSE("/events", ghttp.SSEConfig{
+    Reconnect:     true,
+    RetryInterval: time.Second,
+    MaxRetries:    3,
+    LastEventID:   "optional-last-id",
+})
+if err != nil { return err }
+defer stream.Close()
 ```
 
 ### 静态文件
@@ -388,6 +420,7 @@ s := ghttp.New(
     ghttp.WithWriteTimeout(30*time.Second),                  // 写入超时
     ghttp.WithIdleTimeout(60*time.Second),                   // keep-alive 空闲超时
     ghttp.WithMaxHeaderBytes(1<<20),                         // 最大请求头
+    ghttp.WithMaxBodyBytes(ghttp.DefaultMaxBodyBytes),        // 自动解析请求体大小上限，默认 4 MiB
     ghttp.WithTLSConfig(tlsConfig),                          // TLS 配置
     ghttp.WithBaseContext(baseContext),                      // 底层 Server BaseContext
     ghttp.WithConnContext(connContext),                      // 连接级 Context

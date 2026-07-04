@@ -53,6 +53,27 @@ func TestCodecManagerNegotiate(t *testing.T) {
 	}
 }
 
+func TestCodecManagerNegotiateCacheHitAndInvalidate(t *testing.T) {
+	mgr := NewCodecManager()
+
+	// Prime the cache: application/custom is unknown, falls back to default.
+	if codec := mgr.Negotiate("application/custom"); codec.ContentTypes()[0] != "application/json" {
+		t.Fatalf("expected default JSON fallback, got %s", codec.ContentTypes()[0])
+	}
+	// Cached result serves repeated lookups.
+	if codec := mgr.Negotiate("application/custom"); codec.ContentTypes()[0] != "application/json" {
+		t.Fatalf("expected cached JSON fallback, got %s", codec.ContentTypes()[0])
+	}
+
+	// Registering a codec for that type must invalidate the cached fallback.
+	if err := mgr.Register(&testCodec{ct: "application/custom"}); err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+	if codec := mgr.Negotiate("application/custom"); codec.ContentTypes()[0] != "application/custom" {
+		t.Fatalf("expected custom codec after invalidation, got %s", codec.ContentTypes()[0])
+	}
+}
+
 func TestCodecManagerRegisterCustom(t *testing.T) {
 	mgr := NewCodecManager()
 

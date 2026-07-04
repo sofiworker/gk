@@ -6,13 +6,22 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
+
+// maxNegotiateCacheEntries bounds the Accept-negotiation cache. Accept values
+// are client-controlled, so the cache must not grow without limit; once full,
+// unseen values are still negotiated correctly, just without being cached.
+const maxNegotiateCacheEntries = 256
 
 // CodecManager manages Codecs by Content-Type.
 type CodecManager struct {
 	mu        sync.RWMutex
 	codecs    map[string]Codec
 	defaultCT string
+
+	negCache     sync.Map // Accept header value -> Codec
+	negCacheSize atomic.Int32
 }
 
 // NewCodecManager creates a CodecManager with default codecs registered.
@@ -35,6 +44,7 @@ func (m *CodecManager) Register(codec Codec) error {
 	for _, ct := range codec.ContentTypes() {
 		m.codecs[ct] = codec
 	}
+	m.invalidateNegotiateCache()
 	return nil
 }
 
@@ -42,6 +52,16 @@ func (m *CodecManager) mustRegister(codec Codec) {
 	for _, ct := range codec.ContentTypes() {
 		m.codecs[ct] = codec
 	}
+}
+
+// invalidateNegotiateCache drops all cached negotiation results; must be
+// called whenever the codec set changes.
+func (m *CodecManager) invalidateNegotiateCache() {
+	m.negCache.Range(func(key, _ interface{}) bool {
+		m.negCache.Delete(key)
+		return true
+	})
+	m.negCacheSize.Store(0)
 }
 
 // Resolve finds a Codec by Content-Type.
@@ -58,7 +78,9 @@ func (m *CodecManager) Resolve(contentType string) (Codec, bool) {
 	return codec, ok
 }
 
-// Negotiate selects the best Codec based on Accept header.
+// Negotiate selects the best Codec based on the Accept header. Results are
+// cached per Accept value: real-world traffic carries very few distinct
+// values, so repeated requests skip the parse/sort entirely.
 func (m *CodecManager) Negotiate(accept string) Codec {
 	if accept == "" || accept == "*/*" {
 		m.mu.RLock()
@@ -66,6 +88,20 @@ func (m *CodecManager) Negotiate(accept string) Codec {
 		return m.codecs[m.defaultCT]
 	}
 
+	if cached, ok := m.negCache.Load(accept); ok {
+		return cached.(Codec)
+	}
+
+	codec := m.negotiate(accept)
+	if codec != nil && m.negCacheSize.Load() < maxNegotiateCacheEntries {
+		if _, loaded := m.negCache.LoadOrStore(accept, codec); !loaded {
+			m.negCacheSize.Add(1)
+		}
+	}
+	return codec
+}
+
+func (m *CodecManager) negotiate(accept string) Codec {
 	types := strings.Split(accept, ",")
 	type acceptItem struct {
 		ct      string

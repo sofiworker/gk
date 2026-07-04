@@ -310,6 +310,111 @@ func TestServerWithBodyDecoderUsesInstanceDecoder(t *testing.T) {
 	}
 }
 
+func TestRouteBuilderRejectsBodyOverServerMaxBodyBytes(t *testing.T) {
+	type input struct {
+		Body struct {
+			Name string `json:"name"`
+		}
+	}
+
+	app := New(WithProduces(MIMEJSON), WithMaxBodyBytes(16))
+
+	Route[input, struct{}](app).
+		POST("/users").
+		To(func(context.Context, input) (struct{}, error) {
+			t.Fatal("handler should not run for oversized request body")
+			return struct{}{}, nil
+		})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(`{"name":"alice-over-limit"}`))
+	req.Header.Set("Content-Type", MIMEJSON)
+	app.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusRequestEntityTooLarge, rec.Body.String())
+	}
+}
+
+func TestRouteBuilderMaxBodyBytesEnvelopeUsesPayloadTooLargeCode(t *testing.T) {
+	type input struct {
+		Body struct {
+			Name string `json:"name"`
+		}
+	}
+
+	app := New(WithProduces(MIMEJSON), WithEnvelope(DefaultEnvelope), WithMaxBodyBytes(16))
+
+	Route[input, struct{}](app).
+		POST("/users").
+		To(func(context.Context, input) (struct{}, error) {
+			t.Fatal("handler should not run for oversized request body")
+			return struct{}{}, nil
+		})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(`{"name":"alice-over-limit"}`))
+	req.Header.Set("Content-Type", MIMEJSON)
+	app.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusRequestEntityTooLarge, rec.Body.String())
+	}
+	var env struct {
+		Code int `json:"code"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("unmarshal envelope failed: %v; body = %s", err, rec.Body.String())
+	}
+	if env.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("envelope code = %d, want %d; body = %s", env.Code, http.StatusRequestEntityTooLarge, rec.Body.String())
+	}
+}
+
+func TestRouteBuilderMaxBodyBytesOverridesServerLimit(t *testing.T) {
+	type input struct {
+		Body struct {
+			Name string `json:"name"`
+		}
+	}
+	type output struct {
+		Name string `json:"name"`
+	}
+
+	app := New(WithProduces(MIMEJSON), WithMaxBodyBytes(8))
+
+	Route[input, output](app).
+		POST("/users").
+		MaxBodyBytes(64).
+		To(func(ctx context.Context, req input) (output, error) {
+			return output{Name: req.Body.Name}, nil
+		})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(`{"name":"alice"}`))
+	req.Header.Set("Content-Type", MIMEJSON)
+	app.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var data output
+	if err := json.Unmarshal(rec.Body.Bytes(), &data); err != nil {
+		t.Fatalf("unmarshal response failed: %v; body = %s", err, rec.Body.String())
+	}
+	if data.Name != "alice" {
+		t.Fatalf("Name = %q, want alice", data.Name)
+	}
+}
+
+func TestNewUsesDefaultMaxBodyBytes(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+
+	if app.config.maxBodyBytes != DefaultMaxBodyBytes {
+		t.Fatalf("maxBodyBytes = %d, want %d", app.config.maxBodyBytes, DefaultMaxBodyBytes)
+	}
+}
+
 func TestRouteBuilderPostShortcutReplacement(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 
@@ -720,6 +825,43 @@ func TestRouteBuilderSetupErrorPanicsFromServe(t *testing.T) {
 	assertPanicsIs(t, ErrInvalidParamsUsage, func() {
 		_ = app.Serve(ln)
 	})
+}
+
+func TestRouteBuilderSetupErrorIncludesRouteAndCaller(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+
+	Route[struct{}, struct{}](app).
+		GET("/broken").
+		Produces("application/unsupported").
+		To(func(context.Context, struct{}) (struct{}, error) {
+			return struct{}{}, nil
+		})
+
+	var got error
+	func() {
+		defer func() {
+			recovered := recover()
+			if recovered == nil {
+				t.Fatal("expected setup error panic")
+			}
+			err, ok := recovered.(error)
+			if !ok {
+				t.Fatalf("panic = %v, want error", recovered)
+			}
+			got = err
+		}()
+		app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/broken", nil))
+	}()
+
+	if !errors.Is(got, ErrRouteProducesUnsupported) {
+		t.Fatalf("panic error = %v, want %v", got, ErrRouteProducesUnsupported)
+	}
+	msg := got.Error()
+	for _, want := range []string{"GET /broken", "builder_test.go:"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("panic error = %q, want to contain %q", msg, want)
+		}
+	}
 }
 
 func TestRouteBuilderSetupErrorPanicsFromListenAndServeTLS(t *testing.T) {

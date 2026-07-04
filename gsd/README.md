@@ -1,6 +1,6 @@
 # gsd
 
-Service Discovery and Registry (Etcd, etc.).
+Service Discovery, Registry, Health Checking, and Load Balancing.
 
 ## Usage
 

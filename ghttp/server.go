@@ -44,6 +44,7 @@ func New(opts ...ServerOption) *Server {
 	c := &Config{
 		address:          ":8080",
 		clientIPResolver: defaultClientIPResolver,
+		maxBodyBytes:     DefaultMaxBodyBytes,
 	}
 	for _, opt := range opts {
 		opt(c)

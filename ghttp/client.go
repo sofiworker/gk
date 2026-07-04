@@ -54,6 +54,26 @@ func WithBaseURL(baseURL string) ClientOption {
 	return func(c *Client) { c.baseURL = strings.TrimRight(baseURL, "/") }
 }
 
+func WithHTTPClient(client *http.Client) ClientOption {
+	return func(c *Client) {
+		if client != nil {
+			c.httpClient = client
+		}
+	}
+}
+
+func WithTransport(transport http.RoundTripper) ClientOption {
+	return func(c *Client) {
+		if transport == nil {
+			return
+		}
+		if c.httpClient == nil {
+			c.httpClient = &http.Client{}
+		}
+		c.httpClient.Transport = transport
+	}
+}
+
 // R returns a new Request with the client's defaults.
 func (c *Client) R() *Request {
 	r := &Request{
@@ -117,20 +137,21 @@ type Request struct {
 	URL    string
 	ctx    context.Context
 
-	Header        http.Header
-	QueryParams   url.Values
-	PathParams    map[string]string
-	FormData      url.Values
-	Body          interface{}
-	Result        interface{}
-	ResultError   interface{}
-	Cookies       []*http.Cookie
-	AuthToken     string
-	AuthScheme    string
-	BasicAuthUser string
-	BasicAuthPass string
-	Timeout       time.Duration
-	FileFields    []*FileField
+	Header         http.Header
+	QueryParams    url.Values
+	PathParams     map[string]string
+	FormData       url.Values
+	Body           interface{}
+	Result         interface{}
+	ResultError    interface{}
+	StreamResponse bool
+	Cookies        []*http.Cookie
+	AuthToken      string
+	AuthScheme     string
+	BasicAuthUser  string
+	BasicAuthPass  string
+	Timeout        time.Duration
+	FileFields     []*FileField
 }
 
 // FileField represents a file upload field.
@@ -220,6 +241,11 @@ func (r *Request) SetFileReader(param, fileName string, reader io.Reader) *Reque
 
 func (r *Request) SetResult(result interface{}) *Request {
 	r.Result = result
+	return r
+}
+
+func (r *Request) SetStreamResponse(stream bool) *Request {
+	r.StreamResponse = stream
 	return r
 }
 
@@ -353,22 +379,27 @@ func (c *Client) execute(r *Request) (*Response, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	resp := &Response{
+		StatusCode:  httpResp.StatusCode,
+		Status:      httpResp.Status,
+		Header:      httpResp.Header,
+		Duration:    time.Since(start),
+		Request:     r,
+		RawResponse: httpResp,
+	}
+
+	if r.StreamResponse {
+		resp.rawBody = httpResp.Body
+		return resp, nil
+	}
 	defer httpResp.Body.Close()
 
 	body, err := io.ReadAll(httpResp.Body)
 	if err != nil {
 		return nil, err
 	}
-
-	resp := &Response{
-		StatusCode:  httpResp.StatusCode,
-		Status:      httpResp.Status,
-		Header:      httpResp.Header,
-		Body:        body,
-		Duration:    time.Since(start),
-		Request:     r,
-		RawResponse: httpResp,
-	}
+	resp.Body = body
 
 	if r.Result != nil && resp.IsSuccess() {
 		resp.BindJSON(r.Result)
@@ -437,22 +468,27 @@ func (c *Client) executeMultipart(r *Request, urlStr string, start time.Time) (*
 	if err != nil {
 		return nil, err
 	}
+
+	resp := &Response{
+		StatusCode:  httpResp.StatusCode,
+		Status:      httpResp.Status,
+		Header:      httpResp.Header,
+		Duration:    time.Since(start),
+		Request:     r,
+		RawResponse: httpResp,
+	}
+	if r.StreamResponse {
+		resp.rawBody = httpResp.Body
+		return resp, nil
+	}
 	defer httpResp.Body.Close()
 
 	body, err := io.ReadAll(httpResp.Body)
 	if err != nil {
 		return nil, err
 	}
-
-	return &Response{
-		StatusCode:  httpResp.StatusCode,
-		Status:      httpResp.Status,
-		Header:      httpResp.Header,
-		Body:        body,
-		Duration:    time.Since(start),
-		Request:     r,
-		RawResponse: httpResp,
-	}, nil
+	resp.Body = body
+	return resp, nil
 }
 
 // Response represents an HTTP response.
@@ -464,12 +500,23 @@ type Response struct {
 	Duration    time.Duration
 	Request     *Request
 	RawResponse *http.Response
+	rawBody     io.ReadCloser
 }
 
 func (r *Response) String() string  { return string(r.Body) }
 func (r *Response) Bytes() []byte   { return r.Body }
 func (r *Response) IsSuccess() bool { return r.StatusCode >= 200 && r.StatusCode < 300 }
 func (r *Response) IsError() bool   { return !r.IsSuccess() }
+
+func (r *Response) RawBody() io.ReadCloser {
+	if r == nil {
+		return io.NopCloser(bytes.NewReader(nil))
+	}
+	if r.rawBody != nil {
+		return r.rawBody
+	}
+	return io.NopCloser(bytes.NewReader(r.Body))
+}
 
 func (r *Response) BindJSON(target interface{}) error {
 	return json.Unmarshal(r.Body, target)

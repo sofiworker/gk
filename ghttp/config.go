@@ -9,6 +9,9 @@ import (
 	"time"
 )
 
+// DefaultMaxBodyBytes is the default maximum size for automatically decoded request bodies.
+const DefaultMaxBodyBytes int64 = 4 << 20
+
 // Config holds server configuration.
 type Config struct {
 	address           string
@@ -30,6 +33,7 @@ type Config struct {
 	writeTimeout      time.Duration
 	idleTimeout       time.Duration
 	maxHeaderBytes    int
+	maxBodyBytes      int64
 	tlsConfig         *tls.Config
 	baseContext       func(net.Listener) context.Context
 	connContext       func(context.Context, net.Conn) context.Context
@@ -160,6 +164,14 @@ func WithIdleTimeout(timeout time.Duration) ServerOption {
 func WithMaxHeaderBytes(n int) ServerOption {
 	return func(c *Config) {
 		c.maxHeaderBytes = n
+	}
+}
+
+// WithMaxBodyBytes sets the maximum size of automatically decoded request bodies.
+// Values less than or equal to zero disable the request body size limit.
+func WithMaxBodyBytes(n int64) ServerOption {
+	return func(c *Config) {
+		c.maxBodyBytes = n
 	}
 }
 

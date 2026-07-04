@@ -1,16 +1,0 @@
-Bombarding http://127.0.0.1:8080/hello with 100000 request(s) using 100 connection(s)
- 0 / 100000    0.00% 26693 / 100000   26.69% 132485/s 55176 / 100000   55.18% 137368/s 85886 / 100000   85.89% 142649/s 100000 / 100000  100.00% 124603/s 100000 / 100000  100.00% 124556/s 0s
-Done!
-Statistics        Avg      Stdev        Max
-  Reqs/sec    143697.45   23498.77  178835.00
-  Latency      693.48us   305.75us    22.48ms
-  Latency Distribution
-     50%   626.00us
-     75%     1.05ms
-     90%     1.41ms
-     95%     1.79ms
-     99%     3.75ms
-  HTTP codes:
-    1xx - 0, 2xx - 100000, 3xx - 0, 4xx - 0, 5xx - 0
-    others - 0
-  Throughput:    26.52MB/s

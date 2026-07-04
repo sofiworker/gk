@@ -2,8 +2,14 @@ name: Go
 
 on:
   push:
-    branches: [master]
   pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -13,8 +19,8 @@ jobs:
       fail-fast: false
       matrix:
         go-version:
-          - "1.25.0"
-          - "1.25.x"
+          - "1.25.0" # minimum supported version, locked before v1.0.0
+          - "stable" # latest stable release
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,8 +30,33 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
 
+      - name: Vet
+        run: go vet ./...
+
       - name: Test
         run: go test ./...
 
+  webbench:
+    name: Web benchmarks (sanity)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: benchmarks
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+          cache-dependency-path: benchmarks/go.sum
+
       - name: Vet
         run: go vet ./...
+
+      - name: Sanity (all frameworks answer all scenarios)
+        run: go test -run TestScenarioSanity -v
+
+      - name: Benchmarks smoke run
+        run: go test -run xxx -bench . -benchtime 1x

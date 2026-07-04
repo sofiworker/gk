@@ -14,6 +14,7 @@ var (
 
 	ErrInvalidParamsUsage   = errors.New("invalid params usage")
 	ErrUnsupportedMediaType = errors.New("unsupported media type")
+	ErrRequestBodyTooLarge  = errors.New("request body too large")
 
 	ErrRendererNotConfigured = errors.New("renderer is not configured")
 	ErrStaticRootRequired    = errors.New("static root cannot be empty")

@@ -7,6 +7,7 @@ import (
 	"mime"
 	"net/http"
 	"reflect"
+	"runtime"
 	"strings"
 )
 
@@ -32,21 +33,50 @@ var (
 
 // RouteBuilder builds a route in a go-restful-style chain.
 type RouteBuilder[Req, Resp any] struct {
-	target      routeTarget
-	path        string
-	methods     []string
-	doc         string
-	tags        []string
-	operationID string
-	reqType     reflect.Type
-	pathType    reflect.Type
-	queryType   reflect.Type
-	consumes    []string
-	consumesSet bool
-	produces    string
-	responses   []responseSpec
-	handler     HandlerFunc[Req, Resp]
-	middlewares []Middleware
+	target          routeTarget
+	path            string
+	methods         []string
+	doc             string
+	tags            []string
+	operationID     string
+	reqType         reflect.Type
+	pathType        reflect.Type
+	queryType       reflect.Type
+	consumes        []string
+	consumesSet     bool
+	maxBodyBytes    int64
+	maxBodyBytesSet bool
+	produces        string
+	responses       []responseSpec
+	handler         HandlerFunc[Req, Resp]
+	middlewares     []Middleware
+	input           compiledInput[Req]
+	codec           Codec // resolved from produces at registration
+}
+
+// compiledInput is the registration-time compiled constructor for a route's
+// input type: newTarget allocates the parse/validate target and finish turns
+// the filled target into the handler argument. Compiling this once per route
+// removes the per-request reflect.New plus the reflect.Value.Interface()
+// whole-struct copy that the typed path used to pay.
+type compiledInput[Req any] struct {
+	newTarget func() any
+	finish    func(any) Req
+}
+
+func compileInput[Req any]() compiledInput[Req] {
+	t := reflect.TypeFor[Req]()
+	if t.Kind() == reflect.Ptr && t.Elem().Kind() == reflect.Struct {
+		elem := t.Elem()
+		return compiledInput[Req]{
+			newTarget: func() any { return reflect.New(elem).Interface() },
+			finish:    func(target any) Req { return target.(Req) },
+		}
+	}
+	return compiledInput[Req]{
+		newTarget: func() any { return new(Req) },
+		finish:    func(target any) Req { return *target.(*Req) },
+	}
 }
 
 type routeTarget interface {
@@ -74,6 +104,7 @@ type responseSpecBuilder[Req, Resp any] struct {
 func Route[Req, Resp any](target routeTarget) *RouteBuilder[Req, Resp] {
 	return &RouteBuilder[Req, Resp]{
 		target: target,
+		input:  compileInput[Req](),
 	}
 }
 
@@ -190,6 +221,14 @@ func (b *RouteBuilder[Req, Resp]) Produces(contentType string) *RouteBuilder[Req
 func (b *RouteBuilder[Req, Resp]) Consumes(contentTypes ...string) *RouteBuilder[Req, Resp] {
 	b.consumes = normalizeContentTypes(contentTypes)
 	b.consumesSet = true
+	return b
+}
+
+// MaxBodyBytes overrides the server request body size limit for this route.
+// Values less than or equal to zero disable the request body size limit.
+func (b *RouteBuilder[Req, Resp]) MaxBodyBytes(n int64) *RouteBuilder[Req, Resp] {
+	b.maxBodyBytes = n
+	b.maxBodyBytesSet = true
 	return b
 }
 
@@ -354,15 +393,48 @@ func (b *RouteBuilder[Req, Resp]) toHandler(handler http.Handler) {
 	}
 	for _, method := range b.methods {
 		if err := b.target.handleRoute(method, b.path, handler, b.middlewares...); err != nil {
-			b.recordSetupError(err)
+			b.recordSetupError(err, method)
 			return
 		}
 		b.register(method)
 	}
 }
 
-func (b *RouteBuilder[Req, Resp]) recordSetupError(err error) {
-	b.target.owner().recordSetupError(err)
+func (b *RouteBuilder[Req, Resp]) recordSetupError(err error, methodOverride ...string) {
+	if err == nil {
+		return
+	}
+	b.target.owner().recordSetupError(fmt.Errorf("route setup %s at %s: %w", b.setupErrorRoute(methodOverride...), setupErrorCaller(), err))
+}
+
+func (b *RouteBuilder[Req, Resp]) setupErrorRoute(methodOverride ...string) string {
+	methods := b.methods
+	if len(methodOverride) > 0 {
+		methods = methodOverride
+	}
+	method := "<method unset>"
+	if len(methods) > 0 {
+		method = strings.Join(methods, ",")
+	}
+	path := b.path
+	if strings.TrimSpace(path) == "" {
+		path = "<path unset>"
+	}
+	return method + " " + path
+}
+
+func setupErrorCaller() string {
+	for skip := 2; skip < 16; skip++ {
+		_, file, line, ok := runtime.Caller(skip)
+		if !ok {
+			continue
+		}
+		if strings.HasSuffix(file, "ghttp/builder.go") || strings.HasSuffix(file, `ghttp\builder.go`) {
+			continue
+		}
+		return fmt.Sprintf("%s:%d", file, line)
+	}
+	return "unknown"
 }
 
 func (b *RouteBuilder[Req, Resp]) validateMethods() error {
@@ -411,7 +483,7 @@ func (b *RouteBuilder[Req, Resp]) buildHandler() http.Handler {
 			server.envelope(w, r, resolveStatusCode(resp), resp, nil, server.codecMgr)
 			return
 		}
-		writeResponse(w, r, server, resolveStatusCode(resp), b.produces, resp)
+		writeResponse(w, r, server, resolveStatusCode(resp), b.produces, b.codec, resp)
 	})
 }
 
@@ -422,9 +494,11 @@ func (b *RouteBuilder[Req, Resp]) resolveProduces() error {
 	if b.produces == "" {
 		return ErrRouteProducesRequired
 	}
-	if _, ok := b.target.owner().codecMgr.Resolve(b.produces); !ok {
+	codec, ok := b.target.owner().codecMgr.Resolve(b.produces)
+	if !ok {
 		return ErrRouteProducesUnsupported
 	}
+	b.codec = codec
 	return nil
 }
 
@@ -440,15 +514,23 @@ func (b *RouteBuilder[Req, Resp]) parseAndValidateInput(w http.ResponseWriter, r
 }
 
 func (b *RouteBuilder[Req, Resp]) parseAndValidateInputWithPathParams(w http.ResponseWriter, r *http.Request, params pathParamList) (Req, bool) {
-	input, target := newInputTarget[Req]()
+	target := b.input.newTarget()
 	server := b.target.owner()
+	if maxBodyBytes := b.effectiveMaxBodyBytes(server); maxBodyBytes > 0 {
+		r = requestWithMaxBodyBytes(w, r, maxBodyBytes)
+	}
 	if err := validateRequestContentType(r, target, b.consumes); err != nil {
 		writeError(w, r, server, http.StatusUnsupportedMediaType, err)
 		var zero Req
 		return zero, false
 	}
 	if err := parseInputWithConfigAndPathParams(r, target, server.config, params); err != nil {
-		writeError(w, r, server, http.StatusBadRequest, err)
+		code := http.StatusBadRequest
+		if isRequestBodyTooLarge(err) {
+			code = http.StatusRequestEntityTooLarge
+			err = Err(code, ErrRequestBodyTooLarge.Error(), WithCause(err))
+		}
+		writeError(w, r, server, code, err)
 		var zero Req
 		return zero, false
 	}
@@ -461,37 +543,31 @@ func (b *RouteBuilder[Req, Resp]) parseAndValidateInputWithPathParams(w http.Res
 		}
 	}
 
-	return inputFromTarget[Req](input, target), true
+	return b.input.finish(target), true
 }
 
-func newInputTarget[Req any]() (Req, interface{}) {
-	var input Req
-	t := reflect.TypeOf(input)
-	if t == nil {
-		return input, &input
+func (b *RouteBuilder[Req, Resp]) effectiveMaxBodyBytes(s *Server) int64 {
+	if b.maxBodyBytesSet {
+		return b.maxBodyBytes
 	}
-	if t.Kind() == reflect.Ptr && t.Elem().Kind() == reflect.Struct {
-		target := reflect.New(t.Elem()).Interface()
-		return target.(Req), target
+	if s == nil || s.config == nil {
+		return 0
 	}
-	if t.Kind() == reflect.Struct {
-		return input, reflect.New(t).Interface()
-	}
-	return input, &input
+	return s.config.maxBodyBytes
 }
 
-func inputFromTarget[Req any](input Req, target interface{}) Req {
-	t := reflect.TypeOf(input)
-	if t == nil {
-		return input
+func requestWithMaxBodyBytes(w http.ResponseWriter, r *http.Request, maxBodyBytes int64) *http.Request {
+	if maxBodyBytes <= 0 || r == nil || r.Body == nil || r.Body == http.NoBody {
+		return r
 	}
-	if t.Kind() == reflect.Ptr && t.Elem().Kind() == reflect.Struct {
-		return target.(Req)
-	}
-	if t.Kind() == reflect.Struct {
-		return reflect.ValueOf(target).Elem().Interface().(Req)
-	}
-	return input
+	limited := r.WithContext(r.Context())
+	limited.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	return limited
+}
+
+func isRequestBodyTooLarge(err error) bool {
+	var maxBytesErr *http.MaxBytesError
+	return errors.As(err, &maxBytesErr)
 }
 
 func validateRequestContentType(r *http.Request, target interface{}, consumes []string) error {
@@ -592,11 +668,17 @@ func statusCodeFromError(defaultCode int, err error) int {
 	return defaultCode
 }
 
-func writeResponse(w http.ResponseWriter, r *http.Request, s *Server, statusCode int, produces string, resp interface{}) {
-	codec, ok := s.codecMgr.Resolve(produces)
-	if !ok {
-		writeError(w, r, s, http.StatusInternalServerError, ErrRouteProducesUnsupported)
-		return
+// writeResponse writes resp with the codec resolved from produces at route
+// registration; codec being nil means registration-time validation was
+// bypassed, so fall back to a per-request resolve.
+func writeResponse(w http.ResponseWriter, r *http.Request, s *Server, statusCode int, produces string, codec Codec, resp interface{}) {
+	if codec == nil {
+		resolved, ok := s.codecMgr.Resolve(produces)
+		if !ok {
+			writeError(w, r, s, http.StatusInternalServerError, ErrRouteProducesUnsupported)
+			return
+		}
+		codec = resolved
 	}
 	w.Header().Set("Content-Type", produces)
 	w.WriteHeader(statusCode)

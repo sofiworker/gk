@@ -1,9 +1,13 @@
 package ghttp
 
 import (
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -50,6 +54,63 @@ func TestSSEEventTypes(t *testing.T) {
 	assert.Equal(t, "1", event.ID)
 	assert.Equal(t, "update", event.Event)
 	assert.Equal(t, `{"x":1}`, event.Data)
+}
+
+func TestClientSSEReconnectSendsLastEventID(t *testing.T) {
+	var calls int32
+	lastEventID := make(chan string, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		call := atomic.AddInt32(&calls, 1)
+		if call == 1 {
+			_, _ = fmt.Fprint(w, "id: 42\nevent: first\ndata: one\n\n")
+			if flusher != nil {
+				flusher.Flush()
+			}
+			return
+		}
+
+		lastEventID <- r.Header.Get("Last-Event-ID")
+		_, _ = fmt.Fprint(w, "id: 43\nevent: second\ndata: two\n\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}))
+	defer ts.Close()
+
+	client := NewClient(WithBaseURL(ts.URL))
+	stream, err := client.SSE("/events", SSEConfig{
+		Reconnect:     true,
+		RetryInterval: time.Millisecond,
+		MaxRetries:    1,
+	})
+	if err != nil {
+		t.Fatalf("SSE failed: %v", err)
+	}
+	defer stream.Close()
+
+	select {
+	case event := <-stream.Events:
+		if event.ID != "42" {
+			t.Fatalf("first event ID = %q, want 42", event.ID)
+		}
+	case err := <-stream.Errors:
+		t.Fatalf("unexpected SSE error: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first SSE event")
+	}
+
+	select {
+	case got := <-lastEventID:
+		if got != "42" {
+			t.Fatalf("Last-Event-ID = %q, want 42", got)
+		}
+	case err := <-stream.Errors:
+		t.Fatalf("unexpected SSE error: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for reconnect")
+	}
 }
 
 type mockResponseWriter struct {

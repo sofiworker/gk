@@ -6,3 +6,5 @@
 *.exe
 experiments
 .junie
+.claude
+benchmarks/bench_*.txt
