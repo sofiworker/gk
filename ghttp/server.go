@@ -26,7 +26,7 @@ type Server struct {
 	envelope  EnvelopeFunc
 	validator Validator
 	logger    Logger
-	produces  string
+	produces  []string
 	consumes  []string
 
 	middlewares []Middleware
@@ -267,13 +267,13 @@ func (s *Server) panicSetupError() {
 	s.panicSetupErrorLocked()
 }
 
-func (s *Server) addRouteSpec(method, path, doc string, tags []string, operationID string, reqType, pathType, queryType reflect.Type, consumes []string, produces string, responses []responseSpec) {
+func (s *Server) addRouteSpec(method, path string, reqType, respType reflect.Type, doc RouteDoc, consumes, produces []string) {
 	if s.openAPI != nil {
-		s.openAPI.AddRoute(method, path, doc, tags, operationID, reqType, pathType, queryType, consumes, produces, responses)
+		s.openAPI.AddRoute(method, path, reqType, respType, doc, consumes, produces)
 	}
 }
 
-func (s *Server) producesContentType() string {
+func (s *Server) producesContentTypes() []string {
 	return s.produces
 }
 

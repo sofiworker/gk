@@ -3,7 +3,6 @@ package ghttp
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"encoding/xml"
 	"io"
@@ -626,80 +625,3 @@ func PUT[Req, Resp any](ctx context.Context, client *Client, path string, req *R
 func DELETE[Req, Resp any](ctx context.Context, client *Client, path string) (*Resp, error) {
 	return Do[Req, Resp](ctx, client, http.MethodDelete, path, nil)
 }
-
-// WebSocket
-
-// WebSocketConn wraps gorilla/websocket.Conn.
-type WebSocketConn struct {
-	conn interface {
-		ReadJSON(v interface{}) error
-		WriteJSON(v interface{}) error
-		Close() error
-	}
-}
-
-func (c *WebSocketConn) ReadJSON(v interface{}) error {
-	return c.conn.ReadJSON(v)
-}
-
-func (c *WebSocketConn) WriteJSON(v interface{}) error {
-	return c.conn.WriteJSON(v)
-}
-
-func (c *WebSocketConn) Close() error {
-	return c.conn.Close()
-}
-
-type tlsConn struct {
-	conn    interface{}
-	closeFn func() error
-}
-
-func (t *tlsConn) ReadJSON(v interface{}) error {
-	return nil
-}
-
-func (t *tlsConn) WriteJSON(v interface{}) error {
-	return nil
-}
-
-func (t *tlsConn) Close() error {
-	if t.closeFn != nil {
-		return t.closeFn()
-	}
-	return nil
-}
-
-func (c *Client) WebSocket(url string, opts ...WebSocketOption) (*WebSocketConn, error) {
-	cfg := &clientWebSocketConfig{
-		handshakeTimeout: 10 * time.Second,
-	}
-	for _, opt := range opts {
-		opt(cfg)
-	}
-
-	// For now, use gorilla/websocket at runtime via interface
-	// This requires gorilla/websocket to be in go.mod
-	return &WebSocketConn{}, nil
-}
-
-type clientWebSocketConfig struct {
-	tlsConfig        *tls.Config
-	subprotocols     []string
-	handshakeTimeout time.Duration
-	readBufferSize   int
-	writeBufferSize  int
-}
-
-type WebSocketOption func(*clientWebSocketConfig)
-
-func WithWebSocketTLS(tlsConfig *tls.Config) WebSocketOption {
-	return func(c *clientWebSocketConfig) { c.tlsConfig = tlsConfig }
-}
-
-func WithWebSocketSubprotocols(protos []string) WebSocketOption {
-	return func(c *clientWebSocketConfig) { c.subprotocols = protos }
-}
-
-// WebSocketHandler is the handler type for WebSocket upgrades.
-type WebSocketHandler func(ctx context.Context, params Params, conn *WebSocketConn) error

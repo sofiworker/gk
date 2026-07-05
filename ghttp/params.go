@@ -1,7 +1,10 @@
 package ghttp
 
-import "net/url"
-import "net/http"
+import (
+	"net/http"
+	"net/url"
+	"strconv"
+)
 
 // Params is a per-request view of path, query, header, cookie, and client IP
 // inputs. It reads from the underlying request lazily: query values, cookies,
@@ -185,6 +188,42 @@ func (p Params) DefaultPath(key, defaultValue string) string {
 	return value
 }
 
+// PathInt returns a path parameter parsed as int.
+func (p Params) PathInt(key string) (int, error) {
+	return strconv.Atoi(p.Path(key))
+}
+
+// PathIntDefault returns a path parameter parsed as int or defaultValue when it is empty or invalid.
+func (p Params) PathIntDefault(key string, defaultValue int) int {
+	value := p.Path(key)
+	if value == "" {
+		return defaultValue
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil {
+		return defaultValue
+	}
+	return n
+}
+
+// PathBool returns a path parameter parsed as bool.
+func (p Params) PathBool(key string) (bool, error) {
+	return strconv.ParseBool(p.Path(key))
+}
+
+// PathBoolDefault returns a path parameter parsed as bool or defaultValue when it is empty or invalid.
+func (p Params) PathBoolDefault(key string, defaultValue bool) bool {
+	value := p.Path(key)
+	if value == "" {
+		return defaultValue
+	}
+	b, err := strconv.ParseBool(value)
+	if err != nil {
+		return defaultValue
+	}
+	return b
+}
+
 // Query returns the first query parameter value.
 func (p Params) Query(key string) string {
 	values := p.queryValues()
@@ -201,6 +240,42 @@ func (p Params) DefaultQuery(key, defaultValue string) string {
 		return defaultValue
 	}
 	return value
+}
+
+// QueryInt returns the first query parameter parsed as int.
+func (p Params) QueryInt(key string) (int, error) {
+	return strconv.Atoi(p.Query(key))
+}
+
+// QueryIntDefault returns the first query parameter parsed as int or defaultValue when it is empty or invalid.
+func (p Params) QueryIntDefault(key string, defaultValue int) int {
+	value := p.Query(key)
+	if value == "" {
+		return defaultValue
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil {
+		return defaultValue
+	}
+	return n
+}
+
+// QueryBool returns the first query parameter parsed as bool.
+func (p Params) QueryBool(key string) (bool, error) {
+	return strconv.ParseBool(p.Query(key))
+}
+
+// QueryBoolDefault returns the first query parameter parsed as bool or defaultValue when it is empty or invalid.
+func (p Params) QueryBoolDefault(key string, defaultValue bool) bool {
+	value := p.Query(key)
+	if value == "" {
+		return defaultValue
+	}
+	b, err := strconv.ParseBool(value)
+	if err != nil {
+		return defaultValue
+	}
+	return b
 }
 
 // QueryList returns all query parameter values.

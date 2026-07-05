@@ -49,11 +49,11 @@ func TestRouteBuilderWithPOST(t *testing.T) {
 
 	Route[testInput, testOutput](app).
 		POST("/users/{id}").
-		Doc("Create user").
-		Tags("Users").
-		OperationID("createUser").
-		Reads(testInput{}).
-		Responds(http.StatusCreated).With(testOutput{}).Desc("Created").End().
+		Doc(
+			Summary("Create user"),
+			Tags("Users"),
+			OperationID("createUser"),
+		).
 		To(testHandler)
 
 	w := httptest.NewRecorder()
@@ -149,6 +149,32 @@ func TestRouteBuilderConsumesRejectsUnsupportedContentType(t *testing.T) {
 
 	if rec.Code != http.StatusUnsupportedMediaType {
 		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusUnsupportedMediaType, rec.Body.String())
+	}
+}
+
+func TestRouteBuilderErrorWithoutEnvelopeUsesJSON(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+
+	Route[struct{}, struct{}](app).GET("/posts/{id}").To(func(context.Context, struct{}) (struct{}, error) {
+		return struct{}{}, NotFound("post not found")
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/posts/999", nil)
+	app.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != MIMEJSON {
+		t.Fatalf("Content-Type = %q, want %s; body = %s", got, MIMEJSON, rec.Body.String())
+	}
+	var body HTTPError
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal error body failed: %v; body = %s", err, rec.Body.String())
+	}
+	if body.Code != http.StatusNotFound || body.Message != "post not found" {
+		t.Fatalf("error body = %#v, want 404 post not found", body)
 	}
 }
 
@@ -574,7 +600,7 @@ func TestRouteBuilderRecordsRegisterErrorAndSkipsOpenAPI(t *testing.T) {
 
 	Route[testInput, testOutput](app).
 		POST("/users/{id}").
-		Doc("Create user").
+		Doc(Summary("Create user")).
 		To(testHandler)
 
 	spec := app.openAPI.Build()
@@ -647,18 +673,14 @@ func TestRouteBuilderToHTML(t *testing.T) {
 func TestRouteBuilderPathAndQueryPopulateOpenAPI(t *testing.T) {
 	app := New(WithOpenAPI("api", "1.0.0"), WithProduces(MIMEJSON))
 
-	type pathParams struct {
-		ID string `path:"id"`
-	}
-	type queryParams struct {
+	type input struct {
+		ID   string `path:"id"`
 		Role string `query:"role"`
 	}
 
-	Route[struct{}, struct{}](app).
+	Route[input, struct{}](app).
 		GET("/users/{id}").
-		PathSchema(pathParams{}).
-		QuerySchema(queryParams{}).
-		To(func(context.Context, struct{}) (struct{}, error) {
+		To(func(context.Context, input) (struct{}, error) {
 			return struct{}{}, nil
 		})
 
@@ -1028,3 +1050,190 @@ func (r *failingRouter) Register(string, string, http.Handler) error {
 }
 
 func (r *failingRouter) ServeHTTP(http.ResponseWriter, *http.Request) {}
+
+func TestRouteBuilderProducesNegotiatesConfiguredContentTypes(t *testing.T) {
+	app := New(WithProduces(MIMEJSON, MIMEXML))
+
+	type output struct {
+		Message string `json:"message" xml:"message"`
+	}
+
+	Route[struct{}, output](app).
+		GET("/negotiated").
+		To(func(context.Context, struct{}) (output, error) {
+			return output{Message: "hello"}, nil
+		})
+
+	xmlRec := httptest.NewRecorder()
+	xmlReq := httptest.NewRequest(http.MethodGet, "/negotiated", nil)
+	xmlReq.Header.Set("Accept", MIMEXML)
+	app.ServeHTTP(xmlRec, xmlReq)
+
+	if ct := xmlRec.Header().Get("Content-Type"); ct != MIMEXML {
+		t.Fatalf("xml Content-Type = %q, want %s", ct, MIMEXML)
+	}
+	if body := xmlRec.Body.String(); !strings.Contains(body, "<message>hello</message>") {
+		t.Fatalf("xml body = %q, want message element", body)
+	}
+
+	fallbackRec := httptest.NewRecorder()
+	fallbackReq := httptest.NewRequest(http.MethodGet, "/negotiated", nil)
+	fallbackReq.Header.Set("Accept", MIMEPlain)
+	app.ServeHTTP(fallbackRec, fallbackReq)
+
+	if ct := fallbackRec.Header().Get("Content-Type"); ct != MIMEJSON {
+		t.Fatalf("fallback Content-Type = %q, want %s", ct, MIMEJSON)
+	}
+	if body := strings.TrimSpace(fallbackRec.Body.String()); body != `{"message":"hello"}` {
+		t.Fatalf("fallback body = %q, want JSON", body)
+	}
+}
+
+func TestRouteBuilderRouteProducesOverridesServerProducesList(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+
+	type output struct {
+		Message string `json:"message" xml:"message"`
+	}
+
+	Route[struct{}, output](app).
+		GET("/route-produces").
+		Produces(MIMEXML, MIMEJSON).
+		To(func(context.Context, struct{}) (output, error) {
+			return output{Message: "route"}, nil
+		})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/route-produces", nil)
+	req.Header.Set("Accept", MIMEJSON)
+	app.ServeHTTP(rec, req)
+
+	if ct := rec.Header().Get("Content-Type"); ct != MIMEJSON {
+		t.Fatalf("Content-Type = %q, want %s", ct, MIMEJSON)
+	}
+	if body := strings.TrimSpace(rec.Body.String()); body != `{"message":"route"}` {
+		t.Fatalf("body = %q, want JSON", body)
+	}
+}
+
+func TestRouteBuilderValidateStopsHandlerWithDefaultValidationError(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	called := false
+
+	type input struct {
+		Body struct {
+			Name string `json:"name"`
+		}
+	}
+
+	Route[input, struct{}](app).
+		POST("/validated").
+		Validate(func(req input) error {
+			if req.Body.Name == "" {
+				return errors.New("name required")
+			}
+			return nil
+		}).
+		To(func(context.Context, input) (struct{}, error) {
+			called = true
+			return struct{}{}, nil
+		})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/validated", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", MIMEJSON)
+	app.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if called {
+		t.Fatal("handler called after validation failure")
+	}
+	if !strings.Contains(rec.Body.String(), "name required") {
+		t.Fatalf("body = %q, want validation message", rec.Body.String())
+	}
+}
+
+func TestRouteBuilderValidateCanOverrideValidationError(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+
+	type input struct {
+		Body struct {
+			Name string `json:"name"`
+		}
+	}
+
+	Route[input, struct{}](app).
+		POST("/mapped-validation").
+		Validate(
+			func(context.Context, input) error {
+				return errors.New("raw validation failure")
+			},
+			ValidationError(BadRequest("invalid input")),
+		).
+		To(func(context.Context, input) (struct{}, error) {
+			return struct{}{}, nil
+		})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/mapped-validation", strings.NewReader(`{"name":""}`))
+	req.Header.Set("Content-Type", MIMEJSON)
+	app.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "invalid input") {
+		t.Fatalf("body = %q, want mapped validation message", rec.Body.String())
+	}
+}
+
+func TestRouteBuilderSkipValidationSkipsGlobalValidatorOnly(t *testing.T) {
+	app := New(WithProduces(MIMEJSON), WithValidator(serverValidatorFunc(func(context.Context, interface{}) error {
+		return errors.New("global validation should be skipped")
+	})))
+	called := false
+
+	type input struct {
+		Body struct {
+			Name string `json:"name"`
+		}
+	}
+
+	Route[input, struct{}](app).
+		POST("/skip-global-validation").
+		SkipValidation().
+		Validate(func(req input) error {
+			if req.Body.Name == "" {
+				return errors.New("route validation still runs")
+			}
+			return nil
+		}).
+		To(func(context.Context, input) (struct{}, error) {
+			called = true
+			return struct{}{}, nil
+		})
+
+	failRec := httptest.NewRecorder()
+	failReq := httptest.NewRequest(http.MethodPost, "/skip-global-validation", strings.NewReader(`{}`))
+	failReq.Header.Set("Content-Type", MIMEJSON)
+	app.ServeHTTP(failRec, failReq)
+	if failRec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("route validation status = %d, want %d", failRec.Code, http.StatusUnprocessableEntity)
+	}
+	if !strings.Contains(failRec.Body.String(), "route validation still runs") {
+		t.Fatalf("body = %q, want route validation message", failRec.Body.String())
+	}
+
+	okRec := httptest.NewRecorder()
+	okReq := httptest.NewRequest(http.MethodPost, "/skip-global-validation", strings.NewReader(`{"name":"Alice"}`))
+	okReq.Header.Set("Content-Type", MIMEJSON)
+	app.ServeHTTP(okRec, okReq)
+	if okRec.Code != http.StatusOK {
+		t.Fatalf("success status = %d, want %d; body=%s", okRec.Code, http.StatusOK, okRec.Body.String())
+	}
+	if !called {
+		t.Fatal("handler was not called after route validation passed")
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 )
@@ -51,20 +52,24 @@ func TestParseInput_ParamsAndBody(t *testing.T) {
 	}
 }
 
-func TestParseInput_IgnoresPathQueryHeaderTags(t *testing.T) {
+func TestParseInput_BindsPathQueryHeaderCookieTags(t *testing.T) {
 	type Req struct {
-		ID    string `path:"id"`
-		Page  string `query:"page"`
-		Token string `header:"X-Token"`
+		ID       int    `path:"id"`
+		Page     int    `query:"page"`
+		Active   bool   `query:"active"`
+		Token    string `header:"X-Token"`
+		Session  string `cookie:"session_id"`
+		Fallback string `query:"missing" default:"fallback"`
 
 		Body struct {
 			Name string `json:"name"`
 		}
 	}
 
-	r := httptest.NewRequest("POST", "/users/99?page=3", bytes.NewReader([]byte(`{"name":"Alice"}`)))
+	r := httptest.NewRequest("POST", "/users/99?page=3&active=true", bytes.NewReader([]byte(`{"name":"Alice"}`)))
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("X-Token", "secret")
+	r.AddCookie(&http.Cookie{Name: "session_id", Value: "s1"})
 	r = r.WithContext(context.WithValue(r.Context(), pathParamsKey, map[string]string{"id": "99"}))
 
 	var input Req
@@ -72,8 +77,8 @@ func TestParseInput_IgnoresPathQueryHeaderTags(t *testing.T) {
 		t.Fatalf("parseInput failed: %v", err)
 	}
 
-	if input.ID != "" || input.Page != "" || input.Token != "" {
-		t.Fatalf("legacy binding tags were populated: %#v", input)
+	if input.ID != 99 || input.Page != 3 || !input.Active || input.Token != "secret" || input.Session != "s1" || input.Fallback != "fallback" {
+		t.Fatalf("bound input = %#v, want path/query/header/cookie/default values", input)
 	}
 	if input.Body.Name != "Alice" {
 		t.Fatalf("Body.Name = %q, want Alice", input.Body.Name)

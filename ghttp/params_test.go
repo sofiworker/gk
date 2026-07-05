@@ -83,6 +83,45 @@ func TestParamsSnapshotAccessors(t *testing.T) {
 	}
 }
 
+func TestParamsTypedPathAndQueryAccessors(t *testing.T) {
+	params := newParams(
+		map[string]string{"id": "42", "bad_id": "nope", "enabled": "true"},
+		url.Values{"page": []string{"3"}, "bad_page": []string{"NaN"}, "draft": []string{"false"}},
+		nil,
+		nil,
+		"",
+	)
+
+	if got, err := params.PathInt("id"); err != nil || got != 42 {
+		t.Fatalf("PathInt(id) = %d, %v; want 42, nil", got, err)
+	}
+	if _, err := params.PathInt("bad_id"); err == nil {
+		t.Fatal("PathInt(bad_id) error = nil, want conversion error")
+	}
+	if got := params.PathIntDefault("bad_id", 7); got != 7 {
+		t.Fatalf("PathIntDefault(bad_id) = %d, want 7", got)
+	}
+	if got, err := params.PathBool("enabled"); err != nil || !got {
+		t.Fatalf("PathBool(enabled) = %v, %v; want true, nil", got, err)
+	}
+
+	if got, err := params.QueryInt("page"); err != nil || got != 3 {
+		t.Fatalf("QueryInt(page) = %d, %v; want 3, nil", got, err)
+	}
+	if _, err := params.QueryInt("bad_page"); err == nil {
+		t.Fatal("QueryInt(bad_page) error = nil, want conversion error")
+	}
+	if got := params.QueryIntDefault("bad_page", 9); got != 9 {
+		t.Fatalf("QueryIntDefault(bad_page) = %d, want 9", got)
+	}
+	if got, err := params.QueryBool("draft"); err != nil || got {
+		t.Fatalf("QueryBool(draft) = %v, %v; want false, nil", got, err)
+	}
+	if got := params.QueryBoolDefault("missing", true); !got {
+		t.Fatal("QueryBoolDefault(missing) = false, want true")
+	}
+}
+
 func TestParamsFromRequestCapturesCookies(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(&http.Cookie{Name: "session_id", Value: "abc"})

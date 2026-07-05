@@ -300,8 +300,7 @@ func methodOutputHandler(method string) HandlerFunc[struct{}, standardMethodOutp
 }
 
 func TestServerOpenAPIEndpoint(t *testing.T) {
-	type req struct{}
-	type pathSchema struct {
+	type req struct {
 		ID string `path:"id"`
 	}
 	type resp struct {
@@ -311,11 +310,12 @@ func TestServerOpenAPIEndpoint(t *testing.T) {
 	app := New(WithOpenAPI("accounts", "2.0.0"), WithProduces(MIMEJSON))
 	Route[req, resp](app).
 		GET("/users/{id}").
-		Doc("get user").
-		OperationID("getUser").
-		Tags("users").
-		PathSchema(pathSchema{}).
-		Responds(http.StatusOK).With(resp{}).Desc("user").End().
+		Doc(
+			Summary("get user"),
+			OperationID("getUser"),
+			Tags("users"),
+			Success(Message("user")),
+		).
 		To(func(context.Context, req) (resp, error) {
 			return resp{Name: "alice"}, nil
 		})
@@ -785,7 +785,7 @@ func TestGroupRouteBuilderUsesGroupPathInOpenAPI(t *testing.T) {
 
 	Route[input, output](group).
 		POST("/users").
-		Doc("create user").
+		Doc(Summary("create user")).
 		To(func(context.Context, input) (output, error) {
 			return output{}, nil
 		})

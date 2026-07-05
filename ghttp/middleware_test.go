@@ -2,9 +2,12 @@ package ghttp
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestMiddlewareOrder(t *testing.T) {
@@ -196,6 +199,26 @@ func TestBuiltinMiddlewareRequestID(t *testing.T) {
 	}
 }
 
+func TestBuiltinMiddlewareRequestIDInjectsContext(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	app.Use(RequestID())
+
+	var got string
+	Route[struct{}, struct{}](app).GET("/test").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+		got = GetRequestID(ctx)
+		return struct{}{}, nil
+	})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/test", nil)
+	r.Header.Set("X-Request-ID", "req-1")
+	app.ServeHTTP(w, r)
+
+	if got != "req-1" {
+		t.Fatalf("request id from context = %q, want req-1", got)
+	}
+}
+
 func TestBuiltinMiddlewareCORSUsesConfiguredHeaders(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	app.Use(CORS(CORSConfig{
@@ -226,6 +249,63 @@ func TestBuiltinMiddlewareCORSUsesConfiguredHeaders(t *testing.T) {
 	if got := w.Header().Get("Access-Control-Max-Age"); got != "60" {
 		t.Fatalf("max age = %q, want 60", got)
 	}
+	if got := w.Header().Get("Vary"); got != "Origin" {
+		t.Fatalf("Vary = %q, want Origin", got)
+	}
+}
+
+func TestBuiltinMiddlewareCORSDoesNotEmitAllowHeadersForRejectedOrigin(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	app.Use(CORS(CORSConfig{
+		AllowOrigins: []string{"https://example.test"},
+		AllowMethods: []string{http.MethodGet, http.MethodPost},
+		AllowHeaders: []string{"Content-Type"},
+	}))
+
+	Route[struct{}, struct{}](app).GET("/cors").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+		return struct{}{}, nil
+	})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/cors", nil)
+	r.Header.Set("Origin", "https://evil.test")
+	app.ServeHTTP(w, r)
+
+	for _, header := range []string{
+		"Access-Control-Allow-Origin",
+		"Access-Control-Allow-Methods",
+		"Access-Control-Allow-Headers",
+		"Access-Control-Allow-Credentials",
+	} {
+		if got := w.Header().Get(header); got != "" {
+			t.Fatalf("%s = %q, want empty for rejected origin", header, got)
+		}
+	}
+}
+
+func TestBuiltinMiddlewareCORSCredentialsRejectsWildcardOrigin(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	app.Use(CORS(CORSConfig{
+		AllowOrigins:     []string{"*"},
+		AllowMethods:     []string{http.MethodGet},
+		AllowCredentials: true,
+	}))
+
+	Route[struct{}, struct{}](app).GET("/cors").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+		return struct{}{}, nil
+	})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/cors", nil)
+	r.Header.Set("Origin", "https://example.test")
+	app.ServeHTTP(w, r)
+
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want empty for credentialed wildcard", got)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Fatalf("Access-Control-Allow-Credentials = %q, want empty for credentialed wildcard", got)
+	}
 }
 
 func TestBuiltinMiddlewareRecovery(t *testing.T) {
@@ -242,5 +322,95 @@ func TestBuiltinMiddlewareRecovery(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500 after panic, got %d", w.Code)
+	}
+}
+
+func TestBuiltinMiddlewareRecoveryUsesStructuredGenericError(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	app.Use(Recoverer())
+
+	Route[struct{}, struct{}](app).GET("/panic").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+		panic("secret panic detail")
+	})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/panic", nil)
+	app.ServeHTTP(w, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+	if got := w.Header().Get("Content-Type"); got != MIMEJSON {
+		t.Fatalf("Content-Type = %q, want %s; body = %s", got, MIMEJSON, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "secret panic detail") {
+		t.Fatalf("panic detail leaked in response body: %s", w.Body.String())
+	}
+	var body HTTPError
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal recovery body failed: %v; body = %s", err, w.Body.String())
+	}
+	if body.Code != http.StatusInternalServerError || body.Message != "Internal Server Error" {
+		t.Fatalf("recovery body = %#v, want generic 500", body)
+	}
+}
+
+func TestBuiltinMiddlewareTimeoutWritesGatewayTimeout(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	app.Use(Timeout(5 * time.Millisecond))
+
+	Route[struct{}, struct{}](app).GET("/slow").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+		time.Sleep(30 * time.Millisecond)
+		return struct{}{}, nil
+	})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/slow", nil)
+	app.ServeHTTP(w, r)
+
+	if w.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusGatewayTimeout, w.Body.String())
+	}
+}
+
+func TestBuiltinMiddlewareRecovererCatchesPanicInsideTimeout(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	app.Use(Recoverer())
+	app.Use(Timeout(time.Second))
+
+	Route[struct{}, struct{}](app).GET("/panic").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+		panic("panic inside timeout")
+	})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/panic", nil)
+	app.ServeHTTP(w, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusInternalServerError, w.Body.String())
+	}
+}
+
+func TestGroupUseAfterRouteRegistrationApplies(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	group := app.Group("/api")
+
+	Route[struct{}, struct{}](group).GET("/test").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+		return struct{}{}, nil
+	})
+
+	group.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Group", "applied")
+			next.ServeHTTP(w, r)
+		})
+	})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+	app.ServeHTTP(w, r)
+
+	if got := w.Header().Get("X-Group"); got != "applied" {
+		t.Fatalf("X-Group = %q, want applied", got)
 	}
 }

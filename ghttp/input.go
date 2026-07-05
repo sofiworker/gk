@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -158,8 +159,12 @@ func parseInputWithConfigAndPathParams(r *http.Request, input interface{}, c *Co
 	if info.err != nil {
 		return info.err
 	}
+	params := paramsFromRequestWithPathParams(r, c, routeParams)
 	if info.paramsIdx >= 0 {
-		v.Field(info.paramsIdx).Set(reflect.ValueOf(paramsFromRequestWithPathParams(r, c, routeParams)))
+		v.Field(info.paramsIdx).Set(reflect.ValueOf(params))
+	}
+	if err := bindTaggedParams(v, info, params); err != nil {
+		return err
 	}
 
 	// Parse Body
@@ -183,6 +188,111 @@ func parseInputWithConfigAndPathParams(r *http.Request, input interface{}, c *Co
 	}
 
 	return nil
+}
+
+func bindTaggedParams(v reflect.Value, info *structInfo, params Params) error {
+	t := v.Type()
+	for i := 0; i < t.NumField(); i++ {
+		if i == info.bodyIdx || i == info.paramsIdx {
+			continue
+		}
+		fieldInfo := t.Field(i)
+		if !fieldInfo.IsExported() {
+			continue
+		}
+		field := v.Field(i)
+		if !field.CanSet() {
+			continue
+		}
+		if err := bindTaggedParamField(field, fieldInfo, params); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func bindTaggedParamField(field reflect.Value, fieldInfo reflect.StructField, params Params) error {
+	for _, binding := range []struct {
+		tag string
+		get func(string) string
+	}{
+		{tag: "path", get: params.Path},
+		{tag: "query", get: params.Query},
+		{tag: "header", get: params.Header},
+		{tag: "cookie", get: params.Cookie},
+	} {
+		name, ok := bindingName(fieldInfo.Tag.Get(binding.tag))
+		if !ok {
+			continue
+		}
+		value := binding.get(name)
+		if value == "" {
+			value = fieldInfo.Tag.Get("default")
+		}
+		if value == "" {
+			return nil
+		}
+		if err := setValueFromString(field, value); err != nil {
+			return fmt.Errorf("bind %s parameter %q to %s: %w", binding.tag, name, fieldInfo.Name, err)
+		}
+		return nil
+	}
+	return nil
+}
+
+func bindingName(tag string) (string, bool) {
+	if tag == "" || tag == "-" {
+		return "", false
+	}
+	name := strings.Split(tag, ",")[0]
+	if name == "" {
+		return "", false
+	}
+	return name, true
+}
+
+func setValueFromString(field reflect.Value, value string) error {
+	if field.Kind() == reflect.Ptr {
+		if field.IsNil() {
+			field.Set(reflect.New(field.Type().Elem()))
+		}
+		return setValueFromString(field.Elem(), value)
+	}
+	switch field.Kind() {
+	case reflect.String:
+		field.SetString(value)
+		return nil
+	case reflect.Bool:
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return err
+		}
+		field.SetBool(parsed)
+		return nil
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		parsed, err := strconv.ParseInt(value, 10, field.Type().Bits())
+		if err != nil {
+			return err
+		}
+		field.SetInt(parsed)
+		return nil
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		parsed, err := strconv.ParseUint(value, 10, field.Type().Bits())
+		if err != nil {
+			return err
+		}
+		field.SetUint(parsed)
+		return nil
+	case reflect.Float32, reflect.Float64:
+		parsed, err := strconv.ParseFloat(value, field.Type().Bits())
+		if err != nil {
+			return err
+		}
+		field.SetFloat(parsed)
+		return nil
+	default:
+		return fmt.Errorf("unsupported kind %s", field.Kind())
+	}
 }
 
 func parseBody(r *http.Request, bodyField reflect.Value, c *Config) error {

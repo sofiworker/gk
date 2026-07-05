@@ -8,8 +8,9 @@ import (
 // Group holds a set of routes with a common prefix.
 type Group struct {
 	server      *Server
+	parent      *Group
 	prefix      string
-	produces    string
+	produces    []string
 	consumes    []string
 	consumesSet bool
 	middlewares []Middleware
@@ -21,9 +22,9 @@ func (g *Group) Use(mws ...Middleware) *Group {
 	return g
 }
 
-// Produces declares the default response Content-Type for routes in this group.
-func (g *Group) Produces(contentType string) *Group {
-	g.produces = contentType
+// Produces declares the default response Content-Types for routes in this group.
+func (g *Group) Produces(contentTypes ...string) *Group {
+	g.produces = normalizeContentTypes(contentTypes)
 	return g
 }
 
@@ -36,35 +37,34 @@ func (g *Group) Consumes(contentTypes ...string) *Group {
 
 // Group creates a nested route group.
 func (g *Group) Group(prefix string, mws ...Middleware) *Group {
-	groupMiddlewares := make([]Middleware, 0, len(g.middlewares)+len(mws))
-	groupMiddlewares = append(groupMiddlewares, g.middlewares...)
-	groupMiddlewares = append(groupMiddlewares, mws...)
 	return &Group{
 		server:      g.server,
+		parent:      g,
 		prefix:      JoinPaths(g.prefix, prefix),
-		produces:    g.produces,
+		produces:    append([]string(nil), g.produces...),
 		consumes:    append([]string(nil), g.consumes...),
 		consumesSet: g.consumesSet,
-		middlewares: groupMiddlewares,
+		middlewares: append([]Middleware(nil), mws...),
 	}
 }
 
 func (g *Group) handleRoute(method, path string, handler http.Handler, mws ...Middleware) error {
-	all := make([]Middleware, 0, len(g.middlewares)+len(mws))
-	all = append(all, g.middlewares...)
-	all = append(all, mws...)
-	return g.server.handleRoute(method, JoinPaths(g.prefix, path), handler, all...)
+	return g.server.handleRoute(method, JoinPaths(g.prefix, path), &groupRouteHandler{
+		group:            g,
+		handler:          handler,
+		routeMiddlewares: append([]Middleware(nil), mws...),
+	})
 }
 
-func (g *Group) addRouteSpec(method, path, doc string, tags []string, operationID string, reqType, pathType, queryType reflect.Type, consumes []string, produces string, responses []responseSpec) {
-	g.server.addRouteSpec(method, JoinPaths(g.prefix, path), doc, tags, operationID, reqType, pathType, queryType, consumes, produces, responses)
+func (g *Group) addRouteSpec(method, path string, reqType, respType reflect.Type, doc RouteDoc, consumes, produces []string) {
+	g.server.addRouteSpec(method, JoinPaths(g.prefix, path), reqType, respType, doc, consumes, produces)
 }
 
-func (g *Group) producesContentType() string {
-	if g.produces != "" {
+func (g *Group) producesContentTypes() []string {
+	if len(g.produces) > 0 {
 		return g.produces
 	}
-	return g.server.producesContentType()
+	return g.server.producesContentTypes()
 }
 
 func (g *Group) consumesContentTypes() []string {
@@ -76,4 +76,41 @@ func (g *Group) consumesContentTypes() []string {
 
 func (g *Group) owner() *Server {
 	return g.server
+}
+
+func (g *Group) currentMiddlewares() []Middleware {
+	if g == nil {
+		return nil
+	}
+	var all []Middleware
+	if g.parent != nil {
+		all = append(all, g.parent.currentMiddlewares()...)
+	}
+	all = append(all, g.middlewares...)
+	return all
+}
+
+type groupRouteHandler struct {
+	group            *Group
+	handler          http.Handler
+	routeMiddlewares []Middleware
+}
+
+func (h *groupRouteHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.currentHandler().ServeHTTP(w, r)
+}
+
+func (h *groupRouteHandler) ServeHTTPWithPathParams(w http.ResponseWriter, r *http.Request, params pathParamList) {
+	handler := h.currentHandler()
+	if pathHandler, ok := handler.(pathParamHandler); ok {
+		pathHandler.ServeHTTPWithPathParams(w, r, params)
+		return
+	}
+	handler.ServeHTTP(w, requestWithPathParams(r, params))
+}
+
+func (h *groupRouteHandler) currentHandler() http.Handler {
+	middlewares := h.group.currentMiddlewares()
+	middlewares = append(middlewares, h.routeMiddlewares...)
+	return wrapRouteHandler(h.handler, middlewares...)
 }

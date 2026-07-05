@@ -59,11 +59,8 @@ func main() {
     // 链式构建器（支持 OpenAPI 元数据）
     ghttp.Route[GreetInput, GreetOutput](s).
         GET("/hello/{name}").
-        Produces(ghttp.MIMEJSON).
-        Doc("返回个性化的问候消息").
-        Reads(GreetInput{}).
-        Responds(200).With(GreetOutput{}).Desc("成功").
-        End().
+        Produces(ghttp.MIMEJSON, ghttp.MIMEXML).
+        Doc(ghttp.Summary("返回个性化的问候消息")).
         To(func(ctx context.Context, req GreetInput) (GreetOutput, error) {
             return GreetOutput{Message: "Hello, " + req.Path("name")}, nil
         })
@@ -131,16 +128,10 @@ _, err = io.Copy(dst, streamResp.RawBody())
 | `.PATCH(path)` | 设置 PATCH 方法和路由路径 |
 | `.ANY(path)` | 设置所有标准 HTTP 方法和路由路径 |
 | `.CUSTOM(method, path)` | 设置自定义 HTTP 方法和路由路径 |
-| `.Doc("描述")` | 操作描述 |
-| `.Reads(input)` | 请求体类型（用于 OpenAPI） |
+| `.Doc(ghttp.Summary("..."), ghttp.Tags("..."))` | 操作描述 |
 | `.Consumes(contentTypes...)` | 声明可自动解析的请求 Content-Type，可在 server/group/route 上声明 |
 | `.MaxBodyBytes(n)` | 覆盖当前路由自动解析请求体的大小上限；`n <= 0` 表示不限制 |
-| `.Produces(contentType)` | 自动响应编码的 Content-Type，可在 server/group/route 上声明 |
-| `.Responds(code)` | 响应状态码 |
-| `.With(output)` | 响应体类型 |
-| `.Desc("说明")` | 响应说明 |
-| `.Tags("标签")` | OpenAPI 标签 |
-| `.End()` | 结束方法声明，等待 `To()` |
+| `.Produces(contentTypes...)` | 自动响应编码的 Content-Type，可在 server/group/route 上声明 |
 | `.To(handler)` | 注册处理函数，配置错误会在 `Run` / `Serve` / 首次 `ServeHTTP` 时 panic |
 
 ### 路由参数
@@ -188,7 +179,7 @@ func createUser(ctx context.Context, req CreateUserInput) (UserOutput, error) {
 ghttp.Route[CreateUserInput, UserOutput](s).
     POST("/users/{id}").
     Consumes(ghttp.MIMEJSON, ghttp.MIMEXML).
-    Produces(ghttp.MIMEJSON).
+    Produces(ghttp.MIMEJSON, ghttp.MIMEXML).
     To(createUser)
 ```
 
@@ -304,13 +295,13 @@ group.Use(authMiddleware)
 ### WebSocket
 
 ```go
-ghttp.Route[struct{}, struct{}](s).GET("/ws").ToWebSocket(func(ctx context.Context, params ghttp.Params, conn *ghttp.WebSocketConn) error {
-    for {
-        var msg map[string]interface{}
-        err := conn.ReadJSON(&msg)
-        if err != nil { return err }
-        conn.WriteJSON(msg)
+ghttp.Route[struct{}, struct{}](s).GET("/ws/{room}").ToWebSocket(func(ctx context.Context, params ghttp.Params, conn *ghttp.WebSocketConn) error {
+    var msg map[string]string
+    if err := conn.ReadJSON(&msg); err != nil {
+        return err
     }
+    msg["room"] = params.Path("room")
+    return conn.WriteJSON(msg)
 })
 ```
 
@@ -358,7 +349,7 @@ renderer := ghttp.NewRenderer("./templates/*.html")
 s = ghttp.New(ghttp.WithRenderer(renderer))
 
 // 处理函数中
-ghttp.Route[NoInput, NoOutput](s).GET("/page").Produces(ghttp.MIMEJSON).To(func(ctx context.Context, req NoInput) (NoOutput, error) {
+ghttp.Route[NoInput, NoOutput](s).GET("/page").Produces(ghttp.MIMEJSON, ghttp.MIMEXML).To(func(ctx context.Context, req NoInput) (NoOutput, error) {
     return NoOutput{}, nil
 })
 ```
@@ -480,3 +471,30 @@ ghttp/
 ## License
 
 Same as [gk](https://github.com/sofiworker/gk) project.
+
+### 文档与验证
+
+`Doc(...)` 是唯一的路由文档入口，`Req` 自动推导 path/query/header/cookie 参数和 `Body` 请求体，`Resp` 自动推导成功响应的 data schema：
+
+```go
+ghttp.Route[CreateUserReq, UserDTO](app).
+    POST("/users").
+    Consumes(ghttp.MIMEJSON, ghttp.MIMEXML).
+    Produces(ghttp.MIMEJSON, ghttp.MIMEXML).
+    Doc(
+        ghttp.Summary("Create user"),
+        ghttp.Tags("users"),
+        ghttp.OperationID("createUser"),
+        ghttp.Success(ghttp.Code(0), ghttp.Message("created")),
+        ghttp.Errors(ErrInvalidInput),
+        ghttp.Deprecated("use /v2/users instead"),
+        ghttp.Sunset(time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)),
+        ghttp.ExternalDocs("migration guide", "https://example.com/migrate-users"),
+    ).
+    Validate(validateCreateUser).
+    To(createUser)
+```
+
+`Deprecated`、`Sunset`、`ExternalDocs` 只影响 OpenAPI 文档，不改变路由匹配、状态码或 handler 执行。
+
+`Validate(fn)` 默认把错误当作参数验证失败返回；需要覆盖错误响应时使用 `Validate(fn, ghttp.ValidationError(err))`。`SkipValidation()` 只跳过 server 级 validator，不跳过 route 自己声明的 `Validate(fn)`。

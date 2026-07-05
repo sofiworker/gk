@@ -399,10 +399,11 @@ func TestIntegration_RouteBuilderChainWithOpenAPI(t *testing.T) {
 
 	Route[createRequest, createResponse](s).
 		POST("/api/users/new").
-		Doc("Create a new user").
-		Reads(createRequest{}).
-		Responds(201).With(createResponse{}).Desc("User created").End().
-		Tags("users").
+		Doc(
+			Summary("Create a new user"),
+			Tags("users"),
+			Success(Message("User created")),
+		).
 		To(func(ctx context.Context, req createRequest) (createResponse, error) {
 			return createResponse{ID: 1, Name: req.Body.Name, Email: req.Body.Email}, nil
 		})

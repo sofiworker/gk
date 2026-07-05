@@ -21,7 +21,7 @@ type Config struct {
 	logger            Logger
 	envelope          EnvelopeFunc
 	bodyDecoder       BodyDecodeFunc
-	produces          string
+	produces          []string
 	consumes          []string
 	clientIPResolver  ClientIPResolver
 	vfsPath           string
@@ -95,10 +95,10 @@ func WithBodyDecoder(fn BodyDecodeFunc) ServerOption {
 	}
 }
 
-// WithProduces sets the default response Content-Type for automatic route encoding.
-func WithProduces(contentType string) ServerOption {
+// WithProduces sets the default response Content-Types for automatic route encoding.
+func WithProduces(contentTypes ...string) ServerOption {
 	return func(c *Config) {
-		c.produces = contentType
+		c.produces = normalizeContentTypes(contentTypes)
 	}
 }
 

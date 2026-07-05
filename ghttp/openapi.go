@@ -3,7 +3,6 @@ package ghttp
 import (
 	"encoding/json"
 	"reflect"
-	"strconv"
 	"strings"
 )
 
@@ -15,13 +14,19 @@ type OpenAPI struct {
 }
 
 type operation struct {
-	Summary     string               `json:"summary,omitempty"`
-	Description string               `json:"description,omitempty"`
-	OperationID string               `json:"operationId,omitempty"`
-	Tags        []string             `json:"tags,omitempty"`
-	Parameters  []*parameter         `json:"parameters,omitempty"`
-	RequestBody *requestBody         `json:"requestBody,omitempty"`
-	Responses   map[string]*response `json:"responses"`
+	Summary          string               `json:"summary,omitempty"`
+	Description      string               `json:"description,omitempty"`
+	OperationID      string               `json:"operationId,omitempty"`
+	Tags             []string             `json:"tags,omitempty"`
+	Deprecated       bool                 `json:"deprecated,omitempty"`
+	Parameters       []*parameter         `json:"parameters,omitempty"`
+	RequestBody      *requestBody         `json:"requestBody,omitempty"`
+	Responses        map[string]*response `json:"responses"`
+	ExternalDocs     *ExternalDocsDoc     `json:"externalDocs,omitempty"`
+	Success          *DocMessage          `json:"x-ghttp-success,omitempty"`
+	Errors           []DocMessage         `json:"x-ghttp-errors,omitempty"`
+	DeprecatedReason string               `json:"x-ghttp-deprecated-reason,omitempty"`
+	Sunset           string               `json:"x-ghttp-sunset,omitempty"`
 }
 
 type parameter struct {
@@ -54,7 +59,7 @@ func NewOpenAPI(title, version string) *OpenAPI {
 	}
 }
 
-func (o *OpenAPI) AddRoute(method, path, doc string, tags []string, operationID string, reqType, pathType, queryType reflect.Type, consumes []string, produces string, responses []responseSpec) {
+func (o *OpenAPI) AddRoute(method, path string, reqType, respType reflect.Type, doc RouteDoc, consumes, produces []string) {
 	if o == nil {
 		return
 	}
@@ -67,15 +72,23 @@ func (o *OpenAPI) AddRoute(method, path, doc string, tags []string, operationID 
 	}
 
 	op := &operation{
-		Summary:     doc,
-		Description: doc,
-		OperationID: operationID,
-		Tags:        tags,
+		Summary:          doc.Summary,
+		Description:      doc.Description,
+		OperationID:      doc.OperationID,
+		Tags:             doc.Tags,
+		Deprecated:       doc.Deprecated,
+		ExternalDocs:     doc.ExternalDocs,
+		Success:          doc.Success,
+		Errors:           doc.Errors,
+		DeprecatedReason: doc.DeprecatedReason,
+		Sunset:           doc.Sunset,
 	}
 
-	if pathType != nil || queryType != nil {
-		op.Parameters = append(op.Parameters, extractParametersFromType(pathType, "path", true)...)
-		op.Parameters = append(op.Parameters, extractParametersFromType(queryType, "query", false)...)
+	if reqType != nil {
+		op.Parameters = append(op.Parameters, extractParametersFromType(reqType, "path", true)...)
+		op.Parameters = append(op.Parameters, extractParametersFromType(reqType, "query", false)...)
+		op.Parameters = append(op.Parameters, extractParametersFromType(reqType, "header", false)...)
+		op.Parameters = append(op.Parameters, extractParametersFromType(reqType, "cookie", false)...)
 	}
 
 	if reqType != nil {
@@ -97,25 +110,19 @@ func (o *OpenAPI) AddRoute(method, path, doc string, tags []string, operationID 
 	}
 
 	op.Responses = make(map[string]*response)
-	for _, r := range responses {
-		code := strconv.Itoa(r.Code)
-		respSchema := generateSchema(r.ModelType)
-		opResp := &response{
-			Description: r.Description,
-		}
-		if produces != "" {
-			opResp.Content = map[string]*mediaType{
-				produces: {Schema: respSchema},
-			}
-		}
-		op.Responses[code] = opResp
+	description := "OK"
+	if doc.Success != nil && doc.Success.Message != "" {
+		description = doc.Success.Message
 	}
-
-	if _, ok := op.Responses["200"]; !ok && len(responses) == 0 {
-		op.Responses["200"] = &response{
-			Description: "OK",
+	opResp := &response{Description: description}
+	if respType != nil && len(produces) > 0 {
+		respSchema := generateSchema(respType)
+		opResp.Content = make(map[string]*mediaType, len(produces))
+		for _, contentType := range produces {
+			opResp.Content[contentType] = &mediaType{Schema: respSchema}
 		}
 	}
+	op.Responses["200"] = opResp
 
 	o.paths[openapiPath][method] = op
 }
@@ -160,8 +167,14 @@ func extractParametersFromType(t reflect.Type, in string, required bool) []*para
 	var params []*parameter
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
-		tag := f.Tag.Get(in)
-		if tag == "" {
+		if !f.IsExported() || f.Name == "Body" || f.Type == reflect.TypeOf(Params{}) || f.Type == reflect.TypeOf((*Params)(nil)) {
+			continue
+		}
+		if f.Anonymous {
+			params = append(params, extractParametersFromType(f.Type, in, required)...)
+			continue
+		}
+		if _, ok := bindingName(f.Tag.Get(in)); !ok {
 			continue
 		}
 		params = append(params, fieldToParameter(f, in, required))
@@ -170,11 +183,12 @@ func extractParametersFromType(t reflect.Type, in string, required bool) []*para
 }
 
 func fieldToParameter(f reflect.StructField, in string, required bool) *parameter {
+	name, _ := bindingName(f.Tag.Get(in))
 	param := &parameter{
-		Name:     f.Tag.Get(in),
+		Name:     name,
 		In:       in,
-		Required: required,
-		Schema:   goTypeToSchemaType(f.Type.Kind()),
+		Required: required || f.Tag.Get("required") == "true",
+		Schema:   goTypeToSchemaType(derefType(f.Type).Kind()),
 	}
 	if doc := f.Tag.Get("doc"); doc != "" {
 		param.Description = doc
@@ -183,12 +197,28 @@ func fieldToParameter(f reflect.StructField, in string, required bool) *paramete
 }
 
 func extractBodySchema(t reflect.Type) interface{} {
+	if t == nil {
+		return nil
+	}
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return nil
+	}
 	for i := 0; i < t.NumField(); i++ {
 		if t.Field(i).Name == "Body" {
 			return generateSchema(t.Field(i).Type)
 		}
 	}
 	return nil
+}
+
+func derefType(t reflect.Type) reflect.Type {
+	for t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	return t
 }
 
 func goTypeToSchemaType(kind reflect.Kind) map[string]string {

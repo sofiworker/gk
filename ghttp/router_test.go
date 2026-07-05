@@ -2,6 +2,7 @@ package ghttp
 
 import (
 	"bytes"
+	"errors"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -83,6 +84,74 @@ func TestRadixRouterPathParams(t *testing.T) {
 	}
 	if capturedParams.Get("id") != "42" {
 		t.Fatalf("expected id=42, got %s", capturedParams.Get("id"))
+	}
+}
+
+func TestRadixRouterRejectsDuplicateRoute(t *testing.T) {
+	r := NewRadixRouter()
+	dummy := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+
+	if err := r.Register(http.MethodGet, "/users/{id}", dummy); err != nil {
+		t.Fatalf("first Register failed: %v", err)
+	}
+	if err := r.Register(http.MethodGet, "/users/{id}", dummy); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate Register error = %v, want ErrConflict", err)
+	}
+}
+
+func TestRadixRouterMethodNotAllowedIncludesAllow(t *testing.T) {
+	r := NewRadixRouter()
+	dummy := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+
+	if err := r.Register(http.MethodGet, "/users/{id}", dummy); err != nil {
+		t.Fatalf("Register GET failed: %v", err)
+	}
+	if err := r.Register(http.MethodPut, "/users/{id}", dummy); err != nil {
+		t.Fatalf("Register PUT failed: %v", err)
+	}
+	if err := r.Register(http.MethodPost, "/other", dummy); err != nil {
+		t.Fatalf("Register POST failed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/users/42", nil)
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+	allow := rec.Header().Values("Allow")
+	if len(allow) != 1 {
+		t.Fatalf("Allow values = %#v, want one header", allow)
+	}
+	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPut} {
+		if !strings.Contains(allow[0], method) {
+			t.Fatalf("Allow = %q, want method %s", allow[0], method)
+		}
+	}
+}
+
+func TestRadixRouterHEADFallsBackToGETWithoutBody(t *testing.T) {
+	r := NewRadixRouter()
+	if err := r.Register(http.MethodGet, "/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Health", "ok")
+		_, _ = w.Write([]byte("healthy"))
+	})); err != nil {
+		t.Fatalf("Register GET failed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodHead, "/health", nil)
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Header().Get("X-Health"); got != "ok" {
+		t.Fatalf("X-Health = %q, want ok", got)
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("HEAD body length = %d, want 0; body = %q", rec.Body.Len(), rec.Body.String())
 	}
 }
 

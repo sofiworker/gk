@@ -63,10 +63,12 @@ func TestScenario_ServerGroupRouteMiddlewareOpenAPIAndStatic(t *testing.T) {
 
 	Route[input, output](api).
 		POST("/users/{id}").
-		Doc("create user").
-		Tags("users").
-		OperationID("createUser").
-		Responds(http.StatusCreated).With(output{}).Desc("created").End().
+		Doc(
+			Summary("create user"),
+			Tags("users"),
+			OperationID("createUser"),
+			Success(Message("created")),
+		).
 		To(func(ctx context.Context, req input) (output, error) {
 			return output{ID: req.Path("id"), Name: req.Body.Name}, nil
 		})
