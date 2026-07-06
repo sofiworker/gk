@@ -155,6 +155,23 @@ func TestRadixRouterHEADFallsBackToGETWithoutBody(t *testing.T) {
 	}
 }
 
+func TestRadixRouterMatchesTrailingSlash(t *testing.T) {
+	r := NewRadixRouter()
+	if err := r.Register(http.MethodGet, "/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})); err != nil {
+		t.Fatalf("Register GET failed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/health/", nil)
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
 func TestRadixRouterParamRouteDoesNotAllocateOnHotPath(t *testing.T) {
 	r := NewRadixRouter()
 	if err := r.Register("GET", "/users/{id}", pathParamHandlerFunc(func(w http.ResponseWriter, req *http.Request, params pathParamList) {
@@ -208,6 +225,23 @@ func TestStdRouterGo122(t *testing.T) {
 	dummy := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
 	if err := r.Register("GET", "/users/{id}", dummy); err != nil {
 		t.Fatalf("StdRouter Register failed: %v", err)
+	}
+}
+
+func TestStdRouterMatchesTrailingSlash(t *testing.T) {
+	r := NewStdRouter()
+	if err := r.Register(http.MethodGet, "/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})); err != nil {
+		t.Fatalf("Register GET failed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/health/", nil)
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 }
 

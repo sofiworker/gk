@@ -24,6 +24,19 @@ func (r *StdRouter) Register(method, path string, handler http.Handler) error {
 }
 
 func (r *StdRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	path := strings.TrimRight(req.URL.Path, "/")
+	if path == "" {
+		path = "/"
+	}
+	if path != req.URL.Path {
+		next := new(http.Request)
+		*next = *req
+		urlCopy := *req.URL
+		urlCopy.Path = path
+		urlCopy.RawPath = ""
+		next.URL = &urlCopy
+		req = next
+	}
 	r.mux.ServeHTTP(w, req)
 }
 
