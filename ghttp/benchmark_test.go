@@ -228,6 +228,7 @@ func BenchmarkRouterImplementations(b *testing.B) {
 		}{
 			{name: "radix", make: func(n int) Router { return newBenchmarkRadixRouter(n) }},
 			{name: "compiled", make: func(n int) Router { return newBenchmarkCompiledRouter(n) }},
+			{name: "matchit", make: func(n int) Router { return newBenchmarkMatchitRouter(n) }},
 			{name: "std", make: func(n int) Router { return newBenchmarkStdRouter(n) }},
 		} {
 			router := impl.make(routeCount)
@@ -251,6 +252,12 @@ func BenchmarkRouterImplementations(b *testing.B) {
 
 func newBenchmarkCompiledRouter(routeCount int) *CompiledRouter {
 	router := NewCompiledRouter()
+	registerBenchmarkRoutes(router, routeCount)
+	return router
+}
+
+func newBenchmarkMatchitRouter(routeCount int) *MatchitRouter {
+	router := NewMatchitRouter()
 	registerBenchmarkRoutes(router, routeCount)
 	return router
 }
