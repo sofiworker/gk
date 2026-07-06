@@ -76,12 +76,13 @@ func (m *MethodMatcher) lookup(path string, params *pathParamList) *routeEntry {
 	}
 
 	// 2. Parameterized match by segment count
-	segCount := pathSegmentCount(path)
-
-	if tree, ok := m.segmentIndex[segCount]; ok {
-		params.Reset()
-		if entry := tree.lookup(path, params); entry != nil {
-			return entry
+	if len(m.segmentIndex) > 0 {
+		segCount := pathSegmentCount(path)
+		if tree, ok := m.segmentIndex[segCount]; ok {
+			params.Reset()
+			if entry := tree.lookup(path, params); entry != nil {
+				return entry
+			}
 		}
 	}
 
