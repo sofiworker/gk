@@ -155,15 +155,7 @@ type benchmarkLookupPath struct {
 
 func newBenchmarkRadixRouter(routeCount int) *RadixRouter {
 	router := NewRadixRouter()
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
-
-	for i := 0; i < routeCount; i++ {
-		path := benchmarkRoutePattern(i)
-		if err := router.Register(http.MethodGet, path, handler); err != nil {
-			panic(err)
-		}
-	}
-
+	registerBenchmarkRoutes(router, routeCount)
 	return router
 }
 
@@ -226,6 +218,56 @@ func benchmarkRouteIndex(routeCount, kind int) int {
 	}
 
 	return kind
+}
+
+func BenchmarkRouterImplementations(b *testing.B) {
+	for _, routeCount := range []int{128, 1024, 8192} {
+		for _, impl := range []struct {
+			name string
+			make func(int) Router
+		}{
+			{name: "radix", make: func(n int) Router { return newBenchmarkRadixRouter(n) }},
+			{name: "compiled", make: func(n int) Router { return newBenchmarkCompiledRouter(n) }},
+			{name: "std", make: func(n int) Router { return newBenchmarkStdRouter(n) }},
+		} {
+			router := impl.make(routeCount)
+			for _, bp := range benchmarkLookupPaths(routeCount) {
+				if !bp.wantMatch {
+					continue
+				}
+				b.Run(fmt.Sprintf("%s/routes=%d/%s", impl.name, routeCount, bp.name), func(b *testing.B) {
+					req := httptest.NewRequest(http.MethodGet, bp.path, nil)
+					w := discardResponseWriter{}
+					b.ReportAllocs()
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						router.ServeHTTP(w, req)
+					}
+				})
+			}
+		}
+	}
+}
+
+func newBenchmarkCompiledRouter(routeCount int) *CompiledRouter {
+	router := NewCompiledRouter()
+	registerBenchmarkRoutes(router, routeCount)
+	return router
+}
+
+func newBenchmarkStdRouter(routeCount int) *StdRouter {
+	router := NewStdRouter()
+	registerBenchmarkRoutes(router, routeCount)
+	return router
+}
+
+func registerBenchmarkRoutes(router Router, routeCount int) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+	for i := 0; i < routeCount; i++ {
+		if err := router.Register(http.MethodGet, benchmarkRoutePattern(i), handler); err != nil {
+			panic(err)
+		}
+	}
 }
 
 func BenchmarkStdRouter(b *testing.B) {
