@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+const radixStaticIndexThreshold = 8
+
 // routeEntry stores a single route entry.
 type routeEntry struct {
 	path       string
@@ -20,14 +22,20 @@ func newRouteEntry(path string, handler http.Handler) *routeEntry {
 	}
 }
 
+type radixStaticChild struct {
+	segment string
+	node    *CompressedRadixNode
+}
+
 // CompressedRadixNode is a node in the compressed radix tree.
 type CompressedRadixNode struct {
-	prefix        string
-	children      map[string]*CompressedRadixNode
-	paramChild    *CompressedRadixNode
-	paramName     string
-	wildcardChild *CompressedRadixNode
-	entry         *routeEntry
+	prefix         string
+	staticChildren []radixStaticChild
+	staticIndex    map[string]*CompressedRadixNode
+	paramChild     *CompressedRadixNode
+	paramName      string
+	wildcardChild  *CompressedRadixNode
+	entry          *routeEntry
 }
 
 // CompressedRadixTree is a compressed prefix tree for HTTP path matching.
@@ -41,9 +49,7 @@ func NewCompressedRadixTree() *CompressedRadixTree {
 
 func newCompressedRadixTree() *CompressedRadixTree {
 	return &CompressedRadixTree{
-		root: &CompressedRadixNode{
-			children: make(map[string]*CompressedRadixNode),
-		},
+		root: &CompressedRadixNode{},
 	}
 }
 
@@ -64,9 +70,7 @@ func (t *CompressedRadixTree) insert(entry *routeEntry) {
 
 			if isWildcard {
 				if node.wildcardChild == nil {
-					node.wildcardChild = &CompressedRadixNode{
-						children: make(map[string]*CompressedRadixNode),
-					}
+					node.wildcardChild = &CompressedRadixNode{}
 				}
 				node.wildcardChild.entry = entry
 				node.wildcardChild.prefix = seg
@@ -74,9 +78,7 @@ func (t *CompressedRadixTree) insert(entry *routeEntry) {
 			}
 
 			if node.paramChild == nil {
-				node.paramChild = &CompressedRadixNode{
-					children: make(map[string]*CompressedRadixNode),
-				}
+				node.paramChild = &CompressedRadixNode{}
 			}
 			node.paramChild.paramName = paramName
 			if i == len(segments)-1 {
@@ -87,8 +89,8 @@ func (t *CompressedRadixTree) insert(entry *routeEntry) {
 		}
 
 		// Static segment
-		child, exists := node.children[seg]
-		if exists {
+		child := node.staticChild(seg)
+		if child != nil {
 			node = child
 			if i == len(segments)-1 {
 				node.entry = entry
@@ -97,15 +99,72 @@ func (t *CompressedRadixTree) insert(entry *routeEntry) {
 		}
 
 		child = &CompressedRadixNode{
-			prefix:   seg,
-			children: make(map[string]*CompressedRadixNode),
+			prefix: seg,
 		}
 		if i == len(segments)-1 {
 			child.entry = entry
 		}
-		node.children[seg] = child
+		node.addStaticChild(seg, child)
 		node = child
 	}
+}
+
+func (n *CompressedRadixNode) staticChild(segment string) *CompressedRadixNode {
+	if n.staticIndex != nil {
+		return n.staticIndex[segment]
+	}
+	for i := range n.staticChildren {
+		child := &n.staticChildren[i]
+		if child.segment == segment {
+			return child.node
+		}
+	}
+	return nil
+}
+
+func (n *CompressedRadixNode) addStaticChild(segment string, child *CompressedRadixNode) {
+	n.staticChildren = append(n.staticChildren, radixStaticChild{
+		segment: segment,
+		node:    child,
+	})
+	if n.staticIndex != nil {
+		n.staticIndex[segment] = child
+		return
+	}
+	if len(n.staticChildren) < radixStaticIndexThreshold {
+		return
+	}
+	n.staticIndex = make(map[string]*CompressedRadixNode, len(n.staticChildren))
+	for i := range n.staticChildren {
+		staticChild := &n.staticChildren[i]
+		n.staticIndex[staticChild.segment] = staticChild.node
+	}
+}
+
+func (n *CompressedRadixNode) removeStaticChild(segment string) {
+	for i := range n.staticChildren {
+		if n.staticChildren[i].segment != segment {
+			continue
+		}
+		copy(n.staticChildren[i:], n.staticChildren[i+1:])
+		n.staticChildren[len(n.staticChildren)-1] = radixStaticChild{}
+		n.staticChildren = n.staticChildren[:len(n.staticChildren)-1]
+		break
+	}
+	if n.staticIndex == nil {
+		return
+	}
+	delete(n.staticIndex, segment)
+	if len(n.staticChildren) < radixStaticIndexThreshold {
+		n.staticIndex = nil
+	}
+}
+
+func (n *CompressedRadixNode) empty() bool {
+	return n.entry == nil &&
+		len(n.staticChildren) == 0 &&
+		n.paramChild == nil &&
+		n.wildcardChild == nil
 }
 
 func (t *CompressedRadixTree) lookup(path string, params *pathParamList) *routeEntry {
@@ -121,16 +180,12 @@ func (t *CompressedRadixTree) lookupRecursive(node *CompressedRadixNode, path st
 		return nil
 	}
 
-	// 1. Try static child
-	if node.children != nil {
-		if child, ok := node.children[seg]; ok {
-			if result := t.lookupRecursive(child, path, next, params); result != nil {
-				return result
-			}
+	if child := node.staticChild(seg); child != nil {
+		if result := t.lookupRecursive(child, path, next, params); result != nil {
+			return result
 		}
 	}
 
-	// 2. Try param child
 	if node.paramChild != nil {
 		paramCount := params.Len()
 		params.Add(node.paramChild.paramName, seg)
@@ -140,7 +195,6 @@ func (t *CompressedRadixTree) lookupRecursive(node *CompressedRadixNode, path st
 		params.Truncate(paramCount)
 	}
 
-	// 3. Try wildcard child
 	if node.wildcardChild != nil && node.wildcardChild.entry != nil {
 		remaining := remainingPath(path, index)
 		params.Add(node.wildcardChild.entry.paramNames[0], remaining)
@@ -189,7 +243,7 @@ func (t *CompressedRadixTree) removeRecursive(node *CompressedRadixNode, segment
 	if strings.HasPrefix(seg, ":") {
 		if node.paramChild != nil {
 			if t.removeRecursive(node.paramChild, segments, depth+1) {
-				if node.paramChild.entry == nil && len(node.paramChild.children) == 0 {
+				if node.paramChild.empty() {
 					node.paramChild = nil
 				}
 				return true
@@ -198,16 +252,18 @@ func (t *CompressedRadixTree) removeRecursive(node *CompressedRadixNode, segment
 	} else if strings.HasPrefix(seg, "*") {
 		if node.wildcardChild != nil {
 			node.wildcardChild.entry = nil
+			if node.wildcardChild.empty() {
+				node.wildcardChild = nil
+			}
 			return true
 		}
-	} else if node.children != nil {
-		if child, ok := node.children[seg]; ok {
-			if t.removeRecursive(child, segments, depth+1) {
-				if child.entry == nil && len(child.children) == 0 {
-					delete(node.children, seg)
-				}
-				return true
+	} else {
+		child := node.staticChild(seg)
+		if child != nil && t.removeRecursive(child, segments, depth+1) {
+			if child.empty() {
+				node.removeStaticChild(seg)
 			}
+			return true
 		}
 	}
 
@@ -223,8 +279,8 @@ func (t *CompressedRadixTree) countRecursive(node *CompressedRadixNode) int {
 	if node.entry != nil {
 		count++
 	}
-	for _, child := range node.children {
-		count += t.countRecursive(child)
+	for _, child := range node.staticChildren {
+		count += t.countRecursive(child.node)
 	}
 	if node.paramChild != nil {
 		count += t.countRecursive(node.paramChild)

@@ -125,9 +125,117 @@ BenchmarkRouterImplementations/std/routes=8192/param-16           	 1542058	    
 
 ## Recommendation
 
-Keep `RadixRouter` as the default for now. It remains the best all-around implementation for static and single-parameter routes, stays allocation-free, and has the least new code risk.
+## Radix Hybrid Static Children Update
 
-Continue `CompiledRouter` as the promising experimental path. It is allocation-free and consistently faster on deep parameter routes in this benchmark set, while staying close on parameter and wildcard cases. It needs more route-shape coverage before it should replace the default.
+`RadixRouter` was updated to store low-fanout static children inline and only
+build a map index when a node reaches `radixStaticIndexThreshold` children. This
+keeps the public routing behavior unchanged and preserves zero allocations on
+the hot path.
+
+Additional commands:
+
+```powershell
+go test ./ghttp -run 'TestRadixTree(KeepsSmallStaticFanoutInline|BuildsStaticIndexForLargeFanout)'
+go test ./ghttp
+go test ./ghttp -run '^$' -bench 'BenchmarkRadixRouter(Lookup|ServeHTTPNoopWriter)' -benchmem -count=5
+go test ./ghttp -run '^$' -bench 'BenchmarkRouterImplementations' -benchmem -count=3
+```
+
+All commands exited with status 0.
+
+### Focused Radix Lookup, 8192 Routes
+
+| Case | Before avg | After avg | Change |
+| --- | ---: | ---: | ---: |
+| static | 38.1 ns/op | 25.5 ns/op | 33.1% faster |
+| param | 98.2 ns/op | 64.0 ns/op | 34.9% faster |
+| deep-param | 199.1 ns/op | 118.0 ns/op | 40.7% faster |
+| wildcard | 85.4 ns/op | 59.6 ns/op | 30.3% faster |
+
+### ServeHTTP Implementation Matrix, 8192 Routes
+
+| Case | Old Radix avg | New Radix avg | Compiled avg | New Radix vs Old Radix | New Radix vs Compiled |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| static | 52.0 ns/op | 39.4 ns/op | 39.5 ns/op | 24.2% faster | 0.3% faster |
+| param | 111.8 ns/op | 76.5 ns/op | 79.5 ns/op | 31.6% faster | 3.8% faster |
+| deep-param | 192.0 ns/op | 126.3 ns/op | 127.1 ns/op | 34.2% faster | 0.6% faster |
+| wildcard | 105.1 ns/op | 76.3 ns/op | 76.9 ns/op | 27.4% faster | 0.8% faster |
+
+## Radix Single Param Tree Update
+
+`RadixRouter` was updated again to store all non-wildcard parameter routes for
+one method in a single `paramTree` instead of selecting a tree through
+`pathSegmentCount(path)` before lookup. Exact path semantics remain enforced by
+the radix traversal: a route only matches when the request path ends on a node
+with an entry.
+
+Additional commands:
+
+```powershell
+go test ./ghttp -run 'TestMethodMatcherStoresParamRoutesInSingleTree'
+go test ./ghttp -run 'TestRadix'
+go test ./ghttp -count=1
+go test ./ghttp -run '^$' -bench 'BenchmarkRadixRouter(Lookup|ServeHTTPNoopWriter)' -benchmem -count=5
+go test ./ghttp -run '^$' -bench 'BenchmarkRouterImplementations' -benchmem -count=3
+```
+
+All commands exited with status 0.
+
+### Focused Radix Lookup, 8192 Routes
+
+| Case | Hybrid children avg | Single param tree avg | Change |
+| --- | ---: | ---: | ---: |
+| param | 64.0 ns/op | 63.0 ns/op | 1.6% faster |
+| deep-param | 118.0 ns/op | 100.4 ns/op | 14.9% faster |
+| wildcard | 59.6 ns/op | 56.7 ns/op | 4.9% faster |
+| miss | 37.7 ns/op | 33.4 ns/op | 11.4% faster |
+
+### ServeHTTP Implementation Matrix, 8192 Routes
+
+| Case | Hybrid children Radix avg | Single param tree Radix avg | Compiled avg | Single param tree vs Hybrid | Single param tree vs Compiled |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| static | 39.4 ns/op | 40.2 ns/op | 39.1 ns/op | 2.0% slower | 2.8% slower |
+| param | 76.5 ns/op | 66.4 ns/op | 78.7 ns/op | 13.2% faster | 15.6% faster |
+| deep-param | 126.3 ns/op | 106.5 ns/op | 128.0 ns/op | 15.7% faster | 16.8% faster |
+| wildcard | 76.3 ns/op | 67.9 ns/op | 77.0 ns/op | 11.0% faster | 11.8% faster |
+
+## Radix vs Compiled Multi-Run Confirmation
+
+The final comparison was repeated with longer per-sample timing to reduce
+short-run scheduling noise:
+
+```powershell
+go test ./ghttp -count=1
+go test ./ghttp -run '^$' -bench 'BenchmarkRouterImplementations/(radix|compiled)/routes=8192' -benchmem -count=10
+go test ./ghttp -run '^$' -bench 'BenchmarkRouterImplementations/(radix|compiled)/routes=8192' -benchmem -benchtime=3s -count=5
+```
+
+All commands exited with status 0. The `-benchtime=3s` run is the most stable
+final data point:
+
+| Case | Radix avg | Compiled avg | Result |
+| --- | ---: | ---: | ---: |
+| static | 53.72 ns/op | 58.10 ns/op | Radix 7.5% faster |
+| param | 96.06 ns/op | 119.36 ns/op | Radix 19.5% faster |
+| deep-param | 167.08 ns/op | 195.14 ns/op | Radix 14.4% faster |
+| wildcard | 99.19 ns/op | 115.04 ns/op | Radix 13.8% faster |
+
+A shorter `128/1024/8192` matrix showed high variance on this Windows laptop,
+including conflicting 8192-route static and param results. Treat long
+single-case runs or `benchstat` output as the stronger evidence for future
+router comparisons.
+
+## Updated Recommendation
+
+Keep `RadixRouter` as the default. After the hybrid static child update and
+single param tree update it is still allocation-free and now beats the
+standalone `CompiledRouter` experiment across static, parameter,
+deep-parameter, and wildcard routes in the long-sample 8192-route matrix.
+
+Keep `CompiledRouter` as an experiment only if it is useful for future design
+comparison. Its previous deep-parameter advantage disappears once the default
+Radix implementation avoids map lookups on small fanout nodes and avoids
+pre-scanning parameter paths for segment counts.
 
 Do not continue the standalone `MatchitRouter` prototype as a default-router candidate for this route shape. It is allocation-free and close on static full-path routes, but its byte-prefix traversal is substantially slower for segment-heavy REST parameter and wildcard routes.
 

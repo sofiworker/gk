@@ -20,17 +20,16 @@ func pathParams(r *http.Request) map[string]string {
 
 // MethodMatcher groups routes by HTTP method.
 type MethodMatcher struct {
-	staticGroup  map[string]*routeEntry
-	segmentIndex map[int]*CompressedRadixTree
-	radixTree    *CompressedRadixTree
-	paths        map[string]struct{}
+	staticGroup map[string]*routeEntry
+	paramTree   *CompressedRadixTree
+	radixTree   *CompressedRadixTree
+	paths       map[string]struct{}
 }
 
 func newMethodMatcher() *MethodMatcher {
 	return &MethodMatcher{
-		staticGroup:  make(map[string]*routeEntry),
-		segmentIndex: make(map[int]*CompressedRadixTree),
-		paths:        make(map[string]struct{}),
+		staticGroup: make(map[string]*routeEntry),
+		paths:       make(map[string]struct{}),
 	}
 }
 
@@ -49,15 +48,11 @@ func (m *MethodMatcher) add(path string, handler http.Handler) error {
 		return nil
 	}
 
-	segCount := pathSegmentCount(path)
-
 	if !hasWildcard {
-		tree, ok := m.segmentIndex[segCount]
-		if !ok {
-			tree = newCompressedRadixTree()
-			m.segmentIndex[segCount] = tree
+		if m.paramTree == nil {
+			m.paramTree = newCompressedRadixTree()
 		}
-		tree.insert(entry)
+		m.paramTree.insert(entry)
 		return nil
 	}
 
@@ -75,14 +70,11 @@ func (m *MethodMatcher) lookup(path string, params *pathParamList) *routeEntry {
 		return entry
 	}
 
-	// 2. Parameterized match by segment count
-	if len(m.segmentIndex) > 0 {
-		segCount := pathSegmentCount(path)
-		if tree, ok := m.segmentIndex[segCount]; ok {
-			params.Reset()
-			if entry := tree.lookup(path, params); entry != nil {
-				return entry
-			}
+	// 2. Parameterized exact match
+	if m.paramTree != nil {
+		params.Reset()
+		if entry := m.paramTree.lookup(path, params); entry != nil {
+			return entry
 		}
 	}
 
