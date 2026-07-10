@@ -232,6 +232,7 @@ ANY 等多 method 注册必须遵循：
 - 参数必须占据完整 segment。
 - catch-all 必须是最后一个完整 segment。
 - catch-all 匹配零个或多个剩余 segment。
+- catch-all 匹配零段时仍设置 PathValue，值为 ""。
 - 参数名遵循 Go 标识符规则。
 - 支持驼峰、大写和下划线。
 - 参数名区分大小写。
@@ -248,9 +249,9 @@ ANY 等多 method 注册必须遵循：
 /files/{path...}/raw  非法
 ~~~
 
-### 6.3 Group 拼接
+### 6.3 顶级路径与 Group 拼接
 
-- 缺少前导 / 时自动补齐。
+- Server 或 Group 上注册的路由缺少前导 / 时均自动补齐。
 - Group 边界的 / 可以省略。
 - Group prefix 的尾斜杠不决定最终路由的尾斜杠。
 
@@ -518,9 +519,13 @@ Server middleware 覆盖：
 - 404。
 - 405。
 - OpenAPI 端点。
-- 错误响应。
+- handler 正常返回 error 后生成的错误响应。
 
 Group 和 Route middleware 只在选中具体路由后执行。
+
+最外层 Recovery 是例外：panic 发生后用户 middleware 已经退栈，Recovery
+直接调用 ErrorHandler，不重新执行 Server middleware。该规则避免中间件
+副作用执行两次，也避免 ErrorHandler panic 导致递归进入同一条链。
 
 ### 11.3 不提供 Pre
 
@@ -543,6 +548,9 @@ Server 最外层始终恢复请求阶段 panic：
 - 记录 panic 值和堆栈。
 - 未提交响应时进入 ErrorHandler，返回安全的 500。
 - 已提交响应或 hijack 后只记录，不能再次改写。
+- Recovery 生成的 500 不重新进入已经退栈的用户 middleware。
+- 自定义 ErrorHandler 每个请求最多调用一次；如果它自身 panic，则记录第二个
+  panic，未提交时使用最小通用 500 fallback，不能递归调用 ErrorHandler。
 
 配置阶段 panic 不捕获。
 
@@ -629,6 +637,12 @@ struct{}、空结构体或零值响应仍按普通 200 编码，不自动推断 
 
 ToHTTPFunc 仍由框架绑定 Req；若函数返回 error，则进入统一错误管线。
 
+自写响应终结器返回 error 时：
+
+- 尚未提交 header/body 时，进入 ErrorHandler。
+- 已提交 header/body 时，只记录 error，不进行第二次写响应。
+- 连接已 hijack 时，只记录 error，不调用 ErrorHandler。
+
 需要 201、202、204 或按请求动态改变状态时，使用自写响应终结器。
 
 ### 13.3 Doc 不改变运行时
@@ -688,21 +702,48 @@ ToHTTP、ToHTTPFunc、ToRaw 默认进入 OpenAPI，但只生成无 schema 的 de
 提供纯文档 API：
 
 ~~~go
-HTTPResponse[T](status, ...)
-DefaultHTTPResponse[T](...)
+func HTTPResponse[T any](
+    status int,
+    opts ...HTTPResponseOption,
+) DocOption
+
+func DefaultHTTPResponse[T any](
+    opts ...HTTPResponseOption,
+) DocOption
+
+func ResponseDescription(text string) HTTPResponseOption
+func ResponseContentTypes(types ...string) HTTPResponseOption
+func ResponseHeader[T any](
+    name string,
+    opts ...HTTPHeaderOption,
+) HTTPResponseOption
+func HeaderDescription(text string) HTTPHeaderOption
 ~~~
+
+HTTPResponseOption 和 HTTPHeaderOption 是封闭的 option 类型。第一版只支持
+上述 helper，不开放底层 OpenAPI Response Object，也不加入 examples、links
+或 encoding。
 
 规则：
 
 - 只修改 OpenAPI，不修改运行时。
 - T 用于冻结时生成 schema，不创建样例对象。
+- T 始终表示真实 wire body，而不是 Envelope 内部业务 payload。
 - NoBody 是显式无响应体标记。
 - NoBody 不自动推断 204，状态仍由用户填写。
+- NoBody 不生成 content；同时配置 ResponseContentTypes 属于注册错误。
+- 未配置 ResponseContentTypes 时继承 Route 的 Produces。
+- ResponseHeader[T] 从 T 生成 header schema。
+- status 必须处于 100 到 599；1xx、204、304 必须配合 NoBody。
+- 未提供 description 时，具体状态使用 http.StatusText，default 使用 "Default response"。
 - 显式 DefaultHTTPResponse 替换自动生成的 schema-less default 占位。
+- raw 路由新增具体状态时保留 schema-less default，用于表示其他未列举响应。
 - 一条路由可以声明多个具体 HTTP 响应。
-- 非法或重复声明在注册期作为配置错误处理。
+- 显式 HTTPResponse 与自动响应使用相同状态码时，显式声明完整替换自动响应。
+- 两个显式声明使用同一状态码时，注册失败。
+- 非法 content type、header name 或大小写不敏感的重复 header 在注册期失败。
 
-自定义 Envelope 用户可以用 HTTPResponse[实际WireType] 明确描述真正响应。
+自定义 Envelope 用户可以用 HTTPResponse[ActualWireType] 明确描述真正响应。
 
 ### 14.5 原生 handler
 
@@ -721,6 +762,8 @@ Doc(Hidden()) 可隐藏任意路由。框架内置端点自动隐藏。
 ### 14.6 特殊终结器
 
 - Redirect：声明具体 3xx 和 Location header。
+- HTML：声明传入的具体状态、text/html 和 string schema；模板名称及渲染数据
+  不进入 schema；不能携带 body 的状态在注册期失败。
 - SSE：声明成功 200 和 text/event-stream。
 - WebSocket：声明 101，并增加 x-ghttp-websocket 扩展。
 - Static：使用 default response，不猜测 200、301、304、404。
@@ -728,7 +771,36 @@ Doc(Hidden()) 可隐藏任意路由。框架内置端点自动隐藏。
 
 只自动推导确定信息，不为可能发生的状态制造虚假文档。
 
-### 14.7 交互式文档
+### 14.7 CONNECT 与 CUSTOM
+
+OpenAPI 3.1 Path Item 只支持固定 method 字段，不支持 CONNECT 或任意
+CUSTOM method。ghttp 不生成非法 Path Item key，而是在对应 Path Item 上使用：
+
+~~~json
+{
+  "x-ghttp-methods": {
+    "CONNECT": {
+      "responses": {
+        "default": {
+          "description": "Response written by handler"
+        }
+      }
+    }
+  }
+}
+~~~
+
+规则：
+
+- map key 保留注册时的原始 method 值。
+- value 使用与普通 method 相同的 operation 文档结构。
+- ANY 支持的普通 OpenAPI method 正常生成，CONNECT 写入该扩展。
+- CUSTOM 即使名称与小写 OpenAPI 字段相同，也按原始自定义 method 写入扩展。
+- Hidden 路由不会出现在普通 operation 或扩展中。
+- operationId 等文档约束跨普通 operation 和扩展 operation 统一校验。
+- 自研文档 UI 识别该扩展；其他 OpenAPI 工具可以安全忽略。
+
+### 14.8 交互式文档
 
 未来 /docs：
 
@@ -757,6 +829,7 @@ ghttp/internal/legacyrouter
 
 - Server 生产代码不得依赖 legacyrouter。
 - 该包不形成公开 API 或兼容承诺。
+- 迁入后除编译适配和缺陷修正外保持算法冻结，避免基线随新实现一起漂移。
 - 新旧实现通过相同适配层、路由表和请求样本比较。
 - benchmark 胜出不会自动删除该包。
 - 只有项目负责人明确敲定新实现成为唯一实现后，才删除该包。
@@ -799,6 +872,12 @@ ghttp/internal/legacyrouter
 
 ### 16.3 回归门槛
 
+- 主基线是当前分支内 internal/legacyrouter 的生产等价 Radix 实现，不绑定历史 Git 提交。
+- Compiled、Matchit 和 Std 结果作为补充信息，不作为强制门槛。
+- 路由规模固定覆盖 16、128、1024、8192。
+- 规范 benchmark 集合固定覆盖 static、param、deep-param、catch-all、HEAD、
+  method fallback、404 和 405，并在同一 benchmark harness 中运行新旧实现。
+- benchmark harness、路由生成器和请求样本与实现代码一起版本化。
 - 使用多轮 benchstat。
 - allocations/op 不得增加。
 - 显著下降超过 10% 阻止合入。
@@ -838,6 +917,7 @@ ghttp/internal/legacyrouter
 - 405。
 - 自定义 method 大小写。
 - 路径参数值和 PathValue。
+- catch-all 零段时存在且值为 "" 的 PathValue。
 
 ### 17.3 黑盒实际使用
 
@@ -850,6 +930,9 @@ ghttp/internal/legacyrouter
 - 启用 Envelope。
 - 配置 ErrorHandler。
 - 启用 OpenAPI。
+- 验证自写响应提交或 hijack 后返回 error 不会发生第二次写响应。
+- 验证普通错误经过 Server middleware，而 panic 兜底不会重新执行 middleware。
+- 验证自定义 ErrorHandler panic 不会递归调用自身。
 - 通过 httptest.Server 发出真实 HTTP 请求。
 
 该层验证 API 可用性，而不仅是内部函数正确性。
@@ -890,7 +973,8 @@ ghttp/internal/legacyrouter
 - DefaultHTTPResponse[T]。
 - NoBody。
 - raw handler default response。
-- Redirect、SSE、WebSocket、Static。
+- Redirect、HTML、SSE、WebSocket、Static。
+- CONNECT、CUSTOM 和 ANY 的 x-ghttp-methods 扩展。
 - catch-all 扩展。
 - Hidden。
 - 自定义 OpenAPI path 和冲突。
@@ -963,7 +1047,7 @@ README 必须醒目标注：
 
 - 所有规范性路径和 method 测试通过。
 - 404、405、HEAD 和 OPTIONS 行为与本文一致。
-- Server middleware 覆盖所有 Server outcome。
+- 除最外层 panic fallback 外，Server middleware 覆盖所有 Server outcome。
 - 请求阶段 panic 不泄露内部细节。
 - matcher 与 OpenAPI 只消费同一 routeDefinition。
 - OpenAPI 描述真实 wire schema。
