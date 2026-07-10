@@ -11,11 +11,12 @@
 本次重构将 ghttp 的服务端 API 收敛到一条明确、可验证的线路：
 
 - Server 内部只保留一个路由实现，不再公开 Router 插件边界。
-- 注册阶段保存统一的 routeDefinition，冻结时同时生成 matcher、handler chain 和 OpenAPI。
+- 注册阶段保存统一的 routeDefinition，冻结时只编译 matcher 和 handler chain。
 - 运行期路由表完全只读，不支持动态注册、重建或解冻。
 - 路径语法、HEAD、OPTIONS、404、405 和中间件顺序具有稳定且可测试的语义。
 - 类型化路由与自写响应路由明确区分响应所有权。
-- OpenAPI 描述真实 wire response，不从占位类型或自定义 Envelope 猜测 schema。
+- OpenAPI 对可确定信息做 best-effort 描述；未知信息直接省略，不猜测 schema。
+- OpenAPI 是附属能力，不能反向限制路由注册、运行时语义或逃生窗口。
 - 所有破坏性变化通过迁移文档明确说明，不保留长期兼容层。
 
 本设计取代此前文档中以下方向：
@@ -37,6 +38,7 @@
 - 自定义 Router 插件兼容层。
 - 对旧的 :id 或 *path 语法提供 warning 或过渡期支持。
 - 为自定义 Envelope 设计通用 OpenAPI schema DSL。
+- 要求每条路由都生成完整 OpenAPI operation 或完整 response schema。
 
 轻量交互式文档页面属于后续低优先级任务。未完成前不注册半成品 /docs。
 
@@ -51,7 +53,8 @@
 - httprouter、Gorilla Mux 和 Echo 的顺序追加看似可用，但没有为并发动态注册提供完整保护。
 - Fiber 启动后新增路由需要 RebuildTree，源码明确不建议在生产运行期使用，且该过程不是线程安全的。
 - go-restful v3.12.2 即使开启动态路由，默认 CurlyRouter 的并发注册探针仍可触发 data race。
-- Huma 的路由生命周期由底层 adapter 决定；其类型化操作与 OpenAPI 一致性同样更适合注册后冻结。
+- Huma 的路由生命周期由底层 adapter 决定；类型化元数据可以从已注册
+  operation 旁路生成文档，不要求文档系统控制底层路由生命周期。
 
 因此，ghttp 选择显式冻结，而不是为低价值的动态注册让每次请求承担锁、快照或重建成本。
 
@@ -85,14 +88,11 @@
     ↓
 routeRegistry
     ↓ routeDefinition[]
-freeze
-    ├─ 编译 routeMux
-    ├─ 组装 handler chains
-    └─ 生成 OpenAPI JSON
-    ↓
-immutable compiledState
-    ↓
-match → PathValue → middleware → handler / ErrorHandler
+    ├─ freeze → routeMux + handler chains → immutable compiledState
+    │                                      ↓
+    │          match → compiled chain → middleware → extractor / raw handler
+    │
+    └─ optional snapshot → best-effort OpenAPI JSON
 ~~~
 
 ### 4.1 Server 持有的状态
@@ -109,7 +109,6 @@ match → PathValue → middleware → handler / ErrorHandler
 
 - routeMux。
 - 已组装的 handler chain。
-- OpenAPI JSON 快照。
 - 内置端点信息。
 
 运行期请求只读取 compiledState，不读取或修改注册表，也不获取路由锁。
@@ -122,7 +121,6 @@ match → PathValue → middleware → handler / ErrorHandler
 - Run。
 - Serve。
 - TLS 服务入口。
-- Server.OpenAPI()。
 
 冻结过程只能成功执行一次。冻结后修改以下任意内容都 panic ErrServerFrozen：
 
@@ -130,7 +128,6 @@ match → PathValue → middleware → handler / ErrorHandler
 - Server、Group、Route middleware。
 - Consumes 和 Produces。
 - 类型元数据。
-- OpenAPI 配置。
 
 不提供解冻、动态重建或运行期注册。
 
@@ -174,7 +171,8 @@ ghttp.Route[struct{}, struct{}](server).
 
 ### 5.2 routeDefinition
 
-每次 To* 终结调用生成一份完整 routeDefinition。它是 matcher 和 OpenAPI 的共同输入，至少记录：
+每次 To* 终结调用生成一份完整 routeDefinition。它首先服务于运行时编译；
+可选 OpenAPI compiler 只读取其快照，至少记录：
 
 - 原始 method 值。
 - 规范化路径及解析后的 segment。
@@ -183,10 +181,11 @@ ghttp.Route[struct{}, struct{}](server).
 - handler 类型和终结器类型。
 - Req、Resp 类型。
 - Consumes、Produces。
-- RouteDoc。
+- 可选 RouteDoc；OpenAPI 未启用时无需保留其编译副本。
 - 是否为内置端点。
 
-routeDefinition 提交前完成全部注册期校验。
+routeDefinition 提交前完成所有影响运行时正确性的注册期校验。文档元数据
+缺失或不完整不属于路由配置错误。
 
 ### 5.3 原子提交
 
@@ -198,7 +197,8 @@ ANY 等多 method 注册必须遵循：
 
 任一 method 冲突时，整个注册失败，不能留下部分路由。
 
-配置错误在 To* 终结调用时立即 panic，并包装公开 sentinel。请求阶段不得因路由配置错误 panic。
+影响运行时的配置错误在 To* 终结调用时立即 panic，并包装公开 sentinel。
+OpenAPI 元数据缺失不阻止提交。请求阶段不得因路由配置错误 panic。
 
 ### 5.4 RouteBuilder 生命周期
 
@@ -232,7 +232,7 @@ ANY 等多 method 注册必须遵循：
 - 参数必须占据完整 segment。
 - catch-all 必须是最后一个完整 segment。
 - catch-all 匹配零个或多个剩余 segment。
-- catch-all 匹配零段时仍设置 PathValue，值为 ""。
+- catch-all 匹配零段时仍写入内部参数列表，值为 ""。
 - 参数名遵循 Go 标识符规则。
 - 支持驼峰、大写和下划线。
 - 参数名区分大小写。
@@ -297,7 +297,7 @@ segment 边界按转义后的路径确定，然后逐段解码。
 因此：
 
 - %2F 不会增加路径层级。
-- 参数写入 Request.PathValue 时使用解码值。
+- 参数写入内部 pathParamList 时使用解码值。
 - 注册静态 segment 同样解码和规范化。
 - /caf%C3%A9 与 /café 属于同一路由。
 - 编码后的 {id} 仍是静态文本，不会变成参数。
@@ -455,8 +455,7 @@ matcher 是纯匹配器，不实现 http.Handler，不直接写 400、404 或 40
 一次 match 返回内部 matchResult，至少包含：
 
 - 结果类型：found、notFound、methodNotAllowed。
-- handler。
-- 紧凑路径参数。
+- 选中的 compiledRoute/handler chain。
 - Allow method 列表。
 - HEAD body 抑制标志。
 
@@ -464,32 +463,42 @@ matcher 是纯匹配器，不实现 http.Handler，不直接写 400、404 或 40
 
 Server 根据 matchResult：
 
-1. 写入 Request.PathValue。
-2. 选择成功或错误 outcome。
-3. 执行中间件。
-4. 调用 handler 或 ErrorHandler。
+1. 选择预编译的成功或错误 outcome chain。
+2. 执行对应 middleware。
+3. 类型化 route 在链尾使用自身的 compiled extractor 再扫描请求路径。
+4. extractor 生成内部 pathParamList 后执行绑定/ToHTTPFunc；raw route 直接调用 handler。
 
 ### 9.4 参数存储
 
-常见参数数量使用内联紧凑存储，超过阈值时才使用 overflow。
+每条类型化 compiledRoute 持有与其 pattern 对应的只读参数 extractor。
+extractor 使用与 matcher 相同的转义、segment 和 catch-all 规则，但无需再次
+搜索路由树，只对已知 pattern 做一次线性扫描。
 
-运行时不得为了 Params 兼容再构造 context map。Request.PathValue 是唯一权威来源。
+常见参数数量使用内联紧凑 pathParamList，超过阈值时才使用 overflow。
+运行时不得为了 Params 或标准库 PathValue 兼容构造 context map。
 
-## 10. PathValue 与绑定
+## 10. 内部路径参数与原始 request
 
-匹配成功后，Server 在所有用户中间件前调用 Request.SetPathValue。
+matcher 只选择 compiledRoute，不对外传递捕获值。类型化 handler 在
+middleware 之后通过 route 自身的 compiled extractor 生成 pathParamList。
+Server 不调用 Request.SetPathValue，也不把 ghttp 捕获参数写入 request context。
 
-此后：
+规则：
 
-- Request.PathValue 是路径参数的唯一权威来源。
-- 类型绑定读取 PathValue。
-- Params 读取 PathValue。
-- 原生 handler 读取 PathValue。
-- 中间件可读取或修改 PathValue。
+- 类型绑定和 Params 读取内部 pathParamList。
+- ToHTTPFunc 通过 Req/Params 接收内部参数。
+- ToHTTP 和 ToRaw 接收原始 request，不接收 ghttp 路由捕获结果。
+- 标准 middleware 可以读取 URL、method、header、body 等原始请求信息，但
+  不能通过 PathValue 读取 ghttp 内部捕获值。
+- 如果外层 http.ServeMux 已经设置 PathValue，ghttp 原样保留，不覆盖或清除。
+- 用户自行调用 SetPathValue 只修改标准库 request 元数据，不改变 ghttp
+  已匹配的内部参数或后续类型绑定。
+- Server/Group/Route middleware 内修改 URL.Path 或 method 不会重新选择路由，
+  属于不支持的 rewrite；需要 rewrite 时必须在 Server 外层完成。
+- 内部 rewrite 导致已选 pattern 无法提取时进入 400 错误管线，不得 panic。
 
-绑定发生在 Route handler 真正执行前，因此中间件修改后的 PathValue 会进入类型绑定。
-
-该行为必须写入中间件和参数绑定文档，避免调用方误以为绑定使用不可变的匹配快照。
+ToHTTP 是不满足其他 To* 终结器时的标准库逃生窗口。需要路径捕获和自写
+响应时，应使用 ToHTTPFunc，并通过 Req 或 Params 读取。
 
 ## 11. 中间件
 
@@ -509,6 +518,12 @@ Server 根据 matchResult：
 该顺序与注册先后无关。
 
 这与 Gin、Fiber 等常见的顺序敏感模型不同，必须在 README、迁移文档和测试中醒目标注。
+
+为保持 match-before-middleware 和请求热路径零额外容器分配，冻结时为每条
+compiledRoute 及 400/404/405 outcome 组装对应 chain。Middleware wrapper
+factory 在冻结期按 chain 应用，而不是每个请求应用；需要跨路由共享的状态
+应由 Middleware 值在 wrapper 外部显式持有。冻结 benchmark 必须记录该策略
+随路由数量增长的时间和内存。
 
 ### 11.2 覆盖范围
 
@@ -621,6 +636,9 @@ To(handler) 由框架负责：
 
 struct{}、空结构体或零值响应仍按普通 200 编码，不自动推断 204。
 
+这些规则由运行时响应所有权决定，不是为了让 OpenAPI 更容易生成。即使完全
+关闭 OpenAPI，To 与自写响应终结器的边界也保持不变。
+
 ### 13.2 自写响应
 
 以下终结器由调用方或专用实现拥有 HTTP 状态和 body：
@@ -653,6 +671,14 @@ Success(Code(...), Message(...)) 只描述业务码和消息，不能充当 HTTP
 
 ## 14. OpenAPI
 
+适配方向固定为“运行时语义 → 可选文档”，禁止反向根据 OpenAPI 限制或修改：
+
+- method 集合和 CUSTOM 大小写。
+- HEAD/OPTIONS 行为。
+- 路径语法与参数捕获。
+- ToHTTP/ToRaw 的原始 request 和响应所有权。
+- Envelope、状态码、Produces 或 handler 执行。
+
 ### 14.1 唯一生成入口
 
 删除公开：
@@ -662,7 +688,8 @@ Success(Code(...), Message(...)) 只描述业务码和消息，不能充当 HTTP
 - AddRoute。
 - Build。
 
-OpenAPI compiler 变为内部组件，只消费冻结后的 routeDefinition。
+OpenAPI compiler 变为内部旁路组件，只消费 routeDefinition 快照，不参与
+routeMux、handler chain 或冻结是否成功的判定。
 
 Server.OpenAPI 是唯一获取入口：
 
@@ -672,9 +699,14 @@ func (s *Server) OpenAPI() ([]byte, error)
 
 行为：
 
-- 调用时冻结 Server。
-- 返回不可变 JSON 快照的副本。
+- 调用不冻结 Server。
+- 冻结前在注册表锁内复制当前 routeDefinition，随后在锁外生成当时快照。
+- 冻结前允许后续继续注册；此前返回的文档只是调用时视图。
+- 冻结后 routeDefinition 已不可变，可以惰性缓存生成结果。
+- 返回 JSON 字节的独立副本。
 - 未启用时返回 ErrOpenAPIDisabled。
+- 文档字段缺失或无法推导时省略相应信息，不影响运行时 compiledState。
+- 只有 JSON 编码等文档调用自身的故障通过 error 返回，Server 仍可正常服务。
 
 ### 14.2 HTTP 端点
 
@@ -683,95 +715,51 @@ func (s *Server) OpenAPI() ([]byte, error)
 - 默认端点为 /openapi.json。
 - WithOpenAPIPath(path) 可修改。
 - 空 path 关闭 HTTP 暴露，但不关闭文档生成和 Server.OpenAPI。
-- 内置端点自动 Hidden。
+- 内置端点由 compiler 内部排除，不要求新增公开 Hidden API。
 - 内置路径与用户路由冲突时 panic ErrRouteConflict。
 - 端点经过 Server middleware。
 
-### 14.3 普通类型化响应
+路径冲突仍是运行时配置错误，因为启用后该端点会真实参与路由；这与文档
+内容是否完整无关。
 
-普通 To 路由：
+### 14.3 best-effort 生成规则
 
-- 无 Envelope：200 response 使用 Resp schema。
-- 内置默认 Envelope：200 response 使用真实包装 schema，data 属性使用 Resp schema。
-- 自定义 Envelope：默认不推断响应 schema，避免文档与 wire body 不一致。
+OpenAPI 只记录 compiler 能可靠确认的信息：
 
-### 14.4 自写响应文档
+- method、规范化 path 和已知参数尽量生成。
+- 普通 To 路由若能确定有效 Produces，则可生成 200 和 Resp schema。
+- 内置默认 Envelope 的包装结构已知时可以生成包装 schema。
+- 自定义 Envelope 的 wire body 未知时省略 response content。
+- ToHTTP、ToHTTPFunc、ToRaw 等逃生窗口不要求任何文档声明；默认只生成
+  最小 operation 和无 content 的 default response。
+- 有效 HEAD operation 可以从显式 HEAD、ANY 或 GET 回退推导；若生成，
+  保留可确定的状态、描述和 header，但不生成 response content。
+- 占位泛型不得生成虚假 request 或 response schema。
+- content type、状态、header 或 schema 无法确认时直接省略对应字段。
+- 现有 DocOption 仅提供可选提示；无效、重复或不完整的文档元数据不得导致
+  路由注册、冻结或请求失败。
 
-ToHTTP、ToHTTPFunc、ToRaw 默认进入 OpenAPI，但只生成无 schema 的 default response。
+生成器仍应输出可解析的最小 OpenAPI 3.1 JSON。“残缺”表示信息字段被省略，
+而不是输出语法错误或反向破坏 Server。
 
-提供纯文档 API：
+本次不新增 HTTPResponse[T]、DefaultHTTPResponse[T]、NoBody、Hidden 或
+response option API。以后若真实使用需求证明有必要，再作为独立文档功能设计。
 
-~~~go
-func HTTPResponse[T any](
-    status int,
-    opts ...HTTPResponseOption,
-) DocOption
-
-func DefaultHTTPResponse[T any](
-    opts ...HTTPResponseOption,
-) DocOption
-
-func ResponseDescription(text string) HTTPResponseOption
-func ResponseContentTypes(types ...string) HTTPResponseOption
-func ResponseHeader[T any](
-    name string,
-    opts ...HTTPHeaderOption,
-) HTTPResponseOption
-func HeaderDescription(text string) HTTPHeaderOption
-~~~
-
-HTTPResponseOption 和 HTTPHeaderOption 是封闭的 option 类型。第一版只支持
-上述 helper，不开放底层 OpenAPI Response Object，也不加入 examples、links
-或 encoding。
-
-规则：
-
-- 只修改 OpenAPI，不修改运行时。
-- T 用于冻结时生成 schema，不创建样例对象。
-- T 始终表示真实 wire body，而不是 Envelope 内部业务 payload。
-- NoBody 是显式无响应体标记。
-- NoBody 不自动推断 204，状态仍由用户填写。
-- NoBody 不生成 content；同时配置 ResponseContentTypes 属于注册错误。
-- 未配置 ResponseContentTypes 时继承 Route 的 Produces。
-- ResponseHeader[T] 从 T 生成 header schema。
-- status 必须处于 100 到 599；1xx、204、304 必须配合 NoBody。
-- 未提供 description 时，具体状态使用 http.StatusText，default 使用 "Default response"。
-- 显式 DefaultHTTPResponse 替换自动生成的 schema-less default 占位。
-- raw 路由新增具体状态时保留 schema-less default，用于表示其他未列举响应。
-- 一条路由可以声明多个具体 HTTP 响应。
-- 显式 HTTPResponse 与自动响应使用相同状态码时，显式声明完整替换自动响应。
-- 两个显式声明使用同一状态码时，注册失败。
-- 非法 content type、header name 或大小写不敏感的重复 header 在注册期失败。
-
-自定义 Envelope 用户可以用 HTTPResponse[ActualWireType] 明确描述真正响应。
-
-### 14.5 原生 handler
-
-原生 handler 默认进入 OpenAPI：
-
-~~~go
-ghttp.Route[struct{}, struct{}](server).
-    GET("/metrics").
-    ToHTTP(handler)
-~~~
-
-占位泛型不得生成虚假 request 或 response schema。
-
-Doc(Hidden()) 可隐藏任意路由。框架内置端点自动隐藏。
-
-### 14.6 特殊终结器
+### 14.4 特殊终结器
 
 - Redirect：声明具体 3xx 和 Location header。
-- HTML：声明传入的具体状态、text/html 和 string schema；模板名称及渲染数据
-  不进入 schema；不能携带 body 的状态在注册期失败。
+- HTML：运行时终结器已确认状态合法时，可声明该状态、text/html 和 string
+  schema；模板名称及渲染数据不进入 schema。
 - SSE：声明成功 200 和 text/event-stream。
-- WebSocket：声明 101，并增加 x-ghttp-websocket 扩展。
+- WebSocket：声明 101，并在 operation 上增加 x-ghttp-websocket 扩展。
 - Static：使用 default response，不猜测 200、301、304、404。
-- catch-all：OpenAPI path 使用普通 {path}，并增加 x-ghttp-catch-all: true。
+- catch-all：OpenAPI path 使用普通 {path}，并在对应 parameter 上增加
+  x-ghttp-catch-all: true。
 
-只自动推导确定信息，不为可能发生的状态制造虚假文档。
+上述推导均为非阻塞增强；实现不完整时允许省略，不为可能发生的状态制造
+虚假文档。
 
-### 14.7 CONNECT 与 CUSTOM
+### 14.5 CONNECT 与 CUSTOM
 
 OpenAPI 3.1 Path Item 只支持固定 method 字段，不支持 CONNECT 或任意
 CUSTOM method。ghttp 不生成非法 Path Item key，而是在对应 Path Item 上使用：
@@ -796,11 +784,10 @@ CUSTOM method。ghttp 不生成非法 Path Item key，而是在对应 Path Item 
 - value 使用与普通 method 相同的 operation 文档结构。
 - ANY 支持的普通 OpenAPI method 正常生成，CONNECT 写入该扩展。
 - CUSTOM 即使名称与小写 OpenAPI 字段相同，也按原始自定义 method 写入扩展。
-- Hidden 路由不会出现在普通 operation 或扩展中。
-- operationId 等文档约束跨普通 operation 和扩展 operation 统一校验。
 - 自研文档 UI 识别该扩展；其他 OpenAPI 工具可以安全忽略。
+- 扩展生成失败或信息不足时允许省略，不影响对应运行时路由。
 
-### 14.8 交互式文档
+### 14.6 交互式文档
 
 未来 /docs：
 
@@ -854,6 +841,8 @@ ghttp/internal/legacyrouter
 - 常见成功路径不得新增 allocation。
 - 参数内联容量以内保持零额外参数容器分配。
 - 不为可替换 Router 或动态注册引入运行期锁。
+- 参数路由同时测 matcher-only 和 middleware 后 compiled extractor 的完整链路，
+  明确记录二次线性扫描的 CPU 成本。
 
 ### 16.2 404 和 405
 
@@ -876,7 +865,10 @@ ghttp/internal/legacyrouter
 - Compiled、Matchit 和 Std 结果作为补充信息，不作为强制门槛。
 - 路由规模固定覆盖 16、128、1024、8192。
 - 规范 benchmark 集合固定覆盖 static、param、deep-param、catch-all、HEAD、
-  method fallback、404 和 405，并在同一 benchmark harness 中运行新旧实现。
+  method fallback、typed extraction、404 和 405，并在同一 benchmark harness
+  中运行新旧实现。
+- 冻结 benchmark 记录不同路由/中间件数量下的编译时间、总分配和常驻 chain
+  数量，防止 per-route chain 造成不可接受的启动内存增长。
 - benchmark harness、路由生成器和请求样本与实现代码一起版本化。
 - 使用多轮 benchstat。
 - allocations/op 不得增加。
@@ -916,8 +908,11 @@ ghttp/internal/legacyrouter
 - 404。
 - 405。
 - 自定义 method 大小写。
-- 路径参数值和 PathValue。
-- catch-all 零段时存在且值为 "" 的 PathValue。
+- compiled extractor 的解码参数值及其类型绑定。
+- catch-all 零段时 extractor 生成存在且值为 "" 的内部参数。
+- middleware 后 extractor 的结果与直接提取一致。
+- middleware 内 rewrite 不触发重新匹配，提取失败进入 400 而不 panic。
+- ghttp 不覆盖外层 ServeMux 已设置的 PathValue。
 
 ### 17.3 黑盒实际使用
 
@@ -964,21 +959,17 @@ ghttp/internal/legacyrouter
 
 ### 17.6 OpenAPI 测试
 
-结构化断言和稳定 JSON 测试覆盖：
+OpenAPI 只做边界和非干扰测试：
 
-- 普通 Resp。
-- 默认 Envelope。
-- 自定义 Envelope 无虚假 schema。
-- HTTPResponse[T]。
-- DefaultHTTPResponse[T]。
-- NoBody。
-- raw handler default response。
-- Redirect、HTML、SSE、WebSocket、Static。
-- CONNECT、CUSTOM 和 ANY 的 x-ghttp-methods 扩展。
-- catch-all 扩展。
-- Hidden。
-- 自定义 OpenAPI path 和冲突。
-- OpenAPI() 返回副本并触发冻结。
+- 未启用时返回 ErrOpenAPIDisabled。
+- 冻结前 OpenAPI() 返回调用时快照，但不冻结 Server，随后仍可注册路由。
+- 冻结后允许缓存，并始终返回字节副本。
+- raw handler 无文档声明时仍可正常注册和服务。
+- 缺失或无效文档元数据不会阻止路由编译和请求处理。
+- 输出至少是可解析的最小 OpenAPI 3.1 JSON。
+- 自定义 OpenAPI path、关闭 HTTP 暴露和真实路由冲突。
+- 对普通 Resp、默认 Envelope、HEAD、特殊终结器和扩展只保留少量
+  best-effort smoke test，不作为路由正确性门槛。
 
 ### 17.7 验证命令
 
@@ -1010,7 +1001,7 @@ go test -race ./ghttp/...
 | *path | {path...} |
 | StatusCoder | 自定义状态使用 ToHTTPFunc/ToHTTP/ToRaw |
 | Status int | 自定义状态使用自写响应终结器 |
-| 运行期注册 | 首次服务或 OpenAPI 后冻结 |
+| 运行期注册 | 首次 ServeHTTP/Run/Serve/TLS 后冻结；OpenAPI() 不冻结 |
 | 注册先后决定 middleware | 固定 Server → Group → Route → Handler |
 | 独立 OpenAPI builder | Server.OpenAPI() |
 | 硬编码 /openapi.json | WithOpenAPIPath，可关闭 HTTP 暴露 |
@@ -1021,7 +1012,7 @@ README 必须醒目标注：
 - CUSTOM method 不进行 trim 或大小写转换。
 - OPTIONS 不自动生成。
 - catch-all 可匹配零段。
-- PathValue 可被中间件修改并影响绑定。
+- ToHTTP/ToRaw 不注入 ghttp PathValue；需要捕获参数时使用 ToHTTPFunc/Params。
 - 默认尾斜杠不敏感，strict 模式差异。
 - Envelope 不把错误 HTTP 状态统一改为 200。
 - DocOption 不改变运行时。
@@ -1049,8 +1040,9 @@ README 必须醒目标注：
 - 404、405、HEAD 和 OPTIONS 行为与本文一致。
 - 除最外层 panic fallback 外，Server middleware 覆盖所有 Server outcome。
 - 请求阶段 panic 不泄露内部细节。
-- matcher 与 OpenAPI 只消费同一 routeDefinition。
-- OpenAPI 描述真实 wire schema。
+- matcher 只由 routeDefinition 编译，OpenAPI 仅旁路读取其快照。
+- OpenAPI 缺失或无法推导的信息被省略，且不会影响路由注册或请求处理。
+- 未启用 OpenAPI 时不引入文档生成成本或额外运行时依赖。
 - 冻结后运行期无路由锁和 data race。
 - 新旧 benchmark 报告完整。
 - 性能满足回归门槛。
