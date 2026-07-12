@@ -72,12 +72,7 @@ type SearchResp struct {
 
 // 场景4: 响应带自定义状态码
 type CreatedResp struct {
-	Status int  `json:"-"`
-	User   User `json:"user"`
-}
-
-func (r CreatedResp) StatusCode() int {
-	return r.Status
+	User User `json:"user"`
 }
 
 // ============================================================================
@@ -143,11 +138,11 @@ func buildServer() *ghttp.Server {
 	api := s.Group("/api/v1")
 	api.Use(ghttp.RequestLogger())
 
-	// 问题1: 创建用户 — 想返回 201，需要用 StatusCoder 或 Status 字段
+	// 创建用户使用自写响应终结器明确拥有 HTTP 201。
 	ghttp.Route[CreateUserReq, CreatedResp](api).
 		POST("/users").
 		Doc(ghttp.Summary("创建用户")).
-		To(func(ctx context.Context, req CreateUserReq) (CreatedResp, error) {
+		ToHTTPFunc(func(w http.ResponseWriter, _ *http.Request, req CreateUserReq) error {
 			user := User{
 				ID:        "user-1",
 				Name:      req.Body.Name,
@@ -155,7 +150,9 @@ func buildServer() *ghttp.Server {
 				Age:       req.Body.Age,
 				CreatedAt: time.Now(),
 			}
-			return CreatedResp{Status: http.StatusCreated, User: user}, nil
+			w.Header().Set("Content-Type", ghttp.MIMEJSON)
+			w.WriteHeader(http.StatusCreated)
+			return json.NewEncoder(w).Encode(CreatedResp{User: user})
 		})
 
 	ghttp.Route[GetUserReq, UserResp](api).

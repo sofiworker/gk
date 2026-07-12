@@ -1,4 +1,4 @@
-package ghttp
+package legacyrouter
 
 import (
 	"fmt"
@@ -7,9 +7,9 @@ import (
 	"strings"
 )
 
-// CompiledRouter is an experimental Router that stores route nodes in compact
+// Compiled is the frozen pre-rebuild router that stores trie nodes in compact
 // slices and walks them by integer index.
-type CompiledRouter struct {
+type Compiled struct {
 	methods map[string]*compiledMethod
 }
 
@@ -35,8 +35,9 @@ type compiledStaticChild struct {
 	index   int
 }
 
-func NewCompiledRouter() *CompiledRouter {
-	return &CompiledRouter{methods: make(map[string]*compiledMethod)}
+// NewCompiled creates a frozen-baseline compiled router.
+func NewCompiled() *Compiled {
+	return &Compiled{methods: make(map[string]*compiledMethod)}
 }
 
 func newCompiledMethod() *compiledMethod {
@@ -48,7 +49,9 @@ func newCompiledMethod() *compiledMethod {
 	}
 }
 
-func (r *CompiledRouter) Register(method, path string, handler http.Handler) error {
+// Register adds one handler using the historical compact-node registration
+// path.
+func (r *Compiled) Register(method, path string, handler http.Handler) error {
 	method = strings.ToUpper(method)
 	m := r.methods[method]
 	if m == nil {
@@ -61,7 +64,6 @@ func (r *CompiledRouter) Register(method, path string, handler http.Handler) err
 		return fmt.Errorf("%w: route %s already registered", ErrConflict, path)
 	}
 	m.paths[path] = struct{}{}
-
 	entry := newRouteEntry(path, handler)
 	hasParam := strings.Contains(path, ":")
 	hasWildcard := strings.Contains(path, "*")
@@ -78,22 +80,22 @@ func (r *CompiledRouter) Register(method, path string, handler http.Handler) err
 		m.insert(m.wildcardRoot, segments, entry)
 		return nil
 	}
-
-	segCount := len(segments)
-	root, ok := m.roots[segCount]
+	root, ok := m.roots[len(segments)]
 	if !ok {
 		root = m.addNode()
-		m.roots[segCount] = root
+		m.roots[len(segments)] = root
 	}
 	m.insert(root, segments, entry)
 	return nil
 }
 
+// RegisterWithPathParams adds a handler that receives extracted path values.
+func (r *Compiled) RegisterWithPathParams(method, path string, handler PathParamHandler) error {
+	return registerWithPathParams(r.Register, method, path, handler)
+}
+
 func (m *compiledMethod) addNode() int {
-	m.nodes = append(m.nodes, compiledNode{
-		paramChild:    -1,
-		wildcardChild: -1,
-	})
+	m.nodes = append(m.nodes, compiledNode{paramChild: -1, wildcardChild: -1})
 	return len(m.nodes) - 1
 }
 
@@ -102,11 +104,9 @@ func (m *compiledMethod) insert(root int, segments []string, entry *routeEntry) 
 		m.nodes[root].entry = entry
 		return
 	}
-
 	nodeIndex := root
 	for i, segment := range segments {
 		last := i == len(segments)-1
-
 		if strings.HasPrefix(segment, "*") {
 			child := m.nodes[nodeIndex].wildcardChild
 			if child < 0 {
@@ -117,7 +117,6 @@ func (m *compiledMethod) insert(root int, segments []string, entry *routeEntry) 
 			m.nodes[child].entry = entry
 			return
 		}
-
 		if strings.HasPrefix(segment, ":") {
 			child := m.nodes[nodeIndex].paramChild
 			if child < 0 {
@@ -162,15 +161,12 @@ func (m *compiledMethod) findStaticChild(nodeIndex int, segment string) int {
 
 func (m *compiledMethod) addStaticChild(nodeIndex int, segment string, childIndex int) {
 	node := &m.nodes[nodeIndex]
-	node.staticChildren = append(node.staticChildren, compiledStaticChild{
-		segment: segment,
-		index:   childIndex,
-	})
+	node.staticChildren = append(node.staticChildren, compiledStaticChild{segment: segment, index: childIndex})
 	if node.staticIndex != nil {
 		node.staticIndex[segment] = childIndex
 		return
 	}
-	if len(node.staticChildren) < 8 {
+	if len(node.staticChildren) < radixStaticIndexThreshold {
 		return
 	}
 	node.staticIndex = make(map[string]int, len(node.staticChildren))
@@ -179,15 +175,11 @@ func (m *compiledMethod) addStaticChild(nodeIndex int, segment string, childInde
 	}
 }
 
-func (r *CompiledRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	method := req.Method
-	path := strings.TrimRight(req.URL.Path, "/")
-	if path == "" {
-		path = "/"
-	}
-
-	var params pathParamList
-	if method == http.MethodHead {
+// ServeHTTP retains the historical compact-node lookup and method handling.
+func (r *Compiled) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	path := normalizedRequestPath(req.URL.Path)
+	var params PathParams
+	if req.Method == http.MethodHead {
 		if entry := r.lookup(http.MethodHead, path, &params); entry != nil {
 			serveRouteEntry(headResponseWriter{ResponseWriter: w}, req, entry, params)
 			return
@@ -196,11 +188,10 @@ func (r *CompiledRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			serveRouteEntry(headResponseWriter{ResponseWriter: w}, req, entry, params)
 			return
 		}
-	} else if entry := r.lookup(method, path, &params); entry != nil {
+	} else if entry := r.lookup(req.Method, path, &params); entry != nil {
 		serveRouteEntry(w, req, entry, params)
 		return
 	}
-
 	allowed := r.allowedMethods(path)
 	if len(allowed) > 0 {
 		w.Header().Set("Allow", strings.Join(allowed, ", "))
@@ -210,7 +201,7 @@ func (r *CompiledRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }
 
-func (r *CompiledRouter) lookup(method, path string, params *pathParamList) *routeEntry {
+func (r *Compiled) lookup(method, path string, params *PathParams) *routeEntry {
 	m := r.methods[method]
 	if m == nil {
 		params.Reset()
@@ -219,46 +210,40 @@ func (r *CompiledRouter) lookup(method, path string, params *pathParamList) *rou
 	return m.lookup(path, params)
 }
 
-func (m *compiledMethod) lookup(path string, params *pathParamList) *routeEntry {
+func (m *compiledMethod) lookup(path string, params *PathParams) *routeEntry {
 	if entry := m.static[path]; entry != nil {
 		params.Reset()
 		return entry
 	}
-
 	if len(m.roots) > 0 {
-		segCount := pathSegmentCount(path)
-		if root, ok := m.roots[segCount]; ok {
+		if root, ok := m.roots[pathSegmentCount(path)]; ok {
 			params.Reset()
 			if entry := m.lookupNode(root, path, 0, params); entry != nil {
 				return entry
 			}
 		}
 	}
-
 	if m.wildcardRoot >= 0 {
 		params.Reset()
 		if entry := m.lookupNode(m.wildcardRoot, path, 0, params); entry != nil {
 			return entry
 		}
 	}
-
 	params.Reset()
 	return nil
 }
 
-func (m *compiledMethod) lookupNode(nodeIndex int, path string, index int, params *pathParamList) *routeEntry {
+func (m *compiledMethod) lookupNode(nodeIndex int, path string, index int, params *PathParams) *routeEntry {
 	node := &m.nodes[nodeIndex]
 	segment, next, ok := nextPathSegment(path, index)
 	if !ok {
 		return node.entry
 	}
-
 	if child := m.findStaticChild(nodeIndex, segment); child >= 0 {
 		if entry := m.lookupNode(child, path, next, params); entry != nil {
 			return entry
 		}
 	}
-
 	if node.paramChild >= 0 {
 		child := &m.nodes[node.paramChild]
 		paramLen := params.Len()
@@ -268,19 +253,17 @@ func (m *compiledMethod) lookupNode(nodeIndex int, path string, index int, param
 		}
 		params.Truncate(paramLen)
 	}
-
 	if node.wildcardChild >= 0 {
 		child := &m.nodes[node.wildcardChild]
 		params.Add(child.paramName, remainingPath(path, index))
 		return child.entry
 	}
-
 	return nil
 }
 
-func (r *CompiledRouter) allowedMethods(path string) []string {
+func (r *Compiled) allowedMethods(path string) []string {
 	seen := make(map[string]struct{})
-	var allowed []string
+	allowed := make([]string, 0, len(r.methods))
 	add := func(method string) {
 		if _, ok := seen[method]; ok {
 			return
@@ -288,9 +271,8 @@ func (r *CompiledRouter) allowedMethods(path string) []string {
 		seen[method] = struct{}{}
 		allowed = append(allowed, method)
 	}
-
 	for _, method := range allHTTPMethods {
-		var params pathParamList
+		var params PathParams
 		if r.lookup(method, path, &params) == nil {
 			continue
 		}
@@ -299,13 +281,12 @@ func (r *CompiledRouter) allowedMethods(path string) []string {
 			add(http.MethodHead)
 		}
 	}
-
 	var custom []string
 	for method := range r.methods {
 		if _, ok := seen[method]; ok || isStandardHTTPMethod(method) {
 			continue
 		}
-		var params pathParamList
+		var params PathParams
 		if r.lookup(method, path, &params) != nil {
 			custom = append(custom, method)
 		}
@@ -314,6 +295,5 @@ func (r *CompiledRouter) allowedMethods(path string) []string {
 	for _, method := range custom {
 		add(method)
 	}
-
 	return allowed
 }

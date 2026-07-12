@@ -2,7 +2,6 @@ package ghttp
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -23,12 +22,12 @@ func TestParseInput_ParamsAndBody(t *testing.T) {
 	r.Header.Set("Authorization", "Bearer xxx")
 	r.Header.Set("Content-Type", "application/json")
 
-	// Set path params in context
-	ctx := context.WithValue(r.Context(), pathParamsKey, map[string]string{"id": "99", "orgId": "org-42"})
-	r = r.WithContext(ctx)
+	var routeParams pathParamList
+	routeParams.Add("id", "99")
+	routeParams.Add("orgId", "org-42")
 
 	var input Req
-	if err := parseInput(r, &input); err != nil {
+	if err := parseInputWithConfigAndPathParams(r, &input, nil, routeParams); err != nil {
 		t.Fatalf("parseInput failed: %v", err)
 	}
 
@@ -70,10 +69,11 @@ func TestParseInput_BindsPathQueryHeaderCookieTags(t *testing.T) {
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("X-Token", "secret")
 	r.AddCookie(&http.Cookie{Name: "session_id", Value: "s1"})
-	r = r.WithContext(context.WithValue(r.Context(), pathParamsKey, map[string]string{"id": "99"}))
+	var routeParams pathParamList
+	routeParams.Add("id", "99")
 
 	var input Req
-	if err := parseInput(r, &input); err != nil {
+	if err := parseInputWithConfigAndPathParams(r, &input, nil, routeParams); err != nil {
 		t.Fatalf("parseInput failed: %v", err)
 	}
 
@@ -88,10 +88,11 @@ func TestParseInput_BindsPathQueryHeaderCookieTags(t *testing.T) {
 func TestParseInput_DirectParams(t *testing.T) {
 	r := httptest.NewRequest("GET", "/users/99?role=admin", nil)
 	r.Header.Set("X-Token", "secret")
-	r = r.WithContext(context.WithValue(r.Context(), pathParamsKey, map[string]string{"id": "99"}))
+	var routeParams pathParamList
+	routeParams.Add("id", "99")
 
 	var params Params
-	if err := parseInput(r, &params); err != nil {
+	if err := parseInputWithConfigAndPathParams(r, &params, nil, routeParams); err != nil {
 		t.Fatalf("parseInput failed: %v", err)
 	}
 
@@ -166,7 +167,7 @@ func TestParseInput_EmptyBody(t *testing.T) {
 	}
 }
 
-func TestParseInput_ParamsPathInContext(t *testing.T) {
+func TestParseInput_ParamsPathFromRouteExtractor(t *testing.T) {
 	type Req struct {
 		Params `json:"-"`
 
@@ -175,12 +176,11 @@ func TestParseInput_ParamsPathInContext(t *testing.T) {
 
 	r := httptest.NewRequest("GET", "/users/99", nil)
 
-	// Set path params in context (simulates router behavior)
-	ctx := context.WithValue(r.Context(), pathParamsKey, map[string]string{"id": "99"})
-	r = r.WithContext(ctx)
+	var routeParams pathParamList
+	routeParams.Add("id", "99")
 
 	var input Req
-	if err := parseInput(r, &input); err != nil {
+	if err := parseInputWithConfigAndPathParams(r, &input, nil, routeParams); err != nil {
 		t.Fatalf("parseInput failed: %v", err)
 	}
 	if input.Path("id") != "99" {

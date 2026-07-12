@@ -15,19 +15,22 @@ const DefaultMaxBodyBytes int64 = 4 << 20
 // Config holds server configuration.
 type Config struct {
 	address           string
-	router            Router
 	renderer          Renderer
 	validator         Validator
 	logger            Logger
 	envelope          EnvelopeFunc
+	errorHandler      ErrorHandler
 	bodyDecoder       BodyDecodeFunc
 	produces          []string
 	consumes          []string
 	clientIPResolver  ClientIPResolver
 	vfsPath           string
+	strictRouting     bool
 	openAPIEnabled    bool
 	openAPITitle      string
 	openAPIVersion    string
+	openAPIPath       string
+	openAPIPathSet    bool
 	readTimeout       time.Duration
 	readHeaderTimeout time.Duration
 	writeTimeout      time.Duration
@@ -60,13 +63,6 @@ func WithValidator(v Validator) ServerOption {
 	}
 }
 
-// WithRouter sets a custom router.
-func WithRouter(router Router) ServerOption {
-	return func(c *Config) {
-		c.router = router
-	}
-}
-
 // WithRenderer sets the template renderer.
 func WithRenderer(renderer Renderer) ServerOption {
 	return func(c *Config) {
@@ -85,6 +81,13 @@ func WithLogger(logger Logger) ServerOption {
 func WithEnvelope(fn EnvelopeFunc) ServerOption {
 	return func(c *Config) {
 		c.envelope = fn
+	}
+}
+
+// WithErrorHandler replaces the default framework error response writer.
+func WithErrorHandler(handler ErrorHandler) ServerOption {
+	return func(c *Config) {
+		c.errorHandler = handler
 	}
 }
 
@@ -109,12 +112,28 @@ func WithConsumes(contentTypes ...string) ServerOption {
 	}
 }
 
+// WithStrictRouting makes trailing slashes part of route identity.
+func WithStrictRouting() ServerOption {
+	return func(c *Config) {
+		c.strictRouting = true
+	}
+}
+
 // WithOpenAPI sets the OpenAPI document title and version.
 func WithOpenAPI(title, version string) ServerOption {
 	return func(c *Config) {
 		c.openAPIEnabled = true
 		c.openAPITitle = title
 		c.openAPIVersion = version
+	}
+}
+
+// WithOpenAPIPath sets the HTTP endpoint that exposes the OpenAPI document.
+// An empty path disables HTTP exposure without disabling Server.OpenAPI.
+func WithOpenAPIPath(path string) ServerOption {
+	return func(c *Config) {
+		c.openAPIPath = path
+		c.openAPIPathSet = true
 	}
 }
 

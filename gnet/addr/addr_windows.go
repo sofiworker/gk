@@ -89,7 +89,7 @@ func socketAddressToIPNet(sa windows.SocketAddress, prefixLen uint8) *net.IPNet 
 	if sa.Sockaddr == nil {
 		return nil
 	}
-		rsa := (*windows.RawSockaddrAny)(unsafe.Pointer(sa.Sockaddr))
+	rsa := (*windows.RawSockaddrAny)(unsafe.Pointer(sa.Sockaddr))
 	switch rsa.Addr.Family {
 	case windows.AF_INET:
 		sa4 := (*windows.RawSockaddrInet4)(unsafe.Pointer(sa.Sockaddr))

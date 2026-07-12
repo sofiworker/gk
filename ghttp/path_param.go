@@ -1,9 +1,6 @@
 package ghttp
 
-import (
-	"context"
-	"net/http"
-)
+import "net/http"
 
 const maxStackPathParams = 16
 
@@ -30,21 +27,6 @@ func (ps pathParamList) Get(key string) string {
 		}
 	}
 	return ""
-}
-
-func (ps pathParamList) toMap() map[string]string {
-	if ps.Len() == 0 {
-		return nil
-	}
-	params := make(map[string]string, ps.Len())
-	for i := 0; i < ps.len; i++ {
-		param := ps.values[i]
-		params[param.Key] = param.Value
-	}
-	for _, param := range ps.overflow {
-		params[param.Key] = param.Value
-	}
-	return params
 }
 
 func (ps pathParamList) Len() int {
@@ -103,12 +85,4 @@ func (f pathParamHandlerFunc) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 func (f pathParamHandlerFunc) ServeHTTPWithPathParams(w http.ResponseWriter, r *http.Request, params pathParamList) {
 	f(w, r, params)
-}
-
-func requestWithPathParams(r *http.Request, params pathParamList) *http.Request {
-	if params.Len() == 0 {
-		return r
-	}
-	ctx := context.WithValue(r.Context(), pathParamsKey, params.toMap())
-	return r.WithContext(ctx)
 }

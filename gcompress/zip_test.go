@@ -27,7 +27,7 @@ func TestZipUtil(t *testing.T) {
 	}
 
 	z := NewZipUtil()
-	
+
 	// Compress
 	if err := z.Compress(srcDir, zipFile); err != nil {
 		t.Fatalf("Compress failed: %v", err)
@@ -42,11 +42,17 @@ func TestZipUtil(t *testing.T) {
 	found1 := false
 	found2 := false
 	for _, f := range files {
-		if f == "file1.txt" || f == "src/file1.txt" { found1 = true } // Compress walks from srcDir, so paths are relative to srcDir?
+		if f == "file1.txt" || f == "src/file1.txt" {
+			found1 = true
+		} // Compress walks from srcDir, so paths are relative to srcDir?
 		// RelPath in Compress: filepath.Rel(source, path).
 		// If source is /tmp/src, and path is /tmp/src/file1.txt, rel is file1.txt.
-		if f == "file1.txt" { found1 = true }
-		if f == "sub/file2.txt" { found2 = true }
+		if f == "file1.txt" {
+			found1 = true
+		}
+		if f == "sub/file2.txt" {
+			found2 = true
+		}
 	}
 	if !found1 || !found2 {
 		t.Logf("Files found: %v", files)
@@ -66,7 +72,7 @@ func TestZipUtil(t *testing.T) {
 	if string(c1) != "content1" {
 		t.Errorf("expected content1, got %s", c1)
 	}
-	
+
 	c2, err := os.ReadFile(filepath.Join(outDir, "sub", "file2.txt"))
 	if err != nil {
 		t.Fatal(err)

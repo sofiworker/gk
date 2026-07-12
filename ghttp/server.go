@@ -3,10 +3,13 @@ package ghttp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
-	"reflect"
+	"runtime/debug"
+	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 type serverContextKey struct{}
@@ -18,25 +21,26 @@ type serverContextKey struct{}
 //   - tested via httptest
 //   - wrapped by any func(http.Handler) http.Handler middleware
 type Server struct {
-	router Router // pluggable routing engine
-	config *Config
+	registry *routeRegistry
+	config   *Config
+	compiled atomic.Pointer[compiledState]
 
-	codecMgr  *CodecManager
-	renderer  Renderer
-	envelope  EnvelopeFunc
-	validator Validator
-	logger    Logger
-	produces  []string
-	consumes  []string
+	codecMgr     *CodecManager
+	renderer     Renderer
+	envelope     EnvelopeFunc
+	errorHandler ErrorHandler
+	validator    Validator
+	logger       Logger
+	produces     []string
+	consumes     []string
 
 	middlewares []Middleware
 
 	httpServer   *http.Server
 	listenerAddr net.Addr
 	mu           sync.Mutex
-	openAPI      *OpenAPI
 	routed       bool
-	setupErr     error
+	freezeErr    error
 }
 
 // New creates a new Server with the given options.
@@ -49,50 +53,88 @@ func New(opts ...ServerOption) *Server {
 	for _, opt := range opts {
 		opt(c)
 	}
+	if c.openAPIEnabled && !c.openAPIPathSet {
+		c.openAPIPath = "/openapi.json"
+	}
 
 	s := &Server{
-		router:    NewRadixRouter(),
-		config:    c,
-		codecMgr:  NewCodecManager(),
-		envelope:  c.envelope,
-		validator: newDefaultValidator(),
-		logger:    c.logger,
-		produces:  c.produces,
-		consumes:  c.consumes,
+		registry:     newRouteRegistry(c.strictRouting),
+		config:       c,
+		codecMgr:     NewCodecManager(),
+		envelope:     c.envelope,
+		errorHandler: c.errorHandler,
+		validator:    newDefaultValidator(),
+		logger:       c.logger,
+		produces:     c.produces,
+		consumes:     c.consumes,
 	}
 	if c.validator != nil {
 		s.validator = c.validator
 	}
-	if c.openAPIEnabled {
-		s.openAPI = NewOpenAPI(c.openAPITitle, c.openAPIVersion)
-	}
 	if c.renderer != nil {
 		s.renderer = c.renderer
 	}
-	if c.router != nil {
-		s.router = c.router
+	if c.openAPIEnabled && c.openAPIPath != "" {
+		s.registerOpenAPIEndpoint()
 	}
 
 	return s
 }
 
-// ServeHTTP implements http.Handler - applies middlewares then delegates to router.
+// ServeHTTP implements http.Handler.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	responseState, w := newResponseWriteState(w, r.Method == http.MethodHead)
+	r = r.WithContext(context.WithValue(r.Context(), serverContextKey{}, s))
+	r = r.WithContext(context.WithValue(r.Context(), responseStateContextKey{}, responseState))
 	s.finalizeRoutes()
-	s.buildServerHandler().ServeHTTP(w, r)
+	state := s.compiled.Load()
+	if state == nil {
+		panic("ghttp: route state was not compiled")
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			s.writeRecoveredPanic(w, r, recovered)
+		}
+	}()
+	state.ServeHTTP(w, r)
 }
 
-// buildHandlerChain wraps the router with all middlewares.
+func (s *Server) writeRecoveredPanic(w http.ResponseWriter, r *http.Request, recovered any) {
+	if s.logger != nil {
+		s.logger.ErrorContext(r.Context(), "panic recovered", "panic", recovered, "stack", string(debug.Stack()))
+	}
+	err := Err(
+		http.StatusInternalServerError,
+		http.StatusText(http.StatusInternalServerError),
+		WithCause(fmt.Errorf("%w: %v", ErrHandlerPanic, recovered)),
+	)
+	if responseErrorHandlerStarted(r) {
+		if !responseErrorWriteBlocked(r) {
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		}
+		return
+	}
+	defer func() {
+		if recover() != nil {
+			if responseErrorWriteBlocked(r) {
+				return
+			}
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		}
+	}()
+	if s.dispatchError(w, r, http.StatusInternalServerError, err) {
+		return
+	}
+	writeErrorWithCodec(w, r, s, http.StatusInternalServerError, err, nil, nil)
+}
+
+// buildHandlerChain returns the Server handler after route compilation.
 func (s *Server) buildHandlerChain() http.Handler {
-	return Wrap(s.router, s.middlewares...)
+	return s
 }
 
 func (s *Server) buildServerHandler() http.Handler {
-	h := s.buildHandlerChain()
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r = r.WithContext(context.WithValue(r.Context(), serverContextKey{}, s))
-		h.ServeHTTP(w, r)
-	})
+	return s
 }
 
 // Run starts the HTTP server on the given address (or config address).
@@ -220,56 +262,113 @@ func (s *Server) Addr() net.Addr {
 
 // Use adds middleware to the server.
 func (s *Server) Use(mws ...Middleware) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.panicIfFrozenLocked()
 	s.middlewares = append(s.middlewares, mws...)
 }
 
 // Consumes declares the default request Content-Types for automatic body decoding.
 func (s *Server) Consumes(contentTypes ...string) *Server {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.panicIfFrozenLocked()
 	s.consumes = normalizeContentTypes(contentTypes)
 	return s
 }
 
-func (s *Server) handleRoute(method, path string, handler http.Handler, mws ...Middleware) error {
-	return s.router.Register(method, path, wrapRouteHandler(handler, mws...))
+func (s *Server) routePath(path string) string {
+	return path
 }
 
-func wrapRouteHandler(handler http.Handler, mws ...Middleware) http.Handler {
-	if len(mws) == 0 {
-		return handler
+func (s *Server) routeGroup() *Group {
+	return nil
+}
+
+func (s *Server) registerDefinitions(definitions ...routeDefinition) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.panicIfFrozenLocked()
+	return s.registry.register(definitions...)
+}
+
+func (s *Server) panicIfFrozenLocked() {
+	if s.routed {
+		panic(ErrServerFrozen)
 	}
-	wrapped := Wrap(handler, mws...)
-	if _, ok := handler.(pathParamHandler); !ok {
-		return wrapped
+}
+
+func (s *Server) assertMutable() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.panicIfFrozenLocked()
+}
+
+func (s *Server) dispatchError(w http.ResponseWriter, r *http.Request, defaultCode int, err error) bool {
+	if responseErrorWriteBlocked(r) {
+		if s != nil && s.logger != nil {
+			s.logger.ErrorContext(r.Context(), "http error after response completion", "error", err)
+		}
+		return true
 	}
-	return pathParamHandlerFunc(func(w http.ResponseWriter, r *http.Request, params pathParamList) {
-		wrapped.ServeHTTP(w, requestWithPathParams(r, params))
+	if s == nil || s.errorHandler == nil {
+		return false
+	}
+	if !beginResponseErrorHandler(r) {
+		if s.logger != nil {
+			s.logger.ErrorContext(r.Context(), "http error handler reentry suppressed", "error", err)
+		}
+		return true
+	}
+	normalized := normalizeHTTPError(defaultCode, err)
+	s.errorHandler(w, r, normalized)
+	return true
+}
+
+func normalizeHTTPError(defaultCode int, err error) *HTTPError {
+	if explicit := AsError(err); explicit != nil {
+		copy := *explicit
+		if copy.Code == 0 {
+			copy.Code = defaultCode
+		}
+		if copy.Message == "" {
+			copy.Message = http.StatusText(copy.Code)
+		}
+		return &copy
+	}
+	code := defaultCode
+	if code == 0 {
+		code = http.StatusInternalServerError
+	}
+	message := http.StatusText(code)
+	if code >= http.StatusInternalServerError {
+		message = http.StatusText(http.StatusInternalServerError)
+	}
+	return &HTTPError{Code: code, Message: message, Err: err}
+}
+
+func (s *Server) registerOpenAPIEndpoint() {
+	pattern, err := parseRoutePattern(s.config.openAPIPath, s.config.strictRouting)
+	if err != nil {
+		panic(err)
+	}
+	s.registry.reserve(pattern)
+	err = s.registry.register(routeDefinition{
+		method:  http.MethodGet,
+		pattern: pattern,
+		handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			document, err := s.OpenAPI()
+			if err != nil {
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(document)
+		}),
+		internal: true,
 	})
-}
-
-func (s *Server) recordSetupError(err error) {
-	if err == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.setupErr = errors.Join(s.setupErr, err)
-}
-
-func (s *Server) panicSetupErrorLocked() {
-	if s.setupErr != nil {
-		panic(s.setupErr)
-	}
-}
-
-func (s *Server) panicSetupError() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.panicSetupErrorLocked()
-}
-
-func (s *Server) addRouteSpec(method, path string, reqType, respType reflect.Type, doc RouteDoc, consumes, produces []string) {
-	if s.openAPI != nil {
-		s.openAPI.AddRoute(method, path, reqType, respType, doc, consumes, produces)
+	if err != nil {
+		panic(err)
 	}
 }
 
@@ -286,38 +385,125 @@ func (s *Server) owner() *Server {
 }
 
 func (s *Server) finalizeRoutes() {
+	if s.compiled.Load() != nil {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.panicSetupErrorLocked()
+	if s.freezeErr != nil {
+		panic(s.freezeErr)
+	}
+	if s.compiled.Load() != nil {
+		return
+	}
 	if s.routed {
 		return
 	}
+
 	s.routed = true
-
-	if s.openAPI != nil {
-		spec := s.openAPI.Build()
-		if err := s.router.Register(http.MethodGet, "/openapi.json", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			w.Write(spec)
-		})); err != nil {
-			s.setupErr = errors.Join(s.setupErr, err)
-			panic(s.setupErr)
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if err, ok := recovered.(error); ok {
+				s.freezeErr = err
+			} else {
+				s.freezeErr = fmt.Errorf("route freeze panic: %v", recovered)
+			}
+			panic(recovered)
 		}
-	}
-}
-
-// Router returns the underlying router for direct access.
-func (s *Server) Router() Router {
-	return s.router
+	}()
+	state := compileState(s.registry.snapshot(), s.middlewares, s.config.strictRouting, s.errorHandler)
+	s.compiled.Store(state)
 }
 
 // Group creates a route group with a prefix and optional middlewares.
 func (s *Server) Group(prefix string, mws ...Middleware) *Group {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.panicIfFrozenLocked()
 	return &Group{
 		server:      s,
 		prefix:      prefix,
 		middlewares: mws,
 	}
+}
+
+type compiledState struct {
+	mux          *routeMux
+	strict       bool
+	errorHandler ErrorHandler
+	badRequest   http.Handler
+	notFound     http.Handler
+	notAllowed   http.Handler
+}
+
+func compileState(definitions []routeDefinition, serverMiddlewares []Middleware, strict bool, errorHandler ErrorHandler) *compiledState {
+	mux := newRouteMux(definitions)
+	for _, route := range mux.routes {
+		middlewares := append([]Middleware(nil), serverMiddlewares...)
+		if route.definition.group != nil {
+			middlewares = append(middlewares, route.definition.group.currentMiddlewaresLocked()...)
+		}
+		middlewares = append(middlewares, route.definition.middlewares...)
+		terminal := route.definition.handler
+		if route.definition.needsExtractor {
+			terminal = extractorTerminal(route)
+		}
+		route.handler = Wrap(terminal, middlewares...)
+	}
+	state := &compiledState{mux: mux, strict: strict, errorHandler: errorHandler}
+	state.badRequest = Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		state.writeOutcomeError(w, r, http.StatusBadRequest, Err(http.StatusBadRequest, ErrInvalidRequestPath.Error()))
+	}), serverMiddlewares...)
+	state.notFound = Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		state.writeOutcomeError(w, r, http.StatusNotFound, Err(http.StatusNotFound, http.StatusText(http.StatusNotFound)))
+	}), serverMiddlewares...)
+	state.notAllowed = Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		state.writeOutcomeError(w, r, http.StatusMethodNotAllowed, Err(http.StatusMethodNotAllowed, http.StatusText(http.StatusMethodNotAllowed)))
+	}), serverMiddlewares...)
+	return state
+}
+
+func extractorTerminal(route *compiledRoute) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestPath, err := parseRequestPath(r.URL.EscapedPath(), route.definition.pattern.strict)
+		if err != nil {
+			writeError(w, r, serverFromRequest(r), http.StatusBadRequest, err)
+			return
+		}
+		params, err := route.extract(requestPath)
+		if err != nil {
+			writeError(w, r, serverFromRequest(r), http.StatusBadRequest, err)
+			return
+		}
+		handler, ok := route.definition.handler.(pathParamHandler)
+		if !ok {
+			writeError(w, r, serverFromRequest(r), http.StatusInternalServerError, Err(http.StatusInternalServerError, http.StatusText(http.StatusInternalServerError)))
+			return
+		}
+		handler.ServeHTTPWithPathParams(w, r, params)
+	})
+}
+
+func (s *compiledState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	requestPath, err := parseRequestPath(r.URL.EscapedPath(), s.strict)
+	if err != nil {
+		s.badRequest.ServeHTTP(w, r)
+		return
+	}
+	result := s.mux.match(r.Method, requestPath)
+	switch result.kind {
+	case routeMatchFound:
+		result.route.handler.ServeHTTP(w, r)
+	case routeMatchMethodNotAllowed:
+		w.Header().Set("Allow", strings.Join(result.allow, ", "))
+		s.notAllowed.ServeHTTP(w, r)
+	default:
+		s.notFound.ServeHTTP(w, r)
+	}
+}
+
+func (s *compiledState) writeOutcomeError(w http.ResponseWriter, r *http.Request, code int, err error) {
+	writeError(w, r, serverFromRequest(r), code, err)
 }
 
 func listenerAddress(ln net.Listener) string {

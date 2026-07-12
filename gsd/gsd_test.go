@@ -94,14 +94,20 @@ func TestLoadBalancers(t *testing.T) {
 	if s := rrlb.Select(nil); s != nil {
 		t.Error("expected nil for empty services")
 	}
-	
+
 	s1 := rrlb.Select(services)
 	s2 := rrlb.Select(services)
 	s3 := rrlb.Select(services)
-	
-	if s1.Address != "a1" { t.Error("expected a1") }
-	if s2.Address != "a2" { t.Error("expected a2") }
-	if s3.Address != "a1" { t.Error("expected a1") }
+
+	if s1.Address != "a1" {
+		t.Error("expected a1")
+	}
+	if s2.Address != "a2" {
+		t.Error("expected a2")
+	}
+	if s3.Address != "a1" {
+		t.Error("expected a1")
+	}
 }
 
 func TestKeyFormatter(t *testing.T) {
@@ -111,27 +117,33 @@ func TestKeyFormatter(t *testing.T) {
 	if key != "/root/foo/1.1.1.1:80" {
 		t.Errorf("Format failed: %s", key)
 	}
-	
+
 	// Parse is not implemented fully in default, just returns empty
 	_, _ = kf.Parse(key)
 }
 
 func TestCustomService(t *testing.T) {
 	cs := CustomService{
-		Name: "custom",
+		Name:    "custom",
 		Address: "addr",
-		Port: 8080,
+		Port:    8080,
 		Version: "v1",
-		Weight: 10,
-		Status: ServiceStatusHealthy,
+		Weight:  10,
+		Status:  ServiceStatusHealthy,
 	}
-	
-	if cs.GetName() != "custom" { t.Error("GetName failed") }
+
+	if cs.GetName() != "custom" {
+		t.Error("GetName failed")
+	}
 	meta := cs.GetMetadata()
-	if meta["version"] != "v1" { t.Error("metadata failed") }
-	
+	if meta["version"] != "v1" {
+		t.Error("metadata failed")
+	}
+
 	si := cs.ToServiceInfo()
-	if si.Name != "custom" { t.Error("ToServiceInfo failed") }
+	if si.Name != "custom" {
+		t.Error("ToServiceInfo failed")
+	}
 }
 
 func TestBuildErrorHandlingOptions(t *testing.T) {

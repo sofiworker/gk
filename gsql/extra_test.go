@@ -8,10 +8,10 @@ import (
 
 func TestDialects(t *testing.T) {
 	drivers := []string{"mysql", "postgres", "sqlite3", "unknown"}
-	
+
 	for _, dName := range drivers {
 		d := newDialect(dName)
-		
+
 		// Test PlaceholderSQL
 		sql := "SELECT * FROM t WHERE id = ?"
 		pSql := d.PlaceholderSQL(sql)
@@ -24,15 +24,19 @@ func TestDialects(t *testing.T) {
 				t.Errorf("%s PlaceholderSQL should be unchanged: %s", dName, pSql)
 			}
 		}
-		
+
 		// Test Placeholder
 		ph := d.Placeholder(0)
 		if dName == "postgres" {
-			if ph != "$1" { t.Errorf("%s Placeholder failed", dName) }
+			if ph != "$1" {
+				t.Errorf("%s Placeholder failed", dName)
+			}
 		} else {
-			if ph != "?" { t.Errorf("%s Placeholder failed", dName) }
+			if ph != "?" {
+				t.Errorf("%s Placeholder failed", dName)
+			}
 		}
-		
+
 		// Test DataTypeOf
 		types := []reflect.Type{
 			reflect.TypeOf(true),
@@ -48,12 +52,12 @@ func TestDialects(t *testing.T) {
 				t.Errorf("%s DataTypeOf returned empty for %v", dName, typ)
 			}
 		}
-		
+
 		// Test AutoIncrement
 		if d.AutoIncrement() == "" && dName != "postgres" {
 			// Postgres returns empty, others usually shouldn't
 		}
-		
+
 		// Test PrimaryKeyStr
 		if d.PrimaryKeyStr() == "" {
 			t.Errorf("%s PrimaryKeyStr failed", dName)

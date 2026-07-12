@@ -304,6 +304,11 @@ func TestDuplicateRoute(t *testing.T) {
 				V int `json:"v"`
 			}{V: 1}, nil
 		})
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected duplicate route setup panic")
+		}
+	}()
 	ghttp.Route[struct{}, struct {
 		V int `json:"v"`
 	}](s).
@@ -315,13 +320,6 @@ func TestDuplicateRoute(t *testing.T) {
 				V int `json:"v"`
 			}{V: 2}, nil
 		})
-
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected duplicate route setup panic")
-		}
-	}()
-	s.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/dup", nil))
 }
 
 // ============================================================================

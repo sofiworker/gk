@@ -39,7 +39,7 @@ func TestAutoCompress(t *testing.T) {
 	if err := cm.AutoDecompress(tgzFile, filepath.Join(tmpDir, "tgz_out")); err != nil {
 		t.Errorf("AutoDecompress tgz failed: %v", err)
 	}
-	
+
 	// Test Tgz .tgz extension
 	tgzFile2 := filepath.Join(tmpDir, "test.tgz")
 	if err := cm.AutoCompress(srcDir, tgzFile2); err != nil {
@@ -50,8 +50,8 @@ func TestAutoCompress(t *testing.T) {
 	if err := cm.AutoCompress(srcDir, "test.rar"); err == nil {
 		t.Error("expected error for rar")
 	}
-	
-	// Test pure .gz (unsupported by AutoCompress logic for files unless wrapped in logic I didn't see fully? 
+
+	// Test pure .gz (unsupported by AutoCompress logic for files unless wrapped in logic I didn't see fully?
 	// The code says: case ".gz", ".tgz": check if .tar.gz or .tgz. else error.
 	if err := cm.AutoCompress(srcDir, "test.gz"); err == nil {
 		t.Error("expected error for pure gz in AutoCompress")
@@ -63,7 +63,7 @@ func TestConvenienceFunctions(t *testing.T) {
 	tmpDir := t.TempDir()
 	srcDir := filepath.Join(tmpDir, "src")
 	_ = os.Mkdir(srcDir, 0755)
-	
+
 	if err := ZipCompress(srcDir, filepath.Join(tmpDir, "f.zip")); err != nil {
 		t.Logf("ZipCompress: %v", err)
 	}

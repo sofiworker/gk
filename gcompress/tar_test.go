@@ -40,7 +40,7 @@ func TestTarUtil(t *testing.T) {
 	if string(c1) != "content1" {
 		t.Errorf("expected content1, got %s", c1)
 	}
-	
+
 	// Boundary: missing file
 	if err := tu.Decompress("missing.tar", outDir); err == nil {
 		t.Error("expected error")

@@ -8,7 +8,6 @@ import (
 	"mime"
 	"net/http"
 	"reflect"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -52,7 +51,9 @@ type RouteBuilder[Req, Resp any] struct {
 	codecs          []responseCodec // resolved from produces at registration
 	validator       routeValidateFunc[Req]
 	validationError error
+	setupErr        error
 	skipValidation  bool
+	finalized       bool
 }
 
 // compiledInput is the registration-time compiled constructor for a route's
@@ -61,12 +62,16 @@ type RouteBuilder[Req, Resp any] struct {
 // removes the per-request reflect.New plus the reflect.Value.Interface()
 // whole-struct copy that the typed path used to pay.
 type compiledInput[Req any] struct {
-	newTarget func() any
-	finish    func(any) Req
+	directParams bool
+	newTarget    func() any
+	finish       func(any) Req
 }
 
 func compileInput[Req any]() compiledInput[Req] {
 	t := reflect.TypeFor[Req]()
+	if t == reflect.TypeFor[Params]() {
+		return compiledInput[Req]{directParams: true}
+	}
 	if t.Kind() == reflect.Ptr && t.Elem().Kind() == reflect.Struct {
 		elem := t.Elem()
 		return compiledInput[Req]{
@@ -81,8 +86,8 @@ func compileInput[Req any]() compiledInput[Req] {
 }
 
 type routeTarget interface {
-	handleRoute(method, path string, handler http.Handler, mws ...Middleware) error
-	addRouteSpec(method, path string, reqType, respType reflect.Type, doc RouteDoc, consumes, produces []string)
+	routePath(path string) string
+	routeGroup() *Group
 	consumesContentTypes() []string
 	producesContentTypes() []string
 	owner() *Server
@@ -103,12 +108,14 @@ func Route[Req, Resp any](target routeTarget) *RouteBuilder[Req, Resp] {
 }
 
 func (b *RouteBuilder[Req, Resp]) methodSet(method string, path string) string {
+	b.ensureMethodUnset()
 	b.methods = []string{method}
 	b.path = path
 	return b.path
 }
 
 func (b *RouteBuilder[Req, Resp]) methodsSet(methods []string, path string) string {
+	b.ensureMethodUnset()
 	b.methods = append(b.methods[:0], methods...)
 	b.path = path
 	return b.path
@@ -165,12 +172,13 @@ func (b *RouteBuilder[Req, Resp]) ANY(path string) *RouteBuilder[Req, Resp] {
 }
 
 func (b *RouteBuilder[Req, Resp]) CUSTOM(method, path string) *RouteBuilder[Req, Resp] {
-	b.methodSet(strings.ToUpper(strings.TrimSpace(method)), path)
+	b.methodSet(method, path)
 	return b
 }
 
 // Doc configures route documentation metadata.
 func (b *RouteBuilder[Req, Resp]) Doc(opts ...DocOption) *RouteBuilder[Req, Resp] {
+	b.ensureMutable()
 	for _, opt := range opts {
 		if opt != nil {
 			opt(&b.doc)
@@ -181,12 +189,14 @@ func (b *RouteBuilder[Req, Resp]) Doc(opts ...DocOption) *RouteBuilder[Req, Resp
 
 // Produces declares response Content-Types for automatic response encoding.
 func (b *RouteBuilder[Req, Resp]) Produces(contentTypes ...string) *RouteBuilder[Req, Resp] {
+	b.ensureMutable()
 	b.produces = normalizeContentTypes(contentTypes)
 	return b
 }
 
 // Consumes declares the request Content-Types accepted for automatic body decoding.
 func (b *RouteBuilder[Req, Resp]) Consumes(contentTypes ...string) *RouteBuilder[Req, Resp] {
+	b.ensureMutable()
 	b.consumes = normalizeContentTypes(contentTypes)
 	b.consumesSet = true
 	return b
@@ -195,6 +205,7 @@ func (b *RouteBuilder[Req, Resp]) Consumes(contentTypes ...string) *RouteBuilder
 // MaxBodyBytes overrides the server request body size limit for this route.
 // Values less than or equal to zero disable the request body size limit.
 func (b *RouteBuilder[Req, Resp]) MaxBodyBytes(n int64) *RouteBuilder[Req, Resp] {
+	b.ensureMutable()
 	b.maxBodyBytes = n
 	b.maxBodyBytesSet = true
 	return b
@@ -202,6 +213,7 @@ func (b *RouteBuilder[Req, Resp]) MaxBodyBytes(n int64) *RouteBuilder[Req, Resp]
 
 // Validate adds route-level validation after input binding.
 func (b *RouteBuilder[Req, Resp]) Validate(fn interface{}, opts ...ValidateOption) *RouteBuilder[Req, Resp] {
+	b.ensureMutable()
 	switch validator := fn.(type) {
 	case ValidateFunc[Req]:
 		b.validator = routeValidateFunc[Req](validator)
@@ -216,7 +228,7 @@ func (b *RouteBuilder[Req, Resp]) Validate(fn interface{}, opts ...ValidateOptio
 			return validator(req)
 		}
 	default:
-		b.recordSetupError(ErrRouteValidatorUnsupported)
+		b.setupErr = errors.Join(b.setupErr, ErrRouteValidatorUnsupported)
 		return b
 	}
 
@@ -232,38 +244,50 @@ func (b *RouteBuilder[Req, Resp]) Validate(fn interface{}, opts ...ValidateOptio
 
 // SkipValidation disables the server-level validator for this route.
 func (b *RouteBuilder[Req, Resp]) SkipValidation() *RouteBuilder[Req, Resp] {
+	b.ensureMutable()
 	b.skipValidation = true
 	return b
 }
 
 // Use adds route-level middleware.
 func (b *RouteBuilder[Req, Resp]) Use(mws ...Middleware) *RouteBuilder[Req, Resp] {
+	b.ensureMutable()
 	b.middlewares = append(b.middlewares, mws...)
 	return b
 }
 
 // To registers the handler and finalizes the route.
 func (b *RouteBuilder[Req, Resp]) To(handler HandlerFunc[Req, Resp]) {
+	b.beginTerminal()
+	if handler == nil {
+		b.panicSetupError(ErrRouteHandlerNil)
+	}
 	if err := b.validateMethods(); err != nil {
-		b.recordSetupError(err)
-		return
+		b.panicSetupError(err)
 	}
 	if err := validateRequestParamsUsage[Req](); err != nil {
-		b.recordSetupError(err)
-		return
+		b.panicSetupError(err)
 	}
 	if err := b.resolveProduces(); err != nil {
-		b.recordSetupError(err)
-		return
+		b.panicSetupError(err)
 	}
 	b.resolveConsumes()
+	if b.input.directParams {
+		directHandler := any(handler).(HandlerFunc[Params, Resp])
+		directParamsHandler := b.buildParamsHandler(directHandler)
+		if validator := b.directParamsGlobalValidator(); validator != nil {
+			directParamsHandler = b.buildParamsHandlerWithGlobalValidator(directHandler, validator)
+		}
+		b.registerHandler(directParamsHandler, true, routeTerminalTyped, 0)
+		return
+	}
 	b.handler = handler
-	b.toHandler(b.buildHandlerChain())
+	b.registerHandler(b.buildHandlerChain(), true, routeTerminalTyped, 0)
 }
 
 // ToHTTP registers a raw http.Handler with the selected route method and path.
 func (b *RouteBuilder[Req, Resp]) ToHTTP(handler http.Handler) {
-	b.toHandler(handler)
+	b.toHandler(handler, false, routeTerminalRaw, 0)
 }
 
 // ToRaw registers a raw handler function with the selected route method and path.
@@ -273,12 +297,28 @@ func (b *RouteBuilder[Req, Resp]) ToRaw(handler RawHandler) {
 
 // ToHTTPFunc registers a parsed-input handler that writes the HTTP response itself.
 func (b *RouteBuilder[Req, Resp]) ToHTTPFunc(handler HTTPHandlerFunc[Req]) {
+	b.toHTTPFunc(handler, routeTerminalHTTPFunc, 0)
+}
+
+func (b *RouteBuilder[Req, Resp]) toHTTPFunc(handler HTTPHandlerFunc[Req], terminal routeTerminalKind, responseStatus int) {
+	b.beginTerminal()
+	if handler == nil {
+		b.panicSetupError(ErrRouteHandlerNil)
+	}
 	if err := validateRequestParamsUsage[Req](); err != nil {
-		b.recordSetupError(err)
-		return
+		b.panicSetupError(err)
 	}
 	b.resolveConsumes()
-	b.toHandler(pathParamHandlerFunc(func(w http.ResponseWriter, r *http.Request, params pathParamList) {
+	if b.input.directParams {
+		directHandler := any(handler).(HTTPHandlerFunc[Params])
+		directParamsHandler := b.buildParamsHTTPHandler(directHandler)
+		if validator := b.directParamsGlobalValidator(); validator != nil {
+			directParamsHandler = b.buildParamsHTTPHandlerWithGlobalValidator(directHandler, validator)
+		}
+		b.registerHandler(directParamsHandler, true, terminal, responseStatus)
+		return
+	}
+	b.registerHandler(pathParamHandlerFunc(func(w http.ResponseWriter, r *http.Request, params pathParamList) {
 		input, ok := b.parseAndValidateInputWithPathParams(w, r, params)
 		if !ok {
 			return
@@ -289,7 +329,7 @@ func (b *RouteBuilder[Req, Resp]) ToHTTPFunc(handler HTTPHandlerFunc[Req]) {
 			}
 			b.writeError(w, r, http.StatusInternalServerError, err)
 		}
-	}))
+	}), true, terminal, responseStatus)
 }
 
 // ToRedirect registers a fixed redirect response.
@@ -301,57 +341,76 @@ func (b *RouteBuilder[Req, Resp]) ToRedirect(code int, location string) {
 
 // ToRedirectFunc registers a redirect response whose target uses parsed input.
 func (b *RouteBuilder[Req, Resp]) ToRedirectFunc(code int, redirect RedirectFunc[Req]) {
-	b.ToHTTPFunc(func(w http.ResponseWriter, r *http.Request, input Req) error {
+	if redirect == nil {
+		b.beginTerminal()
+		b.panicSetupError(ErrRouteHandlerNil)
+	}
+	b.toHTTPFunc(func(w http.ResponseWriter, r *http.Request, input Req) error {
 		location, err := redirect(input)
 		if err != nil {
 			return err
 		}
 		http.Redirect(w, r, location, code)
 		return nil
-	})
+	}, routeTerminalRedirect, code)
 }
 
 // ToSSE registers a Server-Sent Events handler with the selected route method and path.
 func (b *RouteBuilder[Req, Resp]) ToSSE(handler SSEHandler) {
-	b.toHandler(buildSSEHandler(b.target.owner(), handler))
+	if handler == nil {
+		b.beginTerminal()
+		b.panicSetupError(ErrRouteHandlerNil)
+	}
+	b.toHandler(buildSSEHandler(b.target.owner(), handler), true, routeTerminalSSE, 0)
 }
 
 // ToWebSocket registers a WebSocket upgrade handler with the selected route method and path.
 func (b *RouteBuilder[Req, Resp]) ToWebSocket(handler WebSocketHandler) {
-	b.toHandler(buildWebSocketHandler(b.target.owner(), handler))
+	if handler == nil {
+		b.beginTerminal()
+		b.panicSetupError(ErrRouteHandlerNil)
+	}
+	b.toHandler(buildWebSocketHandler(b.target.owner(), handler), true, routeTerminalWebSocket, http.StatusSwitchingProtocols)
 }
 
 // ToStatic registers a safe file server with the selected route path as its URL prefix.
 func (b *RouteBuilder[Req, Resp]) ToStatic(root ...string) {
+	b.beginTerminal()
 	staticRoot := b.target.owner().config.vfsPath
 	if len(root) > 0 {
 		staticRoot = root[0]
 	}
 	if staticRoot == "" {
-		b.recordSetupError(ErrStaticRootRequired)
-		return
+		b.panicSetupError(ErrStaticRootRequired)
 	}
 	fsys, err := NewSafeFS(staticRoot)
 	if err != nil {
-		b.recordSetupError(err)
-		return
+		b.panicSetupError(err)
 	}
-	b.ToStaticFS(fsys)
+	b.registerStaticFS(fsys)
 }
 
 // ToStaticFS registers a file server with the selected route path as its URL prefix.
 func (b *RouteBuilder[Req, Resp]) ToStaticFS(fs http.FileSystem) {
+	b.beginTerminal()
+	b.registerStaticFS(fs)
+}
+
+func (b *RouteBuilder[Req, Resp]) registerStaticFS(fs http.FileSystem) {
+	if fs == nil {
+		b.panicSetupError(ErrStaticRootRequired)
+	}
 	prefix := strings.TrimRight(b.path, "/")
 	handler := http.StripPrefix(prefix, http.FileServer(fs))
-	b.path = JoinPaths(b.path, "/*path")
-	b.toHandler(handler)
+	b.path = joinRoutePaths(b.path, "{path...}")
+	b.registerHandler(handler, false, routeTerminalStatic, 0)
 }
 
 // ToStaticFile registers a single static file with the selected route method and path.
 func (b *RouteBuilder[Req, Resp]) ToStaticFile(filepath string) {
 	b.toHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, filepath)
-	}))
+	}), false, routeTerminalStatic, 0)
 }
 
 // ToHTML renders a configured template with fixed data for the selected route.
@@ -360,28 +419,83 @@ func (b *RouteBuilder[Req, Resp]) ToHTML(status int, name string, data interface
 		if err := renderHTML(w, b.target.owner(), status, name, data); err != nil {
 			writeError(w, r, b.target.owner(), http.StatusInternalServerError, err)
 		}
-	}))
+	}), false, routeTerminalHTML, status)
 }
 
-func (b *RouteBuilder[Req, Resp]) toHandler(handler http.Handler) {
+func (b *RouteBuilder[Req, Resp]) toHandler(handler http.Handler, needsExtractor bool, terminal routeTerminalKind, responseStatus int) {
+	b.beginTerminal()
+	if isNilHTTPHandler(handler) {
+		b.panicSetupError(ErrRouteHandlerNil)
+	}
+	b.registerHandler(handler, needsExtractor, terminal, responseStatus)
+}
+
+func isNilHTTPHandler(handler http.Handler) bool {
+	if handler == nil {
+		return true
+	}
+	value := reflect.ValueOf(handler)
+	return (value.Kind() == reflect.Func || value.Kind() == reflect.Ptr || value.Kind() == reflect.Interface) && value.IsNil()
+}
+
+func (b *RouteBuilder[Req, Resp]) registerHandler(handler http.Handler, needsExtractor bool, terminal routeTerminalKind, responseStatus int) {
 	if err := b.validateMethods(); err != nil {
-		b.recordSetupError(err)
-		return
+		b.panicSetupError(err)
 	}
+	pattern, err := parseRoutePattern(b.target.routePath(b.path), b.target.owner().config.strictRouting)
+	if err != nil {
+		b.panicSetupError(err)
+	}
+	definitions := make([]routeDefinition, 0, len(b.methods))
 	for _, method := range b.methods {
-		if err := b.target.handleRoute(method, b.path, handler, b.middlewares...); err != nil {
-			b.recordSetupError(err, method)
-			return
-		}
-		b.register(method)
+		definitions = append(definitions, routeDefinition{
+			method:         method,
+			pattern:        pattern,
+			handler:        handler,
+			middlewares:    append([]Middleware(nil), b.middlewares...),
+			group:          b.target.routeGroup(),
+			needsExtractor: needsExtractor,
+			terminal:       terminal,
+			responseStatus: responseStatus,
+			doc:            b.doc.clone(),
+			reqType:        reflect.TypeFor[Req](),
+			respType:       reflect.TypeFor[Resp](),
+			consumes:       append([]string(nil), b.consumes...),
+			produces:       append([]string(nil), b.produces...),
+		})
+	}
+	if err := b.target.owner().registerDefinitions(definitions...); err != nil {
+		b.panicSetupError(err)
 	}
 }
 
-func (b *RouteBuilder[Req, Resp]) recordSetupError(err error, methodOverride ...string) {
+func (b *RouteBuilder[Req, Resp]) ensureMethodUnset() {
+	b.ensureMutable()
+	if len(b.methods) > 0 {
+		panic(ErrRouteMethodAlreadySet)
+	}
+}
+
+func (b *RouteBuilder[Req, Resp]) ensureMutable() {
+	if b.finalized {
+		panic(ErrRouteBuilderFinalized)
+	}
+	b.target.owner().assertMutable()
+}
+
+func (b *RouteBuilder[Req, Resp]) beginTerminal() {
+	b.ensureMutable()
+	if b.setupErr != nil {
+		b.panicSetupError(b.setupErr)
+	}
+	b.finalized = true
+}
+
+func (b *RouteBuilder[Req, Resp]) panicSetupError(err error, methodOverride ...string) {
 	if err == nil {
 		return
 	}
-	b.target.owner().recordSetupError(fmt.Errorf("route setup %s at %s: %w", b.setupErrorRoute(methodOverride...), setupErrorCaller(), err))
+	panic(fmt.Errorf("route setup %s: %w", b.setupErrorRoute(methodOverride...), err))
 }
 
 func (b *RouteBuilder[Req, Resp]) setupErrorRoute(methodOverride ...string) string {
@@ -398,20 +512,6 @@ func (b *RouteBuilder[Req, Resp]) setupErrorRoute(methodOverride ...string) stri
 		path = "<path unset>"
 	}
 	return method + " " + path
-}
-
-func setupErrorCaller() string {
-	for skip := 2; skip < 16; skip++ {
-		_, file, line, ok := runtime.Caller(skip)
-		if !ok {
-			continue
-		}
-		if strings.HasSuffix(file, "ghttp/builder.go") || strings.HasSuffix(file, `ghttp\builder.go`) {
-			continue
-		}
-		return fmt.Sprintf("%s:%d", file, line)
-	}
-	return "unknown"
 }
 
 func (b *RouteBuilder[Req, Resp]) validateMethods() error {
@@ -434,10 +534,6 @@ func (b *RouteBuilder[Req, Resp]) buildHandlerChain() http.Handler {
 	return h
 }
 
-func (b *RouteBuilder[Req, Resp]) register(method string) {
-	b.target.addRouteSpec(method, b.path, reflect.TypeFor[Req](), reflect.TypeFor[Resp](), b.doc.clone(), b.consumes, b.produces)
-}
-
 func (b *RouteBuilder[Req, Resp]) buildHandler() http.Handler {
 	return pathParamHandlerFunc(func(w http.ResponseWriter, r *http.Request, params pathParamList) {
 		input, ok := b.parseAndValidateInputWithPathParams(w, r, params)
@@ -457,10 +553,96 @@ func (b *RouteBuilder[Req, Resp]) buildHandler() http.Handler {
 
 		writeResponseCookies(w, resp)
 		if server.envelope != nil {
-			server.envelope(w, r, resolveStatusCode(resp), resp, nil, server.codecMgr)
+			server.envelope(w, r, http.StatusOK, resp, nil, server.codecMgr)
 			return
 		}
-		writeResponse(w, r, server, resolveStatusCode(resp), b.produces, b.codecs, resp)
+		writeResponse(w, r, server, http.StatusOK, b.produces, b.codecs, resp)
+	})
+}
+
+func (b *RouteBuilder[Req, Resp]) buildParamsHandler(handler HandlerFunc[Params, Resp]) http.Handler {
+	validator := b.directParamsValidator()
+	return pathParamHandlerFunc(func(w http.ResponseWriter, r *http.Request, params pathParamList) {
+		input, ok := b.parseAndValidateParamsWithPathParams(w, r, params, validator)
+		if !ok {
+			return
+		}
+
+		server := b.target.owner()
+		resp, err := handler(r.Context(), input)
+		if err != nil {
+			if isErrHandled(err) {
+				return
+			}
+			b.writeError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+
+		writeResponseCookies(w, resp)
+		if server.envelope != nil {
+			server.envelope(w, r, http.StatusOK, resp, nil, server.codecMgr)
+			return
+		}
+		writeResponse(w, r, server, http.StatusOK, b.produces, b.codecs, resp)
+	})
+}
+
+func (b *RouteBuilder[Req, Resp]) buildParamsHandlerWithGlobalValidator(handler HandlerFunc[Params, Resp], globalValidator Validator) http.Handler {
+	validator := b.directParamsValidator()
+	return pathParamHandlerFunc(func(w http.ResponseWriter, r *http.Request, params pathParamList) {
+		input, ok := b.parseAndValidateParamsWithPathParams(w, r, params, validator)
+		if !ok || !b.validateDirectParamsWithGlobalValidator(w, r, &input, globalValidator) {
+			return
+		}
+
+		server := b.target.owner()
+		resp, err := handler(r.Context(), input)
+		if err != nil {
+			if isErrHandled(err) {
+				return
+			}
+			b.writeError(w, r, http.StatusInternalServerError, err)
+			return
+		}
+
+		writeResponseCookies(w, resp)
+		if server.envelope != nil {
+			server.envelope(w, r, http.StatusOK, resp, nil, server.codecMgr)
+			return
+		}
+		writeResponse(w, r, server, http.StatusOK, b.produces, b.codecs, resp)
+	})
+}
+
+func (b *RouteBuilder[Req, Resp]) buildParamsHTTPHandler(handler HTTPHandlerFunc[Params]) http.Handler {
+	validator := b.directParamsValidator()
+	return pathParamHandlerFunc(func(w http.ResponseWriter, r *http.Request, params pathParamList) {
+		input, ok := b.parseAndValidateParamsWithPathParams(w, r, params, validator)
+		if !ok {
+			return
+		}
+		if err := handler(w, r, input); err != nil {
+			if isErrHandled(err) {
+				return
+			}
+			b.writeError(w, r, http.StatusInternalServerError, err)
+		}
+	})
+}
+
+func (b *RouteBuilder[Req, Resp]) buildParamsHTTPHandlerWithGlobalValidator(handler HTTPHandlerFunc[Params], globalValidator Validator) http.Handler {
+	validator := b.directParamsValidator()
+	return pathParamHandlerFunc(func(w http.ResponseWriter, r *http.Request, params pathParamList) {
+		input, ok := b.parseAndValidateParamsWithPathParams(w, r, params, validator)
+		if !ok || !b.validateDirectParamsWithGlobalValidator(w, r, &input, globalValidator) {
+			return
+		}
+		if err := handler(w, r, input); err != nil {
+			if isErrHandled(err) {
+				return
+			}
+			b.writeError(w, r, http.StatusInternalServerError, err)
+		}
 	})
 }
 
@@ -493,29 +675,83 @@ func (b *RouteBuilder[Req, Resp]) parseAndValidateInput(w http.ResponseWriter, r
 	return b.parseAndValidateInputWithPathParams(w, r, pathParamList{})
 }
 
-func (b *RouteBuilder[Req, Resp]) parseAndValidateInputWithPathParams(w http.ResponseWriter, r *http.Request, params pathParamList) (Req, bool) {
-	target := b.input.newTarget()
+func (b *RouteBuilder[Req, Resp]) directParamsValidator() routeValidateFunc[Params] {
+	if b.validator == nil {
+		return nil
+	}
+	return any(b.validator).(routeValidateFunc[Params])
+}
+
+func (b *RouteBuilder[Req, Resp]) directParamsGlobalValidator() Validator {
+	server := b.target.owner()
+	if b.skipValidation || server.validator == nil {
+		return nil
+	}
+	if _, defaultValidator := server.validator.(*defaultValidator); defaultValidator {
+		return nil
+	}
+	return server.validator
+}
+
+func (b *RouteBuilder[Req, Resp]) parseAndValidateParamsWithPathParams(w http.ResponseWriter, r *http.Request, params pathParamList, validator routeValidateFunc[Params]) (Params, bool) {
 	server := b.target.owner()
 	if maxBodyBytes := b.effectiveMaxBodyBytes(server); maxBodyBytes > 0 {
 		r = requestWithMaxBodyBytes(w, r, maxBodyBytes)
+	}
+	input := paramsFromRequestWithPathParams(r, server.config, params)
+	if validator != nil {
+		if err := validator(r.Context(), input); err != nil {
+			b.writeError(w, r, http.StatusUnprocessableEntity, mappedValidationError(b.validationError, err))
+			return Params{}, false
+		}
+	}
+
+	return input, true
+}
+
+func (b *RouteBuilder[Req, Resp]) validateDirectParamsWithGlobalValidator(w http.ResponseWriter, r *http.Request, input *Params, validator Validator) bool {
+	if err := validator.Validate(r.Context(), input); err != nil {
+		b.writeError(w, r, http.StatusUnprocessableEntity, err)
+		return false
+	}
+	return true
+}
+
+func (b *RouteBuilder[Req, Resp]) parseAndValidateInputWithPathParams(w http.ResponseWriter, r *http.Request, params pathParamList) (Req, bool) {
+	server := b.target.owner()
+	if maxBodyBytes := b.effectiveMaxBodyBytes(server); maxBodyBytes > 0 {
+		r = requestWithMaxBodyBytes(w, r, maxBodyBytes)
+	}
+	var (
+		target any
+		input  Req
+	)
+	if b.input.directParams {
+		input = any(paramsFromRequestWithPathParams(r, server.config, params)).(Req)
+		target = input
+	} else {
+		target = b.input.newTarget()
 	}
 	if err := validateRequestContentType(r, target, b.consumes); err != nil {
 		b.writeError(w, r, http.StatusUnsupportedMediaType, err)
 		var zero Req
 		return zero, false
 	}
-	if err := parseInputWithConfigAndPathParams(r, target, server.config, params); err != nil {
-		code := http.StatusBadRequest
-		if isRequestBodyTooLarge(err) {
-			code = http.StatusRequestEntityTooLarge
-			err = Err(code, ErrRequestBodyTooLarge.Error(), WithCause(err))
+	if !b.input.directParams {
+		if err := parseInputWithConfigAndPathParams(r, target, server.config, params); err != nil {
+			code := http.StatusBadRequest
+			if isRequestBodyTooLarge(err) {
+				code = http.StatusRequestEntityTooLarge
+				err = Err(code, ErrRequestBodyTooLarge.Error(), WithCause(err))
+			}
+			b.writeError(w, r, code, err)
+			var zero Req
+			return zero, false
 		}
-		b.writeError(w, r, code, err)
-		var zero Req
-		return zero, false
 	}
-
-	input := b.input.finish(target)
+	if !b.input.directParams {
+		input = b.input.finish(target)
+	}
 	if b.validator != nil {
 		if err := b.validator(r.Context(), input); err != nil {
 			b.writeError(w, r, http.StatusUnprocessableEntity, mappedValidationError(b.validationError, err))
@@ -639,14 +875,23 @@ func isHTTPMethodToken(method string) bool {
 }
 
 func (b *RouteBuilder[Req, Resp]) writeError(w http.ResponseWriter, r *http.Request, defaultCode int, err error) {
+	if b.target.owner().dispatchError(w, r, defaultCode, err) {
+		return
+	}
 	writeErrorWithCodec(w, r, b.target.owner(), defaultCode, err, b.produces, b.codecs)
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, s *Server, defaultCode int, err error) {
+	if s.dispatchError(w, r, defaultCode, err) {
+		return
+	}
 	writeErrorWithCodec(w, r, s, defaultCode, err, nil, nil)
 }
 
 func writeErrorWithCodec(w http.ResponseWriter, r *http.Request, s *Server, defaultCode int, err error, produces []string, codecs []responseCodec) {
+	if responseErrorWriteBlocked(r) {
+		return
+	}
 	if s == nil {
 		http.Error(w, err.Error(), statusCodeFromError(defaultCode, err))
 		return
@@ -660,7 +905,10 @@ func writeErrorWithCodec(w http.ResponseWriter, r *http.Request, s *Server, defa
 		return
 	}
 	code := statusCodeFromError(defaultCode, err)
-	body := HTTPError{Code: code, Message: err.Error()}
+	body := HTTPError{Code: code, Message: http.StatusText(code), Err: err}
+	if code < http.StatusInternalServerError {
+		body.Message = err.Error()
+	}
 	if he := AsError(err); he != nil {
 		body = *he
 	}

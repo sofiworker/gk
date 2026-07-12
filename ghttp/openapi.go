@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-// OpenAPI builds an OpenAPI 3.1 document from route metadata.
-type OpenAPI struct {
+// openAPIBuilder builds an OpenAPI 3.1 document from route metadata.
+type openAPIBuilder struct {
 	title   string
 	version string
 	paths   map[string]map[string]*operation
@@ -51,15 +51,15 @@ type response struct {
 	Content     map[string]*mediaType `json:"content,omitempty"`
 }
 
-func NewOpenAPI(title, version string) *OpenAPI {
-	return &OpenAPI{
+func newOpenAPIBuilder(title, version string) *openAPIBuilder {
+	return &openAPIBuilder{
 		title:   title,
 		version: version,
 		paths:   make(map[string]map[string]*operation),
 	}
 }
 
-func (o *OpenAPI) AddRoute(method, path string, reqType, respType reflect.Type, doc RouteDoc, consumes, produces []string) {
+func (o *openAPIBuilder) addRoute(method, path string, reqType, respType reflect.Type, doc RouteDoc, consumes, produces []string) {
 	if o == nil {
 		return
 	}
@@ -127,7 +127,7 @@ func (o *OpenAPI) AddRoute(method, path string, reqType, respType reflect.Type, 
 	o.paths[openapiPath][method] = op
 }
 
-func (o *OpenAPI) Build() []byte {
+func (o *openAPIBuilder) build() []byte {
 	doc := map[string]interface{}{
 		"openapi": "3.1.0",
 		"info": map[string]string{

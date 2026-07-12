@@ -76,7 +76,7 @@ func TestGzipUtil(t *testing.T) {
 	if _, err := gz.Decompress([]byte("invalid")); err == nil {
 		t.Error("expected error decompressing invalid data")
 	}
-	
+
 	// Boundary: IsGzipped
 	if gz.IsGzipped([]byte("a")) {
 		t.Error("IsGzipped true for short data")

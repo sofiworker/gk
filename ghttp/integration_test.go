@@ -145,7 +145,7 @@ func TestIntegration_NotFound(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	// Default RadixRouter returns 404 when the method exists but the path does not.
+	// The compiled matcher returns 404 when the requested path does not exist.
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 

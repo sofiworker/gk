@@ -19,10 +19,10 @@ func NewValkeyCache(opts ...Option) (*ValkeyCache, error) {
 	}
 
 	vopt := valkey.ClientOption{
-		InitAddress:         []string{options.Address},
-		Password:            options.Password,
-		SelectDB:            options.DB,
-		BlockingPoolSize:    options.PoolSize,
+		InitAddress:      []string{options.Address},
+		Password:         options.Password,
+		SelectDB:         options.DB,
+		BlockingPoolSize: options.PoolSize,
 		Dialer: net.Dialer{
 			Timeout: options.DialTimeout,
 		},

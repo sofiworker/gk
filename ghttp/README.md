@@ -10,7 +10,7 @@
 - **显式输入读取** — `Params` 读取 path/query/header/cookie，`Body` 字段解析请求体
 - **内容协商** — `Accept` 驱动响应 Codec，`Consumes` 约束请求 `Content-Type`
 - **灵活输出** — 支持响应体结构体和自定义 Envelope 包装（code/msg/data 模式）
-- **路由器可插拔** — 内建高性能 Radix 树路由器和 Go 1.22+ `http.ServeMux` 适配
+- **内建路由匹配** — 唯一的 method-first matcher，支持静态、参数与 catch-all 路径
 - **OpenAPI 3.1** — 从路由元数据自动生成 JSON Schema 和 OAS 文档
 - **WebSocket / SSE** — 服务端推送和双向通信
 - **模板渲染** — 集成 Go 模板引擎，路由级 `ToHTML()`
@@ -132,7 +132,7 @@ _, err = io.Copy(dst, streamResp.RawBody())
 | `.Consumes(contentTypes...)` | 声明可自动解析的请求 Content-Type，可在 server/group/route 上声明 |
 | `.MaxBodyBytes(n)` | 覆盖当前路由自动解析请求体的大小上限；`n <= 0` 表示不限制 |
 | `.Produces(contentTypes...)` | 自动响应编码的 Content-Type，可在 server/group/route 上声明 |
-| `.To(handler)` | 注册处理函数，配置错误会在 `Run` / `Serve` / 首次 `ServeHTTP` 时 panic |
+| To(handler) | 注册类型化处理函数，配置错误在终结调用处立即 panic |
 
 ### 路由参数
 
@@ -142,11 +142,11 @@ _, err = io.Copy(dst, streamResp.RawBody())
 - `{path...}` — 通配符（匹配剩余路径）
 
 ```go
-ghttp.Route[Req, Resp](s).GET("/users/{id}").To(handler)      // RadixRouter
+ghttp.Route[Req, Resp](s).GET("/users/{id}").To(handler)      // 命名参数
 ghttp.Route[Req, Resp](s).GET("/files/{path...}").To(handler)  // 通配符
 ```
 
-旧的 `:param` / `*path` 语法仍然兼容，但注册时会输出 warning；新代码应统一使用 `{param}` / `{path...}`。
+旧的 :param 和 *path 语法已删除；使用 {param} 和 {path...}。
 
 ### 输入结构体
 
@@ -220,7 +220,7 @@ type Input struct {
 }
 ```
 
-`Route[*ghttp.Params, Resp]`、`Params ghttp.Params` 命名字段、`*ghttp.Params` 匿名指针字段、间接嵌入 `Params` 都会在 `Run` / `Serve` / 首次 `ServeHTTP` 时 panic，panic error 可用 `errors.Is(err, ghttp.ErrInvalidParamsUsage)` 判断。
+`Route[*ghttp.Params, Resp]`、`Params ghttp.Params` 命名字段、`*ghttp.Params` 匿名指针字段、间接嵌入 `Params` 都属于路由配置错误：对应 `To*` 终结调用会立即 panic，panic error 可用 `errors.Is(err, ghttp.ErrInvalidParamsUsage)` 判断。
 
 ### 输出
 
@@ -356,11 +356,10 @@ ghttp.Route[NoInput, NoOutput](s).GET("/page").Produces(ghttp.MIMEJSON, ghttp.MI
 
 ### OpenAPI 文档
 
-自动生成，通过 `To()` 方法收集路由元数据构建。
+使用 WithOpenAPI 启用可选的 best-effort 文档。Server.OpenAPI 从当前 routeDefinition 快照生成独立 JSON 字节，不会冻结 Server 或改变运行时语义。默认 HTTP endpoint 是 /openapi.json；WithOpenAPIPath 空路径只关闭 HTTP 暴露。CONNECT 和 CUSTOM 使用 x-ghttp-methods 扩展。
 
 ```go
-// 挂载 OpenAPI JSON 端点
-ghttp.Route[struct{}, struct{}](s).GET("/openapi.json").ToHTTP(handler)
+document, err := s.OpenAPI()
 ```
 
 ### 验证器
@@ -382,14 +381,15 @@ s = ghttp.New(ghttp.WithValidator(&validator{}))
 
 ## 路由引擎
 
-`ghttp` 支持两种路由器实现：
+Server 使用唯一的未导出 method-first matcher。没有 Router、WithRouter 或 Server.Router；路由只通过 Route[Req, Resp](serverOrGroup).METHOD(path).To 注册。
 
-| 路由器 | 说明 |
-|--------|------|
-| `RadixRouter`（默认） | 三阶段 Radix 树（静态/参数/通配符），高性能 |
-| `StdRouter` | 适配 Go 1.22+ 标准库 `http.ServeMux` |
+首次服务入口冻结路由表。默认尾斜杠不敏感，WithStrictRouting 下尾斜杠不同；OPTIONS 不自动返回 204；HEAD 优先匹配显式 HEAD，否则回退 GET 并抑制 body。
 
-通过 `WithRouter(RadixRouter)` / `WithRouter(StdRouter)` 切换。
+只支持 {param} 与 {path...}。旧 :param 和 *path 路径立即报配置错误。请求路径不清洗、不重定向；双斜杠、dot segment 和非法百分号转义返回 400。{path...} 可以匹配零段。
+
+中间件顺序固定为内建 Recovery、Server、父 Group、子 Group、Route、Handler。这与 Gin 和 Fiber 等按注册时机嵌套的常见模型不同。Server middleware 同时覆盖成功、400、404、405 和 OpenAPI endpoint。
+
+类型化 To 成功状态固定为 200。需要 201、202 或 204 时使用 ToHTTP、ToRaw、ToHTTPFunc 或其他自写响应终结器。ToHTTP 与 ToRaw 得到原始 request；ghttp 不设置 PathValue 或把捕获参数注入 context。
 
 ---
 
@@ -398,7 +398,6 @@ s = ghttp.New(ghttp.WithValidator(&validator{}))
 ```go
 s := ghttp.New(
     ghttp.WithAddress(":8080"),                              // 监听地址
-    ghttp.WithRouter(ghttp.NewRadixRouter()),                // 路由器
     ghttp.WithValidator(myValidator),                        // 验证器
     ghttp.WithEnvelope(myEnvelope),                          // Envelope 函数
     ghttp.WithConsumes(ghttp.MIMEJSON),                      // 默认请求 Content-Type
@@ -449,15 +448,12 @@ ghttp/
 ├── middleware.go     # 内建中间件
 ├── openapi.go        # OpenAPI 3.1 生成
 ├── output.go         # 响应输出与 Envelope
-├── radix.go          # Radix 树实现
-├── radix_router.go   # RadixRouter
 ├── render.go         # 模板渲染
-├── router.go         # Router 接口
 ├── schema.go         # JSON Schema 生成
 ├── server.go         # Server 核心
 ├── sse.go            # SSE 支持
 ├── static.go         # 静态文件服务
-├── std_router.go     # StdRouter（net/http ServeMux）
+├── internal/legacyrouter # 临时性能基线，不属于公开 API
 ├── upload.go         # FileHeader（文件上传）
 ├── util.go           # 工具函数
 ├── validate.go       # Validator 接口

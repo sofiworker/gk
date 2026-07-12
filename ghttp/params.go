@@ -84,10 +84,6 @@ func paramsFromRequestWithPathParams(r *http.Request, c *Config, routeParams pat
 	}}
 	if routeParams.Len() > 0 {
 		p.path = routeParams
-	} else if m := pathParams(r); len(m) > 0 {
-		for key, value := range m {
-			p.path.Add(key, value)
-		}
 	}
 	return p
 }

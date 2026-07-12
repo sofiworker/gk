@@ -259,8 +259,7 @@ func (h *LinuxHandle) readTPacket() (*Packet, error) {
 
 		// packet pointer within block
 		blockStart := r.blockIdx * r.blockSize
-		ptr := uintptr(unsafe.Pointer(&r.data[blockStart])) + uintptr(r.pktOffset)
-		pktHdr := (*unix.Tpacket3Hdr)(unsafe.Pointer(ptr))
+		pktHdr := (*unix.Tpacket3Hdr)(unsafe.Add(unsafe.Pointer(&r.data[blockStart]), uintptr(r.pktOffset)))
 
 		if pktHdr.Status&unix.TP_STATUS_USER == 0 {
 			// should not happen, retry

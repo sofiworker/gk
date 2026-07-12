@@ -1,0 +1,293 @@
+package ghttp
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+)
+
+// OpenAPI returns a best-effort OpenAPI 3.1 document for the route definitions
+// visible when the method is called. It never freezes the Server.
+func (s *Server) OpenAPI() ([]byte, error) {
+	if !s.config.openAPIEnabled {
+		return nil, ErrOpenAPIDisabled
+	}
+
+	return compileOpenAPI(s.registry.snapshot(), s.config.openAPITitle, s.config.openAPIVersion)
+}
+
+func compileOpenAPI(definitions []routeDefinition, title, version string) ([]byte, error) {
+	paths := make(map[string]map[string]any)
+	for _, definition := range definitions {
+		if definition.internal {
+			continue
+		}
+
+		path := openAPIPathForPattern(definition.pattern)
+		pathItem := paths[path]
+		if pathItem == nil {
+			pathItem = make(map[string]any)
+			paths[path] = pathItem
+		}
+
+		operation := openAPIOperationForDefinition(definition)
+		if isOpenAPIPathMethod(definition.method) {
+			pathItem[strings.ToLower(definition.method)] = operation
+			continue
+		}
+
+		methods, _ := pathItem["x-ghttp-methods"].(map[string]any)
+		if methods == nil {
+			methods = make(map[string]any)
+			pathItem["x-ghttp-methods"] = methods
+		}
+		methods[definition.method] = operation
+	}
+
+	for _, pathItem := range paths {
+		get, hasGet := pathItem[strings.ToLower(http.MethodGet)]
+		if !hasGet {
+			continue
+		}
+		if _, hasHead := pathItem[strings.ToLower(http.MethodHead)]; hasHead {
+			continue
+		}
+		pathItem[strings.ToLower(http.MethodHead)] = openAPIHeadOperation(get.(map[string]any))
+	}
+
+	document := map[string]any{
+		"openapi": "3.1.0",
+		"info": map[string]any{
+			"title":   title,
+			"version": version,
+		},
+		"paths": paths,
+	}
+	return json.Marshal(document)
+}
+
+func isOpenAPIPathMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodPut, http.MethodPost, http.MethodDelete, http.MethodOptions, http.MethodHead, http.MethodPatch, http.MethodTrace:
+		return true
+	default:
+		return false
+	}
+}
+
+func openAPIPathForPattern(pattern routePattern) string {
+	if len(pattern.segments) == 0 {
+		return "/"
+	}
+
+	segments := make([]string, len(pattern.segments))
+	for index, segment := range pattern.segments {
+		switch segment.kind {
+		case routeSegmentParameter, routeSegmentCatchAll:
+			segments[index] = "{" + segment.value + "}"
+		default:
+			segments[index] = openAPIStaticSegment(segment.value)
+		}
+	}
+	path := "/" + strings.Join(segments, "/")
+	if pattern.trailing {
+		return path + "/"
+	}
+	return path
+}
+
+func openAPIStaticSegment(segment string) string {
+	return url.PathEscape(segment)
+}
+
+func openAPIOperationForDefinition(definition routeDefinition) map[string]any {
+	op := make(map[string]any)
+	if definition.doc.Summary != "" {
+		op["summary"] = definition.doc.Summary
+	}
+	if definition.doc.Description != "" {
+		op["description"] = definition.doc.Description
+	}
+	if definition.doc.OperationID != "" {
+		op["operationId"] = definition.doc.OperationID
+	}
+	if len(definition.doc.Tags) > 0 {
+		op["tags"] = append([]string(nil), definition.doc.Tags...)
+	}
+	if definition.doc.Deprecated {
+		op["deprecated"] = true
+	}
+	if definition.doc.ExternalDocs != nil {
+		op["externalDocs"] = definition.doc.ExternalDocs
+	}
+	if definition.doc.Success != nil {
+		op["x-ghttp-success"] = definition.doc.Success
+	}
+	if len(definition.doc.Errors) > 0 {
+		op["x-ghttp-errors"] = append([]DocMessage(nil), definition.doc.Errors...)
+	}
+	if definition.doc.DeprecatedReason != "" {
+		op["x-ghttp-deprecated-reason"] = definition.doc.DeprecatedReason
+	}
+	if definition.doc.Sunset != "" {
+		op["x-ghttp-sunset"] = definition.doc.Sunset
+	}
+
+	if parameters := openAPIParametersForDefinition(definition); len(parameters) > 0 {
+		op["parameters"] = parameters
+	}
+	if bodySchema := extractBodySchema(definition.reqType); bodySchema != nil {
+		contentTypes := definition.consumes
+		if len(contentTypes) == 0 {
+			contentTypes = []string{MIMEJSON}
+		}
+		content := make(map[string]any, len(contentTypes))
+		for _, contentType := range contentTypes {
+			content[contentType] = map[string]any{"schema": bodySchema}
+		}
+		op["requestBody"] = map[string]any{"required": true, "content": content}
+	}
+
+	responses := openAPIResponsesForDefinition(definition)
+	op["responses"] = responses
+	if definition.terminal == routeTerminalWebSocket {
+		op["x-ghttp-websocket"] = true
+	}
+	return op
+}
+
+func openAPIParametersForDefinition(definition routeDefinition) []any {
+	parameters := make([]any, 0)
+	known := make(map[string]struct{})
+	pathParameters := make(map[string]map[string]any)
+	for _, parameter := range append(append(append(extractParametersFromType(definition.reqType, "path", true), extractParametersFromType(definition.reqType, "query", false)...), extractParametersFromType(definition.reqType, "header", false)...), extractParametersFromType(definition.reqType, "cookie", false)...) {
+		rendered := openAPIParameter(parameter)
+		parameters = append(parameters, rendered)
+		known[parameter.In+"\x00"+parameter.Name] = struct{}{}
+		if parameter.In == "path" {
+			pathParameters[parameter.Name] = rendered
+		}
+	}
+	for _, segment := range definition.pattern.segments {
+		if segment.kind != routeSegmentParameter && segment.kind != routeSegmentCatchAll {
+			continue
+		}
+		key := "path\x00" + segment.value
+		if _, exists := known[key]; exists {
+			if segment.kind == routeSegmentCatchAll {
+				pathParameters[segment.value]["x-ghttp-catch-all"] = true
+			}
+			continue
+		}
+		parameter := map[string]any{
+			"name":     segment.value,
+			"in":       "path",
+			"required": true,
+			"schema":   map[string]any{"type": "string"},
+		}
+		if segment.kind == routeSegmentCatchAll {
+			parameter["x-ghttp-catch-all"] = true
+		}
+		parameters = append(parameters, parameter)
+	}
+	return parameters
+}
+
+func openAPIParameter(parameter *parameter) map[string]any {
+	result := map[string]any{
+		"name":   parameter.Name,
+		"in":     parameter.In,
+		"schema": parameter.Schema,
+	}
+	if parameter.Description != "" {
+		result["description"] = parameter.Description
+	}
+	if parameter.Required {
+		result["required"] = true
+	}
+	return result
+}
+
+func openAPIResponsesForDefinition(definition routeDefinition) map[string]any {
+	if definition.method == http.MethodHead {
+		return openAPIHeadResponses(openAPIResponsesForTerminal(definition))
+	}
+	return openAPIResponsesForTerminal(definition)
+}
+
+func openAPIResponsesForTerminal(definition routeDefinition) map[string]any {
+	switch definition.terminal {
+	case routeTerminalTyped:
+		description := "OK"
+		if definition.doc.Success != nil && definition.doc.Success.Message != "" {
+			description = definition.doc.Success.Message
+		}
+		response := map[string]any{"description": description}
+		if definition.respType != nil && len(definition.produces) > 0 {
+			content := make(map[string]any, len(definition.produces))
+			for _, contentType := range definition.produces {
+				content[contentType] = map[string]any{"schema": generateSchema(definition.respType)}
+			}
+			response["content"] = content
+		}
+		return map[string]any{strconv.Itoa(http.StatusOK): response}
+	case routeTerminalRedirect:
+		status := definition.responseStatus
+		if status < http.StatusMultipleChoices || status >= http.StatusBadRequest {
+			return openAPIDefaultResponse()
+		}
+		return map[string]any{strconv.Itoa(status): map[string]any{
+			"description": http.StatusText(status),
+			"headers":     map[string]any{"Location": map[string]any{"schema": map[string]any{"type": "string"}}},
+		}}
+	case routeTerminalHTML:
+		status := definition.responseStatus
+		if status == 0 {
+			status = http.StatusOK
+		}
+		return map[string]any{strconv.Itoa(status): map[string]any{
+			"description": http.StatusText(status),
+			"content":     map[string]any{"text/html": map[string]any{"schema": map[string]any{"type": "string"}}},
+		}}
+	case routeTerminalSSE:
+		return map[string]any{strconv.Itoa(http.StatusOK): map[string]any{
+			"description": "Server-sent event stream",
+			"content":     map[string]any{"text/event-stream": map[string]any{"schema": map[string]any{"type": "string"}}},
+		}}
+	case routeTerminalWebSocket:
+		return map[string]any{strconv.Itoa(http.StatusSwitchingProtocols): map[string]any{"description": "WebSocket upgrade"}}
+	default:
+		return openAPIDefaultResponse()
+	}
+}
+
+func openAPIDefaultResponse() map[string]any {
+	return map[string]any{"default": map[string]any{"description": "Response written by handler"}}
+}
+
+func openAPIHeadOperation(operation map[string]any) map[string]any {
+	cloned := cloneOpenAPIValue(operation).(map[string]any)
+	cloned["responses"] = openAPIHeadResponses(cloned["responses"].(map[string]any))
+	return cloned
+}
+
+func openAPIHeadResponses(responses map[string]any) map[string]any {
+	cloned := cloneOpenAPIValue(responses).(map[string]any)
+	for _, value := range cloned {
+		response, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		delete(response, "content")
+	}
+	return cloned
+}
+
+func cloneOpenAPIValue(value any) any {
+	encoded, _ := json.Marshal(value)
+	var cloned any
+	_ = json.Unmarshal(encoded, &cloned)
+	return cloned
+}

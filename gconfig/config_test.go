@@ -196,7 +196,7 @@ func TestUnmarshalError(t *testing.T) {
 	// Unmarshal 应该失败，因为 port 字段类型不匹配
 	err = loader.Unmarshal(&cfg, WithWeaklyTypedInput(false)) // 禁用弱类型转换以确保失败
 	assert.Error(err)
-		assert.Contains(err.Error(), "cannot parse 'database.port' as int")
+	assert.Contains(err.Error(), "cannot parse 'database.port' as int")
 }
 
 func TestUnmarshalImplicitLoad(t *testing.T) {

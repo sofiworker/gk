@@ -1,6 +1,7 @@
 package ghttp
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -56,35 +57,19 @@ func TestErrorConstruction(t *testing.T) {
 	}
 }
 
-type statusCodeOutput struct {
-	Code int
-}
-
-func (o statusCodeOutput) StatusCode() int {
-	return o.Code
-}
-
-func TestResolveStatusCodeUsesStatusCoder(t *testing.T) {
-	if got := resolveStatusCode(statusCodeOutput{Code: http.StatusCreated}); got != http.StatusCreated {
-		t.Fatalf("status = %d, want %d", got, http.StatusCreated)
-	}
-	if got := resolveStatusCode(statusCodeOutput{}); got != http.StatusOK {
-		t.Fatalf("zero status = %d, want %d", got, http.StatusOK)
-	}
-}
-
-func TestResolveStatusCodeUsesCachedStatusField(t *testing.T) {
+func TestTypedRouteAlwaysWritesOK(t *testing.T) {
 	type response struct {
 		Status int
 	}
 
-	if got := resolveStatusCode(&response{Status: http.StatusAccepted}); got != http.StatusAccepted {
-		t.Fatalf("status = %d, want %d", got, http.StatusAccepted)
-	}
-	if got := resolveStatusCode(&response{}); got != http.StatusOK {
-		t.Fatalf("zero status = %d, want %d", got, http.StatusOK)
-	}
-	if got := resolveStatusCode((*response)(nil)); got != http.StatusOK {
-		t.Fatalf("nil status = %d, want %d", got, http.StatusOK)
+	server := New(WithProduces(MIMEJSON))
+	Route[struct{}, response](server).GET("/created").To(func(context.Context, struct{}) (response, error) {
+		return response{Status: http.StatusCreated}, nil
+	})
+
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/created", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
 	}
 }

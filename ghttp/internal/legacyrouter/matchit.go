@@ -1,4 +1,4 @@
-package ghttp
+package legacyrouter
 
 import (
 	"fmt"
@@ -7,10 +7,8 @@ import (
 	"strings"
 )
 
-// MatchitRouter is an experimental Router inspired by byte-prefix radix
-// routers such as matchit and httprouter. It is intentionally separate from
-// RadixRouter so their behavior and benchmarks can be compared directly.
-type MatchitRouter struct {
+// Matchit is the frozen pre-rebuild byte-prefix radix router.
+type Matchit struct {
 	methods map[string]*matchitMethod
 }
 
@@ -35,8 +33,9 @@ type matchitRoutePart struct {
 	text string
 }
 
-func NewMatchitRouter() *MatchitRouter {
-	return &MatchitRouter{methods: make(map[string]*matchitMethod)}
+// NewMatchit creates a frozen-baseline byte-prefix radix router.
+func NewMatchit() *Matchit {
+	return &Matchit{methods: make(map[string]*matchitMethod)}
 }
 
 func newMatchitMethod() *matchitMethod {
@@ -47,30 +46,32 @@ func newMatchitMethod() *matchitMethod {
 	}
 }
 
-func (r *MatchitRouter) Register(method, path string, handler http.Handler) error {
+// Register adds one handler using the historical byte-prefix registration
+// path.
+func (r *Matchit) Register(method, path string, handler http.Handler) error {
 	method = strings.ToUpper(method)
 	m := r.methods[method]
 	if m == nil {
 		m = newMatchitMethod()
 		r.methods[method] = m
 	}
-
 	path = normalizeRoutePath(path)
 	if _, exists := m.paths[path]; exists {
 		return fmt.Errorf("%w: route %s already registered", ErrConflict, path)
 	}
 	m.paths[path] = struct{}{}
-
 	entry := newRouteEntry(path, handler)
-	hasParam := strings.Contains(path, ":")
-	hasWildcard := strings.Contains(path, "*")
-	if !hasParam && !hasWildcard {
+	if !strings.Contains(path, ":") && !strings.Contains(path, "*") {
 		m.static[path] = entry
 		return nil
 	}
-
 	m.insert(path, entry)
 	return nil
+}
+
+// RegisterWithPathParams adds a handler that receives extracted path values.
+func (r *Matchit) RegisterWithPathParams(method, path string, handler PathParamHandler) error {
+	return registerWithPathParams(r.Register, method, path, handler)
 }
 
 func (m *matchitMethod) insert(path string, entry *routeEntry) {
@@ -102,7 +103,6 @@ func matchitRouteParts(path string) []matchitRoutePart {
 	if len(segments) == 0 {
 		return nil
 	}
-
 	parts := make([]matchitRoutePart, 0, len(segments))
 	var static strings.Builder
 	flushStatic := func() {
@@ -112,7 +112,6 @@ func matchitRouteParts(path string) []matchitRoutePart {
 		parts = append(parts, matchitRoutePart{kind: "static", text: static.String()})
 		static.Reset()
 	}
-
 	for _, segment := range segments {
 		switch {
 		case strings.HasPrefix(segment, ":"):
@@ -148,7 +147,6 @@ func (n *matchitNode) insertStatic(prefix string) *matchitNode {
 	if n.staticChild == nil {
 		n.staticChild = make(map[byte]*matchitNode)
 	}
-
 	child := n.staticChild[prefix[0]]
 	if child == nil {
 		child = &matchitNode{prefix: prefix}
@@ -160,18 +158,15 @@ func (n *matchitNode) insertStatic(prefix string) *matchitNode {
 	if common == len(child.prefix) {
 		return child.insertStatic(prefix[common:])
 	}
-
 	old := *child
 	old.prefix = child.prefix[common:]
 	*child = matchitNode{
 		prefix:      child.prefix[:common],
 		staticChild: map[byte]*matchitNode{old.prefix[0]: &old},
 	}
-
 	if common == len(prefix) {
 		return child
 	}
-
 	next := &matchitNode{prefix: prefix[common:]}
 	child.staticChild[next.prefix[0]] = next
 	return next
@@ -189,15 +184,11 @@ func commonPrefixLen(a, b string) int {
 	return i
 }
 
-func (r *MatchitRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	method := req.Method
-	path := strings.TrimRight(req.URL.Path, "/")
-	if path == "" {
-		path = "/"
-	}
-
-	var params pathParamList
-	if method == http.MethodHead {
+// ServeHTTP retains the historical byte-prefix lookup and method handling.
+func (r *Matchit) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	path := normalizedRequestPath(req.URL.Path)
+	var params PathParams
+	if req.Method == http.MethodHead {
 		if entry := r.lookup(http.MethodHead, path, &params); entry != nil {
 			serveRouteEntry(headResponseWriter{ResponseWriter: w}, req, entry, params)
 			return
@@ -206,11 +197,10 @@ func (r *MatchitRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			serveRouteEntry(headResponseWriter{ResponseWriter: w}, req, entry, params)
 			return
 		}
-	} else if entry := r.lookup(method, path, &params); entry != nil {
+	} else if entry := r.lookup(req.Method, path, &params); entry != nil {
 		serveRouteEntry(w, req, entry, params)
 		return
 	}
-
 	allowed := r.allowedMethods(path)
 	if len(allowed) > 0 {
 		w.Header().Set("Allow", strings.Join(allowed, ", "))
@@ -220,7 +210,7 @@ func (r *MatchitRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }
 
-func (r *MatchitRouter) lookup(method, path string, params *pathParamList) *routeEntry {
+func (r *Matchit) lookup(method, path string, params *PathParams) *routeEntry {
 	m := r.methods[method]
 	if m == nil {
 		params.Reset()
@@ -229,12 +219,11 @@ func (r *MatchitRouter) lookup(method, path string, params *pathParamList) *rout
 	return m.lookup(path, params)
 }
 
-func (m *matchitMethod) lookup(path string, params *pathParamList) *routeEntry {
+func (m *matchitMethod) lookup(path string, params *PathParams) *routeEntry {
 	if entry := m.static[path]; entry != nil {
 		params.Reset()
 		return entry
 	}
-
 	params.Reset()
 	if entry := m.root.lookup(path, 0, params); entry != nil {
 		return entry
@@ -243,7 +232,7 @@ func (m *matchitMethod) lookup(path string, params *pathParamList) *routeEntry {
 	return nil
 }
 
-func (n *matchitNode) lookup(path string, index int, params *pathParamList) *routeEntry {
+func (n *matchitNode) lookup(path string, index int, params *PathParams) *routeEntry {
 	if n.prefix != "" {
 		if len(path[index:]) < len(n.prefix) || path[index:index+len(n.prefix)] != n.prefix {
 			return nil
@@ -253,7 +242,6 @@ func (n *matchitNode) lookup(path string, index int, params *pathParamList) *rou
 	if index == len(path) {
 		return n.entry
 	}
-
 	if n.staticChild != nil {
 		if child := n.staticChild[path[index]]; child != nil {
 			if entry := child.lookup(path, index, params); entry != nil {
@@ -261,7 +249,6 @@ func (n *matchitNode) lookup(path string, index int, params *pathParamList) *rou
 			}
 		}
 	}
-
 	if n.paramChild != nil {
 		end := index
 		for end < len(path) && path[end] != '/' {
@@ -276,18 +263,16 @@ func (n *matchitNode) lookup(path string, index int, params *pathParamList) *rou
 			params.Truncate(paramLen)
 		}
 	}
-
 	if n.wildcardChild != nil {
 		params.Add(n.wildcardChild.wildcardName, remainingPath(path, index))
 		return n.wildcardChild.entry
 	}
-
 	return nil
 }
 
-func (r *MatchitRouter) allowedMethods(path string) []string {
+func (r *Matchit) allowedMethods(path string) []string {
 	seen := make(map[string]struct{})
-	var allowed []string
+	allowed := make([]string, 0, len(r.methods))
 	add := func(method string) {
 		if _, ok := seen[method]; ok {
 			return
@@ -295,9 +280,8 @@ func (r *MatchitRouter) allowedMethods(path string) []string {
 		seen[method] = struct{}{}
 		allowed = append(allowed, method)
 	}
-
 	for _, method := range allHTTPMethods {
-		var params pathParamList
+		var params PathParams
 		if r.lookup(method, path, &params) == nil {
 			continue
 		}
@@ -306,13 +290,12 @@ func (r *MatchitRouter) allowedMethods(path string) []string {
 			add(http.MethodHead)
 		}
 	}
-
 	var custom []string
 	for method := range r.methods {
 		if _, ok := seen[method]; ok || isStandardHTTPMethod(method) {
 			continue
 		}
-		var params pathParamList
+		var params PathParams
 		if r.lookup(method, path, &params) != nil {
 			custom = append(custom, method)
 		}
@@ -321,6 +304,5 @@ func (r *MatchitRouter) allowedMethods(path string) []string {
 	for _, method := range custom {
 		add(method)
 	}
-
 	return allowed
 }

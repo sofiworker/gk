@@ -244,7 +244,7 @@ func Timeout(d time.Duration) Middleware {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx, cancel := context.WithTimeout(r.Context(), d)
 			defer cancel()
-			rec := newTimeoutResponseWriter()
+			rec := newTimeoutResponseWriter(responseWriteStateFromRequest(r))
 			done := make(chan struct{})
 			panicCh := make(chan interface{}, 1)
 			go func() {
@@ -267,6 +267,7 @@ func Timeout(d time.Duration) Middleware {
 			case rec := <-panicCh:
 				panic(rec)
 			case <-ctx.Done():
+				rec.state.clearBuffered()
 				if server := serverFromRequest(r); server != nil {
 					writeError(w, r, server, http.StatusGatewayTimeout, Err(http.StatusGatewayTimeout, http.StatusText(http.StatusGatewayTimeout)))
 					return
@@ -283,10 +284,11 @@ type timeoutResponseWriter struct {
 	body   bytes.Buffer
 	status int
 	wrote  bool
+	state  *responseWriteState
 }
 
-func newTimeoutResponseWriter() *timeoutResponseWriter {
-	return &timeoutResponseWriter{header: make(http.Header)}
+func newTimeoutResponseWriter(state *responseWriteState) *timeoutResponseWriter {
+	return &timeoutResponseWriter{header: make(http.Header), state: state}
 }
 
 func (w *timeoutResponseWriter) Header() http.Header {
@@ -299,6 +301,7 @@ func (w *timeoutResponseWriter) Write(data []byte) (int, error) {
 	if !w.wrote {
 		w.status = http.StatusOK
 		w.wrote = true
+		w.state.markBuffered()
 	}
 	return w.body.Write(data)
 }
@@ -311,6 +314,7 @@ func (w *timeoutResponseWriter) WriteHeader(status int) {
 	}
 	w.status = status
 	w.wrote = true
+	w.state.markBuffered()
 }
 
 func (w *timeoutResponseWriter) WriteTo(dst http.ResponseWriter) {
@@ -320,6 +324,7 @@ func (w *timeoutResponseWriter) WriteTo(dst http.ResponseWriter) {
 	status := w.status
 	wrote := w.wrote
 	w.mu.Unlock()
+	w.state.clearBuffered()
 
 	for key, values := range header {
 		dst.Header()[key] = append([]string(nil), values...)

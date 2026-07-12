@@ -19,35 +19,8 @@ import (
 	"time"
 )
 
-type recordingRouter struct {
-	registered []registeredRoute
-	handler    http.Handler
-}
-
-type registeredRoute struct {
-	method string
-	path   string
-}
-
 type standardMethodOutput struct {
 	Method string `json:"method"`
-}
-
-func (r *recordingRouter) Register(method, path string, handler http.Handler) error {
-	r.registered = append(r.registered, registeredRoute{method: method, path: path})
-	if path == "/openapi.json" {
-		r.handler = handler
-	}
-	return nil
-}
-
-func (r *recordingRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if r.handler != nil && req.URL.Path == "/openapi.json" {
-		r.handler.ServeHTTP(w, req)
-		return
-	}
-	w.Header().Set("X-Router", "called")
-	w.WriteHeader(http.StatusAccepted)
 }
 
 type serverValidatorFunc func(context.Context, interface{}) error
@@ -57,20 +30,16 @@ func (f serverValidatorFunc) Validate(ctx context.Context, input interface{}) er
 }
 
 func TestServerNewInitializesDefaultsAndOptions(t *testing.T) {
-	router := &recordingRouter{}
 	validator := serverValidatorFunc(func(context.Context, interface{}) error { return nil })
 	envelope := func(http.ResponseWriter, *http.Request, int, interface{}, error, *CodecManager) {}
 
-	app := New(WithAddress("127.0.0.1:0"), WithRouter(router), WithValidator(validator), WithEnvelope(envelope), WithProduces(MIMEJSON))
+	app := New(WithAddress("127.0.0.1:0"), WithValidator(validator), WithEnvelope(envelope), WithProduces(MIMEJSON))
 
 	if app == nil {
 		t.Fatal("New returned nil")
 	}
 	if app.config.address != "127.0.0.1:0" {
 		t.Fatalf("address = %q, want %q", app.config.address, "127.0.0.1:0")
-	}
-	if app.Router() != router {
-		t.Fatal("WithRouter should install the provided router")
 	}
 	if app.validator == nil {
 		t.Fatal("WithValidator should install validator")
@@ -81,8 +50,8 @@ func TestServerNewInitializesDefaultsAndOptions(t *testing.T) {
 	if app.envelope == nil {
 		t.Fatal("WithEnvelope should install envelope")
 	}
-	if app.openAPI != nil {
-		t.Fatal("OpenAPI should be disabled by default")
+	if _, err := app.OpenAPI(); !errors.Is(err, ErrOpenAPIDisabled) {
+		t.Fatalf("OpenAPI error = %v, want ErrOpenAPIDisabled", err)
 	}
 }
 
@@ -108,41 +77,6 @@ func TestServerRenderHTMLViaBuilder(t *testing.T) {
 	}
 	if !bytes.Contains(rec.Body.Bytes(), []byte("<h1>Hello</h1>")) {
 		t.Fatalf("body = %q, want rendered html", rec.Body.String())
-	}
-}
-
-func TestServerServeHTTPDelegatesToRouterWithoutOpenAPIByDefault(t *testing.T) {
-	router := &recordingRouter{}
-	app := New(WithRouter(router))
-
-	for i := 0; i < 2; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/missing", nil)
-		rec := httptest.NewRecorder()
-		app.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusAccepted {
-			t.Fatalf("ServeHTTP status = %d, want %d", rec.Code, http.StatusAccepted)
-		}
-		if rec.Header().Get("X-Router") != "called" {
-			t.Fatal("ServeHTTP should delegate to router")
-		}
-	}
-
-	if len(router.registered) != 0 {
-		t.Fatalf("registered routes = %#v, want no automatically registered routes", router.registered)
-	}
-}
-
-func TestServerWithOpenAPIRegistersEndpointOnFinalize(t *testing.T) {
-	router := &recordingRouter{}
-	app := New(WithOpenAPI("api", "1.0.0"), WithRouter(router), WithProduces(MIMEJSON))
-
-	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
-	rec := httptest.NewRecorder()
-	app.ServeHTTP(rec, req)
-
-	if got := router.registered; !reflect.DeepEqual(got, []registeredRoute{{method: http.MethodGet, path: "/openapi.json"}}) {
-		t.Fatalf("registered routes = %#v, want openapi route", got)
 	}
 }
 
@@ -262,11 +196,10 @@ func TestRouteBuilderANYRegistersAllStandardHTTPMethods(t *testing.T) {
 
 func TestRouteBuilderToRequiresMethod(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[struct{}, struct{}](app).To(func(context.Context, struct{}) (struct{}, error) {
-		return struct{}{}, nil
-	})
 	assertPanicsIs(t, ErrRouteMethodRequired, func() {
-		app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+		Route[struct{}, struct{}](app).To(func(context.Context, struct{}) (struct{}, error) {
+			return struct{}{}, nil
+		})
 	})
 }
 
@@ -285,11 +218,10 @@ func TestRouteBuilderCUSTOMRegistersCustomMethod(t *testing.T) {
 
 func TestRouteBuilderCUSTOMRejectsInvalidMethod(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[struct{}, struct{}](app).CUSTOM("BAD METHOD", "/custom").To(func(context.Context, struct{}) (struct{}, error) {
-		return struct{}{}, nil
-	})
 	assertPanicsIs(t, ErrRouteMethodInvalid, func() {
-		app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/custom", nil))
+		Route[struct{}, struct{}](app).CUSTOM("BAD METHOD", "/custom").To(func(context.Context, struct{}) (struct{}, error) {
+			return struct{}{}, nil
+		})
 	})
 }
 
@@ -790,7 +722,7 @@ func TestGroupRouteBuilderUsesGroupPathInOpenAPI(t *testing.T) {
 			return output{}, nil
 		})
 
-	spec := app.openAPI.Build()
+	spec := serverOpenAPISpec(t, app)
 	var doc map[string]interface{}
 	if err := json.Unmarshal(spec, &doc); err != nil {
 		t.Fatalf("invalid openapi json: %v", err)

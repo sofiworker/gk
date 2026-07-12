@@ -148,6 +148,13 @@ func (d RouteDoc) clone() RouteDoc {
 	}
 	if d.Errors != nil {
 		out.Errors = append([]DocMessage(nil), d.Errors...)
+		for index := range out.Errors {
+			if d.Errors[index].Code == nil {
+				continue
+			}
+			code := *d.Errors[index].Code
+			out.Errors[index].Code = &code
+		}
 	}
 	if d.Success != nil {
 		success := *d.Success

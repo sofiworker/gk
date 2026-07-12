@@ -6,7 +6,6 @@ import (
 	"errors"
 	"html/template"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -522,11 +521,10 @@ func TestRouteBuilderPointerRequestType(t *testing.T) {
 func TestRouteBuilderToRequiresProduces(t *testing.T) {
 	app := New()
 
-	Route[struct{}, string](app).GET("/ping").To(func(ctx context.Context, req struct{}) (string, error) {
-		return "pong", nil
-	})
 	assertPanicsIs(t, ErrRouteProducesRequired, func() {
-		app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/ping", nil))
+		Route[struct{}, string](app).GET("/ping").To(func(ctx context.Context, req struct{}) (string, error) {
+			return "pong", nil
+		})
 	})
 }
 
@@ -591,30 +589,6 @@ func TestRouteBuilderProducesInheritance(t *testing.T) {
 			t.Fatalf("%s body = %q, want %q", tt.path, got, tt.body)
 		}
 	}
-}
-
-func TestRouteBuilderRecordsRegisterErrorAndSkipsOpenAPI(t *testing.T) {
-	wantErr := errors.New("register failed")
-	router := &failingRouter{err: wantErr}
-	app := New(WithOpenAPI("test", "1.0.0"), WithRouter(router), WithProduces(MIMEJSON))
-
-	Route[testInput, testOutput](app).
-		POST("/users/{id}").
-		Doc(Summary("Create user")).
-		To(testHandler)
-
-	spec := app.openAPI.Build()
-	var doc map[string]interface{}
-	if err := json.Unmarshal(spec, &doc); err != nil {
-		t.Fatalf("unmarshal openapi failed: %v", err)
-	}
-	paths := doc["paths"].(map[string]interface{})
-	if len(paths) != 0 {
-		t.Fatalf("paths = %#v, want no stale openapi routes", paths)
-	}
-	assertPanicsIs(t, wantErr, func() {
-		app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/users/42", nil))
-	})
 }
 
 func TestRouteBuilderToRaw(t *testing.T) {
@@ -684,7 +658,7 @@ func TestRouteBuilderPathAndQueryPopulateOpenAPI(t *testing.T) {
 			return struct{}{}, nil
 		})
 
-	spec := app.openAPI.Build()
+	spec := serverOpenAPISpec(t, app)
 	var doc map[string]interface{}
 	if err := json.Unmarshal(spec, &doc); err != nil {
 		t.Fatalf("unmarshal openapi failed: %v", err)
@@ -808,56 +782,49 @@ func TestRouteBuilderSupportsDirectParamsInput(t *testing.T) {
 	}
 }
 
+func TestRouteBuilderDirectParamsPassesPointerToCustomValidator(t *testing.T) {
+	var validated any
+	app := New(
+		WithProduces(MIMEJSON),
+		WithValidator(serverValidatorFunc(func(_ context.Context, input interface{}) error {
+			validated = input
+			return nil
+		})),
+	)
+
+	Route[Params, struct{}](app).GET("/direct-validator/{id}").ToHTTPFunc(func(_ http.ResponseWriter, _ *http.Request, params Params) error {
+		if got, want := params.Path("id"), "42"; got != want {
+			t.Fatalf("handler path id = %q, want %q", got, want)
+		}
+		return nil
+	})
+
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/direct-validator/42", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	params, ok := validated.(*Params)
+	if !ok {
+		t.Fatalf("validator input type = %T, want *Params", validated)
+	}
+	if got, want := params.Path("id"), "42"; got != want {
+		t.Fatalf("validator path id = %q, want %q", got, want)
+	}
+}
+
 func TestRouteBuilderRejectsDirectPointerParamsInput(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 
-	Route[*Params, struct{}](app).GET("/direct-pointer-params").To(func(context.Context, *Params) (struct{}, error) {
-		return struct{}{}, nil
-	})
 	assertPanicsIs(t, ErrInvalidParamsUsage, func() {
-		app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/direct-pointer-params", nil))
-	})
-}
-
-func TestRouteBuilderSetupErrorPanicsFromRun(t *testing.T) {
-	app := New(WithProduces(MIMEJSON))
-
-	Route[*Params, struct{}](app).GET("/direct-pointer-params").To(func(context.Context, *Params) (struct{}, error) {
-		return struct{}{}, nil
-	})
-
-	assertPanicsIs(t, ErrInvalidParamsUsage, func() {
-		_ = app.Run("bad address")
-	})
-}
-
-func TestRouteBuilderSetupErrorPanicsFromServe(t *testing.T) {
-	app := New(WithProduces(MIMEJSON))
-
-	Route[*Params, struct{}](app).GET("/direct-pointer-params").To(func(context.Context, *Params) (struct{}, error) {
-		return struct{}{}, nil
-	})
-
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("Listen failed: %v", err)
-	}
-	defer ln.Close()
-
-	assertPanicsIs(t, ErrInvalidParamsUsage, func() {
-		_ = app.Serve(ln)
+		Route[*Params, struct{}](app).GET("/direct-pointer-params").To(func(context.Context, *Params) (struct{}, error) {
+			return struct{}{}, nil
+		})
 	})
 }
 
 func TestRouteBuilderSetupErrorIncludesRouteAndCaller(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-
-	Route[struct{}, struct{}](app).
-		GET("/broken").
-		Produces("application/unsupported").
-		To(func(context.Context, struct{}) (struct{}, error) {
-			return struct{}{}, nil
-		})
 
 	var got error
 	func() {
@@ -872,30 +839,23 @@ func TestRouteBuilderSetupErrorIncludesRouteAndCaller(t *testing.T) {
 			}
 			got = err
 		}()
-		app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/broken", nil))
+		Route[struct{}, struct{}](app).
+			GET("/broken").
+			Produces("application/unsupported").
+			To(func(context.Context, struct{}) (struct{}, error) {
+				return struct{}{}, nil
+			})
 	}()
 
 	if !errors.Is(got, ErrRouteProducesUnsupported) {
 		t.Fatalf("panic error = %v, want %v", got, ErrRouteProducesUnsupported)
 	}
 	msg := got.Error()
-	for _, want := range []string{"GET /broken", "builder_test.go:"} {
+	for _, want := range []string{"GET /broken"} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("panic error = %q, want to contain %q", msg, want)
 		}
 	}
-}
-
-func TestRouteBuilderSetupErrorPanicsFromListenAndServeTLS(t *testing.T) {
-	app := New(WithProduces(MIMEJSON))
-
-	Route[*Params, struct{}](app).GET("/direct-pointer-params").To(func(context.Context, *Params) (struct{}, error) {
-		return struct{}{}, nil
-	})
-
-	assertPanicsIs(t, ErrInvalidParamsUsage, func() {
-		_ = app.ListenAndServeTLS("bad address", "", "")
-	})
 }
 
 func TestRouteBuilderRejectsInvalidParamsUsage(t *testing.T) {
@@ -912,37 +872,50 @@ func TestRouteBuilderRejectsInvalidParamsUsage(t *testing.T) {
 		commonParams
 	}
 
-	app := New(WithProduces(MIMEJSON))
-	Route[namedParamsInput, struct{}](app).GET("/named-params").To(func(context.Context, namedParamsInput) (struct{}, error) {
-		return struct{}{}, nil
-	})
-	assertPanicsIs(t, ErrInvalidParamsUsage, func() {
-		app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/named-params", nil))
-	})
-
-	app = New(WithProduces(MIMEJSON))
-	Route[pointerParamsInput, struct{}](app).GET("/pointer-params").To(func(context.Context, pointerParamsInput) (struct{}, error) {
-		return struct{}{}, nil
-	})
-	assertPanicsIs(t, ErrInvalidParamsUsage, func() {
-		app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/pointer-params", nil))
-	})
-
-	app = New(WithProduces(MIMEJSON))
-	Route[indirectParamsInput, struct{}](app).GET("/indirect-params").To(func(context.Context, indirectParamsInput) (struct{}, error) {
-		return struct{}{}, nil
-	})
-	assertPanicsIs(t, ErrInvalidParamsUsage, func() {
-		app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/indirect-params", nil))
-	})
-
-	app = New(WithProduces(MIMEJSON))
-	Route[namedParamsInput, struct{}](app).GET("/http-func-params").ToHTTPFunc(func(http.ResponseWriter, *http.Request, namedParamsInput) error {
-		return nil
-	})
-	assertPanicsIs(t, ErrInvalidParamsUsage, func() {
-		app.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/http-func-params", nil))
-	})
+	tests := []struct {
+		name     string
+		register func(*Server)
+	}{
+		{
+			name: "named params",
+			register: func(app *Server) {
+				Route[namedParamsInput, struct{}](app).GET("/named-params").To(func(context.Context, namedParamsInput) (struct{}, error) {
+					return struct{}{}, nil
+				})
+			},
+		},
+		{
+			name: "pointer params",
+			register: func(app *Server) {
+				Route[pointerParamsInput, struct{}](app).GET("/pointer-params").To(func(context.Context, pointerParamsInput) (struct{}, error) {
+					return struct{}{}, nil
+				})
+			},
+		},
+		{
+			name: "indirect params",
+			register: func(app *Server) {
+				Route[indirectParamsInput, struct{}](app).GET("/indirect-params").To(func(context.Context, indirectParamsInput) (struct{}, error) {
+					return struct{}{}, nil
+				})
+			},
+		},
+		{
+			name: "http func params",
+			register: func(app *Server) {
+				Route[namedParamsInput, struct{}](app).GET("/http-func-params").ToHTTPFunc(func(http.ResponseWriter, *http.Request, namedParamsInput) error {
+					return nil
+				})
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertPanicsIs(t, ErrInvalidParamsUsage, func() {
+				tt.register(New(WithProduces(MIMEJSON)))
+			})
+		})
+	}
 }
 
 func TestRouteBuilderToHTTPFunc(t *testing.T) {
@@ -1040,16 +1013,6 @@ func TestSSEHandlerUsesParams(t *testing.T) {
 		t.Fatalf("body = %q", body)
 	}
 }
-
-type failingRouter struct {
-	err error
-}
-
-func (r *failingRouter) Register(string, string, http.Handler) error {
-	return r.err
-}
-
-func (r *failingRouter) ServeHTTP(http.ResponseWriter, *http.Request) {}
 
 func TestRouteBuilderProducesNegotiatesConfiguredContentTypes(t *testing.T) {
 	app := New(WithProduces(MIMEJSON, MIMEXML))

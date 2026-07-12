@@ -12,6 +12,16 @@ var (
 	ErrNilContext  = errors.New("context is nil")
 	ErrNilListener = errors.New("listener is nil")
 
+	ErrRoutePathInvalid      = errors.New("invalid route path")
+	ErrInvalidRequestPath    = errors.New("invalid request path")
+	ErrRouteConflict         = errors.New("route conflict")
+	ErrRouteBuilderFinalized = errors.New("route builder finalized")
+	ErrRouteHandlerNil       = errors.New("route handler is nil")
+	ErrRouteMethodAlreadySet = errors.New("route method already set")
+	ErrServerFrozen          = errors.New("server frozen")
+	ErrOpenAPIDisabled       = errors.New("openapi disabled")
+	ErrHandlerPanic          = errors.New("handler panic")
+
 	ErrInvalidParamsUsage   = errors.New("invalid params usage")
 	ErrUnsupportedMediaType = errors.New("unsupported media type")
 	ErrRequestBodyTooLarge  = errors.New("request body too large")
@@ -26,6 +36,9 @@ type HTTPError struct {
 	Message string `json:"message"`
 	Err     error  `json:"-"`
 }
+
+// ErrorHandler writes a normalized HTTP error response.
+type ErrorHandler func(http.ResponseWriter, *http.Request, *HTTPError)
 
 func (e *HTTPError) Error() string {
 	if e.Message != "" {

@@ -26,7 +26,7 @@ func TestOpenAPIBuildsValidSpec(t *testing.T) {
 		return struct{ Body UserData }{}, nil
 	})
 
-	spec := app.openAPI.Build()
+	spec := serverOpenAPISpec(t, app)
 	if len(spec) == 0 {
 		t.Fatal("expected non-empty OpenAPI spec")
 	}
@@ -57,7 +57,7 @@ func TestOpenAPIRequestBodyUsesConsumes(t *testing.T) {
 			return struct{}{}, nil
 		})
 
-	spec := app.openAPI.Build()
+	spec := serverOpenAPISpec(t, app)
 	var doc map[string]interface{}
 	if err := json.Unmarshal(spec, &doc); err != nil {
 		t.Fatalf("invalid OpenAPI JSON: %v", err)
@@ -260,7 +260,7 @@ func TestOpenAPIDocLifecycleOptions(t *testing.T) {
 func openAPIOperation(t *testing.T, app *Server, path, method string) map[string]interface{} {
 	t.Helper()
 
-	spec := app.openAPI.Build()
+	spec := serverOpenAPISpec(t, app)
 	var doc map[string]interface{}
 	if err := json.Unmarshal(spec, &doc); err != nil {
 		t.Fatalf("invalid OpenAPI JSON: %v", err)
@@ -268,6 +268,15 @@ func openAPIOperation(t *testing.T, app *Server, path, method string) map[string
 	paths := doc["paths"].(map[string]interface{})
 	item := paths[path].(map[string]interface{})
 	return item[method].(map[string]interface{})
+}
+
+func serverOpenAPISpec(t *testing.T, app *Server) []byte {
+	t.Helper()
+	spec, err := app.OpenAPI()
+	if err != nil {
+		t.Fatalf("OpenAPI error = %v", err)
+	}
+	return spec
 }
 
 func assertOpenAPIParameter(t *testing.T, params []interface{}, in, name string) {
