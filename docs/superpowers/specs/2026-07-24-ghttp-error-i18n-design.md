@@ -99,7 +99,13 @@ gerr ← ghttp ← ghttp/i18n
 ```go
 type RequestLocalizer interface {
 	Explicit() bool
-	LocalizeDocument(context.Context, ErrorDocument) (ErrorDocument, string, error)
+	LocalizeDocument(context.Context, ErrorDocument) (LocalizationResult, error)
+}
+
+type LocalizationResult struct {
+	Document ErrorDocument
+	Language string
+	Cache    LocaleCachePolicy
 }
 
 func WithRequestLocalizer(context.Context, RequestLocalizer) context.Context
@@ -107,6 +113,23 @@ func RequestLocalizerFromContext(context.Context) (RequestLocalizer, bool)
 ```
 
 context key 由 `ghttp` 私有持有，外部只能通过上述函数读写。
+
+本节中的 `Message`、`LocalizedMessage`、`RequestLocalizer`、`LocalizationResult` 和 `LocaleCachePolicy` 均定义在 `ghttp`。`ghttp/i18n` 只提供实现。
+
+### 3.2 i18n 集成安装
+
+普通 `Middleware` 函数无法携带 OpenAPI 元数据，因此官方 i18n 返回一个集成对象：
+
+```go
+type ErrorIntegration interface {
+	Middleware() Middleware
+	ErrorOpenAPIHeaders() map[string]map[string]any
+}
+
+func (s *Server) UseErrorIntegration(ErrorIntegration)
+```
+
+`ghttp/i18n.Integration` 实现该接口。`UseErrorIntegration` 在 freeze 前同时注册 middleware 和错误 OpenAPI header contributor；freeze 后调用 panic `ErrServerFrozen`。第三方实现也可使用该接口。官方扩展可提供便捷方法 `integration.Install(server)`，内部只调用 `UseErrorIntegration`。
 
 ## 4. gerr 错误语义
 
@@ -245,12 +268,22 @@ func Describe(err error) (Descriptor, bool)
 `MultiError` API：
 
 ```go
-func NewMulti(id string, kind Kind, errs ...error) *MultiError
+func NewMulti(id string, kind Kind, errs []error, opts ...Option) *MultiError
 func (e *MultiError) ErrorDescriptor() Descriptor
 func (e *MultiError) Unwrap() []error
 ```
 
 `MultiError` 的顶层 ID、Kind 和 Params 决定公开顶层语义。子错误默认只用于日志；只有 validation adapter 或显式 detail adapter 才能将子错误投影为 `ErrorDetail`。
+
+显式 detail adapter 定义在 `ghttp`：
+
+```go
+type ErrorDetailAdapter interface {
+	AdaptErrorDetails(context.Context, error) ([]ErrorDetail, bool)
+}
+```
+
+Server 可配置多个 adapter，按注册顺序使用第一个返回 `ok=true` 的结果。adapter 结果仍需 message ID 校验、Params sanitize 和稳定排序。
 
 ## 5. ghttp 错误归一化
 
@@ -296,19 +329,20 @@ type ErrorNormalizer interface {
 
 默认处理顺序：
 
-1. ghttp 框架内部错误。
-2. 最外层 `HTTPStatusCarrier`。
-3. `gerr.Describe`。
-4. validator 适配器。
-5. context timeout/cancel。
-6. 未知错误安全降级。
+归一化分为正交的两条路径，不能按 first-match 混在一起：
+
+1. 身份路径：框架错误 → validationStageError → `gerr.Describe` → context 错误 → 未知安全降级，得到 message ID、Kind、Args 和 Details。
+2. 状态路径：框架固定 status → 最外层合法 `HTTPStatusCarrier` → KindStatusMapper，得到 HTTP status。
+
+最后组合并统一校验。HTTPStatusCarrier 只能覆盖 status，不能独立提供错误身份。
 
 未知错误固定输出：
 
 ```json
 {
   "status": 500,
-  "message_id": "internal.server_error"
+  "message_id": "internal.server_error",
+  "args": {}
 }
 ```
 
@@ -337,7 +371,7 @@ type KindStatusMapper interface {
 | Canceled | 不写响应，仅观察 |
 | Internal/Unknown | 500 |
 
-`context.Canceled` 和 `KindCanceled` 通常表示客户端断开或上游取消，默认生成 `SuppressResponse=true` 的 NormalizedError，不尝试写 408。读取请求超时映射 408，服务端处理 deadline 映射 504。允许通过 `WithKindStatusMapper` 和自定义 Normalizer 覆盖。
+`context.Canceled` 和 `KindCanceled` 通常表示客户端断开或上游取消，默认生成 `SuppressResponse=true` 的 NormalizedError，不尝试写 408。读取请求超时映射 408，服务端处理 deadline 映射 504。KindStatusMapper 只映射 status，不能取消 SuppressResponse；需要改变取消语义时必须使用自定义 Normalizer。
 
 ```go
 type HTTPStatusCarrier interface {
@@ -449,9 +483,9 @@ ghttp.WithErrorRenderer(ghttp.ProblemJSONRenderer())
 
 Content-Type 为 `application/problem+json`。字段级错误使用 `errors` 扩展字段。
 
-用户可实现自定义 Renderer。错误 Renderer 必须写入框架提供的最大 64 KiB 缓冲 writer，不能依赖 Flush、Hijack、Push 或流式语义。成功返回且未超限后，框架一次性复制 header、status 和 body 到真实 ResponseWriter；HEAD 只提交 header/status。
+用户可实现自定义 Renderer。错误 Renderer 必须写入框架提供的最大 64 KiB 隔离缓冲 writer，不能依赖 Flush、Hijack、Push 或流式语义。缓冲 writer 不实现 `Unwrap`，也不能通过 `http.ResponseController` 到达真实 writer。成功返回且未超限后，框架一次性复制 header、status 和 body 到真实 ResponseWriter；HEAD 只提交 header/status。
 
-Renderer 返回 error、panic、写入超限或产生非法 status 时丢弃缓冲区并使用内置最小 JSON Renderer。若进入错误管线前真实响应已经 committed/hijacked，则完全跳过 Renderer，只记录错误。缓冲 writer 实现 `Unwrap`，但不暴露 Flusher/Hijacker/Pusher，避免自定义 Renderer 提前提交真实响应。
+Renderer 返回 error、panic、写入超限或产生非法 status 时丢弃缓冲区并使用内置最小 JSON Renderer。若 Renderer 未调用 `WriteHeader`，提交时使用 `ErrorDocument.Status`；若写入的合法 status 与 `ErrorDocument.Status` 不一致，也视为 Renderer 失败。若进入错误管线前真实响应已经 committed/hijacked，则完全跳过 Renderer，只记录错误。必须测试 `http.NewResponseController(buffer).Flush/Hijack` 无法绕过隔离。
 
 ## 7. ghttp/i18n 中间件
 
@@ -525,6 +559,8 @@ type LocaleCachePolicy struct {
 - 用户身份偏好默认 `Private=true`；若来源可能含敏感身份状态可设置 `NoStore=true`。
 - query 已进入 URL cache key，默认不增加 Vary。
 - 多个 Vary 必须去重追加，不能覆盖已有值。
+
+缓存策略不是只取获胜 resolver，而是对所有已配置、未来可能改变选择结果的 resolver 保守聚合。`Vary` 取并集，`Private` 和 `NoStore` 使用逻辑 OR。错误管线必须在提交 Renderer 缓冲结果之前应用 LocalizationResult.Cache。
 
 ### 7.4 惰性 Session
 
@@ -602,6 +638,16 @@ func RespondError(http.ResponseWriter, *http.Request, error)
 
 Params 属于公共 API，输出前必须 sanitize。
 
+扩展接口定义为：
+
+```go
+type PublicParamMarshaler interface {
+	MarshalPublicParam() (any, error)
+}
+```
+
+返回值必须再次经过同一个递归 sanitizer；不能信任为已安全值。
+
 允许：
 
 - nil、bool、string、整数、浮点数。
@@ -623,6 +669,8 @@ Params 属于公共 API，输出前必须 sanitize。
 map key 必须稳定排序。NaN、Inf、typed nil、非法 `json.Number` 被删除。`PublicParamMarshaler` panic/error/超大结果视为非法单项。sanitize 完成后再次深拷贝，Localizer 和 Renderer 不共享可变 map。
 
 Message ID 正式语法为 ASCII：`^[a-z][a-z0-9_]{0,31}(\.[a-z][a-z0-9_]{0,31}){1,7}$`，总长度不超过 128 字节。保留 `http.*`、`request.*`、`validation.*`、`internal.*` 给框架使用。业务 ID 使用自己的顶层命名空间。
+
+框架内部错误携带私有、不可伪造的来源标记。ghttp 最终校验发现普通 `gerr.Error` 或自定义 Describer 使用保留命名空间时，将其降级为 `internal.server_error` 并通知 Observer；`gerr` 本身不判断命名空间，因为其他传输层可能有不同保留规则。
 
 Message ID 使用稳定层级格式，例如：
 
@@ -681,7 +729,7 @@ type ErrorRenderer interface {
 }
 ```
 
-compiler 按 ComponentName 去重；同名不同 schema 为启动期配置错误。简洁 JSON 和 RFC 9457 分别生成对应 component。i18n middleware 在 Server freeze 前贡献 `Content-Language` 和缓存相关 header 描述，freeze 后配置不可变。
+compiler 按 ComponentName 去重；同名不同 schema 为启动期配置错误。简洁 JSON 和 RFC 9457 分别生成对应 component。i18n 通过 `UseErrorIntegration` 在 Server freeze 前贡献 `Content-Language` 和缓存相关 header 描述，freeze 后配置不可变。
 
 `message` 必须标记为 optional。启用 i18n middleware 时可描述 `Content-Language`；未启用时不增加语言相关文档。
 
@@ -718,6 +766,7 @@ Renderer 属于响应关键路径：
 - 同时保留扩展字段 `message_id` 与 `args`。
 - 字段级 `errors` 项包含 location、message_id、args，以及可选 message。
 - status 必须与实际 HTTP status 相同。
+- `args` 是必需对象字段，空时返回 `{}`；简洁 JSON、RFC 9457 和 OpenAPI 均采用同一规则。
 
 ## 14. 兼容性与迁移
 
