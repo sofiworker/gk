@@ -2,7 +2,7 @@
 
 > 日期：2026-07-24
 >
-> 状态：交互设计已确认，等待书面规格审查
+> 状态：交互设计已确认，书面规格第一轮审查修订中
 >
 > 范围：`gerr` 错误语义、`ghttp` 错误归一化与渲染、`ghttp/i18n` 请求级本地化
 
@@ -79,6 +79,34 @@ ghttp/i18n
 ├── Catalog 与 Localizer
 └── Content-Language、Vary
 ```
+
+### 3.1 包依赖方向
+
+依赖方向必须固定为：
+
+```text
+gerr ← ghttp ← ghttp/i18n
+```
+
+- `gerr` 不 import `ghttp`。
+- `ghttp` 不 import `ghttp/i18n`。
+- 本地化桥接接口、请求 context key 和存取函数定义在 `ghttp`。
+- `ghttp/i18n` 只实现 `ghttp` 定义的接口并通过 middleware 注入。
+- 第三方本地化 middleware 可以实现同一接口，不需要依赖官方子包。
+
+`ghttp` 定义：
+
+```go
+type RequestLocalizer interface {
+	Explicit() bool
+	LocalizeDocument(context.Context, ErrorDocument) (ErrorDocument, string, error)
+}
+
+func WithRequestLocalizer(context.Context, RequestLocalizer) context.Context
+func RequestLocalizerFromContext(context.Context) (RequestLocalizer, bool)
+```
+
+context key 由 `ghttp` 私有持有，外部只能通过上述函数读写。
 
 ## 4. gerr 错误语义
 
@@ -198,11 +226,31 @@ type Describer interface {
 func Describe(err error) (Descriptor, bool)
 ```
 
-`Describe` 沿单一 `Unwrap() error` 链从外到内查找，最外层有效 Descriptor 优先。返回的 Params 必须防御性复制。
+有效 Descriptor 必须同时具有合法非空 ID 和非 `KindUnknown` Kind。
+
+`Describe` 的完整规则：
+
+1. 当前 error 实现 `Describer` 且 Descriptor 有效时立即返回。
+2. 当前 error 是 `*gerr.Error` 但没有 ID，仅表示内部上下文，继续检查单一 cause。
+3. 当前 error 实现 `Unwrap() error` 时沿该链继续。
+4. 当前 error 实现 `Unwrap() []error` 时停止并返回 false；不得选择任意分支。
+5. 无效 Descriptor 记录不到公共结果，继续单一 cause；若没有单一 cause则返回 false。
+
+返回的 Params 必须 sanitize 后防御性复制。
 
 自定义错误可以实现 `Describer`，不必使用 `*gerr.Error`。
 
-裸 `errors.Join` 不自动选择某个子错误作为公开语义。需要聚合时，`gerr.MultiError` 必须携带明确的顶层 ID 和 Kind。
+裸 `errors.Join`、嵌套 join 和多个 Describer 不自动选择某个子错误作为公开语义。
+
+`MultiError` API：
+
+```go
+func NewMulti(id string, kind Kind, errs ...error) *MultiError
+func (e *MultiError) ErrorDescriptor() Descriptor
+func (e *MultiError) Unwrap() []error
+```
+
+`MultiError` 的顶层 ID、Kind 和 Params 决定公开顶层语义。子错误默认只用于日志；只有 validation adapter 或显式 detail adapter 才能将子错误投影为 `ErrorDetail`。
 
 ## 5. ghttp 错误归一化
 
@@ -230,6 +278,7 @@ type NormalizedError struct {
 	Kind     gerr.Kind
 	Meta     map[string]any
 	Op       string
+	SuppressResponse bool
 }
 ```
 
@@ -242,6 +291,8 @@ type ErrorNormalizer interface {
 	NormalizeError(context.Context, error) NormalizedError
 }
 ```
+
+自定义 Normalizer 的返回值仍必须经过框架最终校验、status 校验、ID 校验、Params sanitize 和防御性复制。Normalizer panic 被隔离并降级为 `internal.server_error`。
 
 默认处理顺序：
 
@@ -283,12 +334,20 @@ type KindStatusMapper interface {
 | RateLimited | 429 |
 | Unavailable | 503 |
 | Timeout | 504 |
-| Canceled | 408 |
+| Canceled | 不写响应，仅观察 |
 | Internal/Unknown | 500 |
 
-允许通过 `WithKindStatusMapper` 整体替换或覆盖。
+`context.Canceled` 和 `KindCanceled` 通常表示客户端断开或上游取消，默认生成 `SuppressResponse=true` 的 NormalizedError，不尝试写 408。读取请求超时映射 408，服务端处理 deadline 映射 504。允许通过 `WithKindStatusMapper` 和自定义 Normalizer 覆盖。
 
-HTTP adapter 可以使用 `WithStatus(err, status)` 显式表达 410、412、413、416、422、451 等精确状态。业务层不应 import `ghttp`。
+```go
+type HTTPStatusCarrier interface {
+	HTTPStatus() int
+}
+```
+
+HTTP status 只沿单一 error chain 从外到内查找，最外层合法状态优先；遇到 `Unwrap() []error` 停止。合法状态限定为 400–599。0、1xx、2xx、3xx 或大于 599 的值视为无效，记录诊断后继续按 Kind 映射。
+
+HTTP adapter 可以使用 `WithStatus(err, status)` 显式表达 410、412、413、416、422、451 等精确状态。业务层不应 import `ghttp`。框架内部错误的固定 status 优先于用户 Kind 映射；显式 HTTP status 优先于业务 Kind。
 
 ### 5.4 框架错误 ID
 
@@ -315,6 +374,8 @@ type ValidationErrorAdapter interface {
 }
 ```
 
+绑定或验证阶段必须先用私有 `validationStageError` 包装 validator 返回值，Normalizer 不得仅凭 error 类型猜测错误来源。Handler 主动返回相同 validator 类型时按普通业务错误处理。
+
 默认适配 go-playground validator，并生成顶层 `request.validation_failed` 和字段级 details。
 
 常见 tag 映射：
@@ -328,7 +389,9 @@ oneof    → validation.one_of
 len      → validation.length
 ```
 
-未知 tag 使用 `validation.<tag>`。无法识别自定义 Validator 错误时返回顶层 422，不暴露原始文本。
+location 使用请求协议字段名而非 Go 字段名：优先使用 `path`、`query`、`header`、`cookie`、`json` tag，并保留嵌套和 slice index，例如 `body.items[2].email`。嵌入字段按最终协议路径展开。StructLevel 错误必须由 adapter 显式提供 location。details 按 location、message ID 稳定排序。
+
+未知 validator tag 先转为小写 ASCII snake_case 并通过 message ID 校验，再使用 `validation.<tag>`；无法规范化时使用 `validation.unknown`。无法识别自定义 Validator 错误时返回顶层 422，不暴露原始文本。
 
 ## 6. 错误响应格式
 
@@ -337,8 +400,7 @@ len      → validation.length
 ```go
 type ErrorRenderer interface {
 	RenderError(http.ResponseWriter, *http.Request, ErrorDocument) error
-	ContentType() string
-	OpenAPISchema() any
+	OpenAPIDescriptor() ErrorOpenAPIDescriptor
 }
 ```
 
@@ -387,7 +449,9 @@ ghttp.WithErrorRenderer(ghttp.ProblemJSONRenderer())
 
 Content-Type 为 `application/problem+json`。字段级错误使用 `errors` 扩展字段。
 
-用户可实现自定义 Renderer。Renderer 失败且响应未提交时，框架使用内置最小 JSON Renderer；已提交时只记录错误，不二次写入。
+用户可实现自定义 Renderer。错误 Renderer 必须写入框架提供的最大 64 KiB 缓冲 writer，不能依赖 Flush、Hijack、Push 或流式语义。成功返回且未超限后，框架一次性复制 header、status 和 body 到真实 ResponseWriter；HEAD 只提交 header/status。
+
+Renderer 返回 error、panic、写入超限或产生非法 status 时丢弃缓冲区并使用内置最小 JSON Renderer。若进入错误管线前真实响应已经 committed/hijacked，则完全跳过 Renderer，只记录错误。缓冲 writer 实现 `Unwrap`，但不暴露 Flusher/Hijacker/Pusher，避免自定义 Renderer 提前提交真实响应。
 
 ## 7. ghttp/i18n 中间件
 
@@ -427,6 +491,7 @@ type LocaleResolver interface {
 type LocaleResolution struct {
 	Languages []string
 	Explicit  bool
+	Cache     LocaleCachePolicy
 }
 ```
 
@@ -436,7 +501,30 @@ type LocaleResolution struct {
 用户偏好 → Cookie → query → Accept-Language → 默认语言
 ```
 
-ResolverChain 选择第一组明确候选，再交给 LanguageMatcher 匹配支持语言。没有任何语言信号时仍可使用默认语言，但 `Requested=false`，错误响应不增加 message。
+ResolverChain 选择第一组明确候选，再交给 LanguageMatcher 匹配支持语言。没有任何语言信号时仍可使用默认语言，但 `Explicit=false`，错误响应不增加 message。
+
+明确语言信号定义：
+
+- 非空且语法有效、至少包含一个 `q>0` 候选的 Accept-Language 为 Explicit。
+- query/Cookie/用户偏好存在但语法非法时不算 Explicit，并继续下一个 resolver。
+- 只有 wildcard 或候选均不受支持仍算 Explicit，最终匹配默认语言。
+- 空 header、全部 `q=0` 或只有空白不算 Explicit。
+
+缓存策略由 resolver 报告：
+
+```go
+type LocaleCachePolicy struct {
+	Vary       []string
+	Private    bool
+	NoStore    bool
+}
+```
+
+- Accept-Language resolver 增加 `Vary: Accept-Language`。
+- Cookie resolver 至少增加 `Vary: Cookie`，默认 `Private=true`。
+- 用户身份偏好默认 `Private=true`；若来源可能含敏感身份状态可设置 `NoStore=true`。
+- query 已进入 URL cache key，默认不增加 Vary。
+- 多个 Vary 必须去重追加，不能覆盖已有值。
 
 ### 7.4 惰性 Session
 
@@ -450,6 +538,8 @@ i18n middleware 只向 context 注入惰性 Session。Session 第一次被错误
 - 不调用 Renderer 或 Observer。
 
 Session 必须使用 `sync.Once` 或等价机制保证并发安全。
+
+错误文档必须锁定单一实际语言：按候选与 fallback 顺序选择第一个能翻译顶层 message ID 的语言，然后所有 details 只在该语言查找；缺失 detail message 时省略该 detail 的 message，不切换成另一语言。`Content-Language` 因此始终准确表示整份错误文档。Catalog 的“未找到”与运行错误必须使用可判断 sentinel 区分；未找到可继续 fallback，运行错误记录后停止该 Catalog 并继续下一个组合 Catalog。
 
 ### 7.5 Gin 风格手动入口
 
@@ -488,13 +578,21 @@ type Catalog interface {
 
 Typed Handler 和 `ToHTTPFunc` 返回的 error 自动进入统一管线。
 
-标准 `Middleware func(http.Handler) http.Handler` 无法直接返回 error，使用：
+标准 `Middleware func(http.Handler) http.Handler` 无法直接返回 error，优先使用 Server 方法：
+
+```go
+func (s *Server) RespondError(http.ResponseWriter, *http.Request, error)
+```
+
+请求已经进入 Server 时也可使用便捷函数：
 
 ```go
 func RespondError(http.ResponseWriter, *http.Request, error)
 ```
 
 `RespondError` 必须复用当前 Server 的 Normalizer、i18n、Renderer 和 Observer。
+
+便捷函数只在 request context 中存在当前 Server 时工作；不存在时写固定、无原始错误文本的最小 JSON 500，并记录集成错误。它不得调用 `http.Error(err.Error())`。外层 middleware 应持有 `*Server` 并调用 `server.RespondError`。
 
 `ToHTTP` 与 `ToRaw` 自己拥有响应，框架无法捕获未返回或未传递的 error。用户应改用 `ToHTTPFunc`、调用 `RespondError`，或完全自行处理响应。
 
@@ -520,7 +618,11 @@ Params 属于公共 API，输出前必须 sanitize。
 - token、credential、堆栈、SQL、路径等内部数据。
 - 循环引用。
 
-非法参数被删除并记录诊断，不能使用 `fmt.Sprint` 降级。限制嵌套深度、参数数量、字符串长度和总序列化体积。
+默认限制：最大嵌套深度 8、顶层参数 32、单个 map/slice 64 项、单个字符串 4 KiB、Args JSON 总量 32 KiB。超限单项被删除；若顶层参数超限则保留按 key 字典序排列的前 32 项；若最终 JSON 仍超 32 KiB，则整份 Args 置空并记录诊断。
+
+map key 必须稳定排序。NaN、Inf、typed nil、非法 `json.Number` 被删除。`PublicParamMarshaler` panic/error/超大结果视为非法单项。sanitize 完成后再次深拷贝，Localizer 和 Renderer 不共享可变 map。
+
+Message ID 正式语法为 ASCII：`^[a-z][a-z0-9_]{0,31}(\.[a-z][a-z0-9_]{0,31}){1,7}$`，总长度不超过 128 字节。保留 `http.*`、`request.*`、`validation.*`、`internal.*` 给框架使用。业务 ID 使用自己的顶层命名空间。
 
 Message ID 使用稳定层级格式，例如：
 
@@ -543,6 +645,14 @@ type ErrorObserver interface {
 
 观察内容包括 status、message ID、Kind、Op、Cause、Meta、请求语言、实际语言、本地化错误、Renderer 错误和响应提交状态。
 
+配置允许多个 observer：
+
+```go
+func WithErrorObservers(...ErrorObserver) ServerOption
+```
+
+observer 按注册顺序同步调用，在本地化和最终 Renderer 尝试结束后、ServeHTTP 返回前执行一次，因此 observation 能包含 resolved language、renderer error 和 committed 状态。observer 耗时计入请求尾延迟；需要异步处理的实现必须自行复制数据并排队，不能保留 request 或可变 map。
+
 规则：
 
 - Observer 不能修改响应。
@@ -555,11 +665,27 @@ type ErrorObserver interface {
 
 ## 11. OpenAPI
 
-ErrorRenderer 提供错误 content type 与 schema。简洁 JSON 和 RFC 9457 分别生成对应 component。
+Renderer 不直接返回松散的 `any`，而是提供明确描述：
+
+```go
+type ErrorOpenAPIDescriptor struct {
+	ContentType   string
+	ComponentName string
+	Schema        map[string]any
+	Headers       map[string]map[string]any
+}
+
+type ErrorRenderer interface {
+	RenderError(http.ResponseWriter, *http.Request, ErrorDocument) error
+	OpenAPIDescriptor() ErrorOpenAPIDescriptor
+}
+```
+
+compiler 按 ComponentName 去重；同名不同 schema 为启动期配置错误。简洁 JSON 和 RFC 9457 分别生成对应 component。i18n middleware 在 Server freeze 前贡献 `Content-Language` 和缓存相关 header 描述，freeze 后配置不可变。
 
 `message` 必须标记为 optional。启用 i18n middleware 时可描述 `Content-Language`；未启用时不增加语言相关文档。
 
-框架自动文档化可确定的 400、413、415、422 和 500。业务 Handler 可能返回的错误无法从函数体静态推断，继续通过文档元数据声明：
+同一 status 可以声明多个 message ID；OpenAPI response description 列出这些 ID，schema 仍复用统一错误 component。框架自动错误与 `ghttp.Errors` 按 status 合并并去重。框架自动文档化可确定的 400、413、415、422 和 500。业务 Handler 可能返回的错误无法从函数体静态推断，继续通过文档元数据声明：
 
 ```go
 ghttp.Errors(
@@ -584,9 +710,31 @@ Renderer 属于响应关键路径：
 - 已提交时失败，只记录。
 - fallback Renderer 不参与 i18n，避免递归。
 
-## 13. 测试策略
+## 13. RFC 9457 映射
 
-### 13.1 gerr
+- `type` 为 `urn:ghttp:error:<percent-encoded-message-id>`。
+- `title` 固定为 message ID，保证无语言时稳定；这是有意的扩展选择。
+- 有本地化 message 时写入 `detail`，否则省略 `detail`。
+- 同时保留扩展字段 `message_id` 与 `args`。
+- 字段级 `errors` 项包含 location、message_id、args，以及可选 message。
+- status 必须与实际 HTTP status 相同。
+
+## 14. 兼容性与迁移
+
+本设计按用户决定为 breaking change，不提供兼容层。
+
+- `gerr.New(message, opts...)` 改为 `gerr.New(id, kind, opts...)`。
+- `gerr.Wrap(err, message, opts...)` 改为 `gerr.Wrap(err, opts...)`，开发者文本使用 `WithMessage`。
+- `Error.Code`/`WithCode` 改为 `Error.ID`/`WithID`。
+- 新增公开 Params，与 Meta 严格分离。
+- 现有 `ghttp.HTTPError` 被 `gerr.Error + HTTPStatusCarrier` 取代。
+- 现有 `ErrorHandler`/`WithErrorHandler` 被 `ErrorNormalizer`、`ErrorRenderer`、`ErrorObserver` 取代并删除。
+- Envelope 不再处理错误，只处理成功响应。
+- README 和迁移文档必须提供旧新 API 对照与最小示例。
+
+## 15. 测试策略
+
+### 15.1 gerr
 
 - New、Wrap、Cause、Op、Message。
 - 外层 Descriptor 优先和普通 `%w` 包装。
@@ -596,7 +744,7 @@ Renderer 属于响应关键路径：
 - 非法 ID。
 - 裸 errors.Join 和显式 MultiError。
 
-### 13.2 Normalizer
+### 15.2 Normalizer
 
 - 全部 Kind 默认映射和自定义 mapper。
 - HTTPStatusCarrier 优先。
@@ -605,7 +753,7 @@ Renderer 属于响应关键路径：
 - response committed/hijacked。
 - 自定义 Normalizer 装饰。
 
-### 13.3 validator
+### 15.3 validator
 
 - required、email、min、max、oneof、len。
 - path/query/header/cookie/body location。
@@ -613,17 +761,17 @@ Renderer 属于响应关键路径：
 - 自定义 Validator 无 adapter。
 - 原始文本和值不泄露。
 
-### 13.4 i18n
+### 15.4 i18n
 
 - Accept-Language q 权重、wildcard、非法语法和区域 fallback。
 - ResolverChain 优先级。
-- Requested true/false。
+- Explicit true/false。
 - 惰性初始化、并发安全和 fallback。
 - 缺失 ID、模板错误、Catalog error/panic。
 - Content-Language 与 Vary。
 - 字段级 details 翻译。
 
-### 13.5 Renderer 与集成
+### 15.5 Renderer 与集成
 
 - JSON、Problem JSON 和 Custom Renderer。
 - HEAD body 抑制。
@@ -631,7 +779,7 @@ Renderer 属于响应关键路径：
 - Typed Handler、ToHTTPFunc、RespondError、普通 error、wrapped gerr、validator、panic。
 - OpenAPI schema 与 content type。
 
-### 13.6 Fuzz、race 和 benchmark
+### 15.6 Fuzz、race 和 benchmark
 
 Fuzz message ID、Accept-Language、Params sanitizer、error chain 和 Renderer。
 
@@ -650,6 +798,8 @@ BenchmarkJSONErrorRenderer
 BenchmarkProblemErrorRenderer
 ```
 
+性能基线使用变更前同机同 commit 构建的 benchmark 输出，`go test -run '^$' -bench <name> -benchmem -count=10`，通过 benchstat 比较。CI 保存基准工件但不对噪声较大的 ns/op 做单次硬失败；allocs/op 使用精确门槛，ns/op 以统计显著且超过 5% 判定回归。
+
 性能门槛：
 
 - 未启用功能的成功路径不得新增分配。
@@ -657,7 +807,7 @@ BenchmarkProblemErrorRenderer
 - 普通结构化错误归一化不使用反射。
 - 生产 Catalog 请求期不做文件 IO 或模板编译。
 
-## 14. 完成标准
+## 16. 完成标准
 
 - Handler 可以自然返回普通 error、wrapped gerr 或自定义 Describer。
 - 框架错误和 validator 错误自动生成稳定 message ID。
@@ -671,4 +821,3 @@ BenchmarkProblemErrorRenderer
 - 未启用功能的成功路径无显著性能回归。
 - `go test -race ./gerr/... ./ghttp/...` 通过。
 - fuzz 和目标 benchmark 有可复现记录。
-
