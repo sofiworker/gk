@@ -1,7 +1,7 @@
 # gerr
 
-Error wrapping, matching, multi-error traversal, and standard library error
-helpers.
+Structured error identities, wrapping, matching, multi-error traversal, and
+standard library error helpers.
 
 `gerr` follows Go's standard error tree model:
 
@@ -12,30 +12,43 @@ It adds a small application error type plus convenience helpers for common
 standard library shapes such as `net.Error`, `net.OpError`, `os.PathError`, and
 context cancellation.
 
-## Wrapping
+## Public errors and internal wrapping
 
 ```go
-err := gerr.Wrap(
-	cause,
-	"query user",
-	gerr.WithCode("db.query"),
-	gerr.WithKind(gerr.KindUnavailable),
-	gerr.WithOp("user.lookup"),
-	gerr.WithMeta("user_id", 42),
+err := gerr.New(
+	"user.not_found",
+	gerr.KindNotFound,
+	gerr.WithParam("user_id", 42),
+	gerr.WithCause(cause),
 )
 
-if gerr.IsCode(err, "db.query") {
-	// handle database query failure
+descriptor, ok := gerr.Describe(err)
+if ok && descriptor.ID == "user.not_found" {
+	// send descriptor.Params through a transport-specific safety policy
 }
+
+err = gerr.Wrap(
+	cause,
+	gerr.WithOp("user.lookup"),
+	gerr.WithMessage("query user"),
+	gerr.WithMeta("user_id", 42),
+)
 ```
+
+`Params` are public protocol data. `Meta`, `Op`, `Message`, and the cause are
+diagnostic data and are not included in `Descriptor`.
 
 ## Multi Error
 
 ```go
-err := gerr.NewMulti("validate config", errA, errB, errC)
+err := gerr.NewMulti(
+	"request.validation_failed",
+	gerr.KindInvalid,
+	[]error{errA, errB, errC},
+)
 
-if gerr.IsKind(err, gerr.KindInvalid) {
-	// at least one child error is invalid
+if descriptor, ok := gerr.Describe(err); ok {
+	_ = descriptor // explicit top-level identity; children remain diagnostic
 }
 
 for _, leaf := range gerr.Flatten(err) {
