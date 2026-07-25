@@ -27,7 +27,7 @@ func TestNetErrorHelpers(t *testing.T) {
 		IsTemporary: true,
 	}
 	opErr := &net.OpError{Op: "dial", Net: "tcp", Err: dnsErr}
-	err := Wrap(opErr, "connect")
+	err := Wrap(opErr, WithMessage("connect"))
 
 	if !IsTimeout(err) {
 		t.Fatal("IsTimeout should detect nested net timeout")
@@ -47,7 +47,7 @@ func TestNetErrorHelpers(t *testing.T) {
 }
 
 func TestContextAndClosedHelpers(t *testing.T) {
-	err := NewMulti("request failed", context.Canceled, context.DeadlineExceeded)
+	err := Join(context.Canceled, context.DeadlineExceeded)
 
 	if !IsCanceled(err) {
 		t.Fatal("IsCanceled should detect context.Canceled")
@@ -75,10 +75,10 @@ func TestOSWrappedErrorHelpers(t *testing.T) {
 	linkErr := &os.LinkError{Op: "link", Old: "old", New: "new", Err: os.ErrPermission}
 	syscallErr := &os.SyscallError{Syscall: "open", Err: os.ErrPermission}
 
-	if !IsNotExist(Wrap(pathErr, "load config")) {
+	if !IsNotExist(Wrap(pathErr, WithMessage("load config"))) {
 		t.Fatal("IsNotExist should detect wrapped path error")
 	}
-	if !IsPermission(NewMulti("permission failures", linkErr, syscallErr)) {
+	if !IsPermission(Join(linkErr, syscallErr)) {
 		t.Fatal("IsPermission should detect wrapped link/syscall error")
 	}
 	if got, ok := AsPathError(pathErr); !ok || got.Path != "missing.txt" {
@@ -93,7 +93,7 @@ func TestOSWrappedErrorHelpers(t *testing.T) {
 }
 
 func TestTemporaryHelperSupportsTemporaryInterface(t *testing.T) {
-	if !IsTemporary(Wrap(temporaryErr{}, "retry later")) {
+	if !IsTemporary(Wrap(temporaryErr{}, WithMessage("retry later"))) {
 		t.Fatal("IsTemporary should detect Temporary method")
 	}
 }

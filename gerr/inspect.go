@@ -55,11 +55,11 @@ func ErrorOf(err error) (*Error, bool) {
 	return nil, false
 }
 
-func IsCode(err error, code string) bool {
-	if code == "" {
+func IsID(err error, id string) bool {
+	if id == "" {
 		return false
 	}
-	return errors.Is(err, &Error{Code: code})
+	return errors.Is(err, &Error{ID: id})
 }
 
 func IsKind(err error, kind Kind) bool {

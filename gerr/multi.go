@@ -3,56 +3,63 @@ package gerr
 import "strings"
 
 type MultiError struct {
-	Message string
-	Errors  []error
+	ID     string
+	Kind   Kind
+	Params map[string]any
+	Errors []error
 }
 
-func NewMulti(message string, errs ...error) error {
+func NewMulti(id string, kind Kind, errs []error, opts ...Option) *MultiError {
+	filtered := filterErrors(errs)
+	if len(filtered) == 0 {
+		return nil
+	}
+	identity := New(id, kind, opts...)
+	return &MultiError{ID: identity.ID, Kind: identity.Kind, Params: identity.Params, Errors: filtered}
+}
+
+func Join(errs ...error) error {
+	filtered := filterErrors(errs)
+	if len(filtered) == 0 {
+		return nil
+	}
+	return &MultiError{Errors: filtered}
+}
+
+func filterErrors(errs []error) []error {
 	filtered := make([]error, 0, len(errs))
 	for _, err := range errs {
 		if err != nil {
 			filtered = append(filtered, err)
 		}
 	}
-	if len(filtered) == 0 {
-		return nil
-	}
-	return &MultiError{
-		Message: message,
-		Errors:  filtered,
-	}
-}
-
-func Join(errs ...error) error {
-	return NewMulti("", errs...)
+	return filtered
 }
 
 func (e *MultiError) Error() string {
 	if e == nil {
 		return "<nil>"
 	}
-
 	parts := make([]string, 0, len(e.Errors))
 	for _, err := range e.Errors {
-		if err != nil {
-			parts = append(parts, err.Error())
-		}
+		parts = append(parts, err.Error())
 	}
-
-	if e.Message == "" {
+	if e.ID == "" {
 		return strings.Join(parts, "\n")
 	}
-	if len(parts) == 0 {
-		return e.Message
+	return e.ID + ": " + strings.Join(parts, "; ")
+}
+
+func (e *MultiError) ErrorDescriptor() Descriptor {
+	if e == nil {
+		return Descriptor{}
 	}
-	return e.Message + ": " + strings.Join(parts, "; ")
+	return Descriptor{ID: e.ID, Kind: e.Kind, Params: cloneStringMap(e.Params)}
 }
 
 func (e *MultiError) Unwrap() []error {
-	if e == nil || len(e.Errors) == 0 {
+	if e == nil {
 		return nil
 	}
-	out := make([]error, len(e.Errors))
-	copy(out, e.Errors)
-	return out
+	return append([]error(nil), e.Errors...)
 }

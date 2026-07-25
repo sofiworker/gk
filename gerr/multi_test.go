@@ -5,28 +5,33 @@ import (
 	"testing"
 )
 
-func TestMultiErrorUnwrapsMultipleErrors(t *testing.T) {
+func TestMultiErrorHasExplicitTopLevelDescriptor(t *testing.T) {
 	errName := errors.New("name required")
-	errEmail := New("email invalid", WithCode("email.invalid"), WithKind(KindInvalid))
+	errEmail := New("email.invalid", KindInvalid)
+	multi := NewMulti("request.validation_failed", KindInvalid, []error{nil, errName, errEmail}, WithParam("source", "body"))
 
-	err := NewMulti("validate user", nil, errName, errEmail)
+	if !errors.Is(multi, errName) || !errors.Is(multi, errEmail) {
+		t.Fatal("multi error should match children")
+	}
+	descriptor, ok := Describe(multi)
+	if !ok || descriptor.ID != "request.validation_failed" || descriptor.Params["source"] != "body" {
+		t.Fatalf("Describe() = %#v, %v", descriptor, ok)
+	}
+	if len(multi.Unwrap()) != 2 {
+		t.Fatalf("children = %d, want 2", len(multi.Unwrap()))
+	}
+}
 
-	if !errors.Is(err, errName) {
-		t.Fatal("multi error should match first child")
+func TestNewMultiWithoutChildrenReturnsNil(t *testing.T) {
+	if got := NewMulti("request.validation_failed", KindInvalid, []error{nil}); got != nil {
+		t.Fatalf("NewMulti() = %v, want nil", got)
 	}
-	if !IsCode(err, "email.invalid") {
-		t.Fatal("multi error should match code from child")
-	}
-	if !IsKind(err, KindInvalid) {
-		t.Fatal("multi error should match kind from child")
-	}
+}
 
-	var multi *MultiError
-	if !errors.As(err, &multi) {
-		t.Fatal("multi error should expose *MultiError")
-	}
-	if len(multi.Errors) != 2 {
-		t.Fatalf("multi.Errors length = %d, want 2", len(multi.Errors))
+func TestJoinHasNoPublicDescriptor(t *testing.T) {
+	joined := Join(New("user.not_found", KindNotFound), New("order.conflict", KindConflict))
+	if _, ok := Describe(joined); ok {
+		t.Fatal("Join should not select a child descriptor")
 	}
 }
 
@@ -34,8 +39,7 @@ func TestFlattenReturnsLeafErrors(t *testing.T) {
 	errA := errors.New("a")
 	errB := errors.New("b")
 	errC := errors.New("c")
-
-	err := NewMulti("outer", Wrap(errA, "wrap a"), NewMulti("inner", errB, errC))
+	err := Join(Wrap(errA, WithMessage("wrap a")), Join(errB, errC))
 
 	leaves := Flatten(err)
 	if len(leaves) != 3 {
@@ -45,21 +49,6 @@ func TestFlattenReturnsLeafErrors(t *testing.T) {
 		if !containsExact(leaves, want) {
 			t.Fatalf("Flatten missing %v", want)
 		}
-	}
-}
-
-func TestContainsAndIsAny(t *testing.T) {
-	errA := errors.New("a")
-	errB := errors.New("b")
-	err := NewMulti("batch", errA, Wrap(errB, "wrap b", WithCode("b.code")))
-
-	if !Contains(err, func(candidate error) bool {
-		return IsCode(candidate, "b.code")
-	}) {
-		t.Fatal("Contains should find matching child")
-	}
-	if !IsAny(err, errors.New("missing"), errB) {
-		t.Fatal("IsAny should match any target in error tree")
 	}
 }
 

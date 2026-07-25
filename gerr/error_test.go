@@ -5,59 +5,65 @@ import (
 	"testing"
 )
 
-func TestErrorWrapsCauseAndMatchesCodeKind(t *testing.T) {
+func TestNewCreatesPublicStructuredError(t *testing.T) {
 	cause := errors.New("store unavailable")
+	params := map[string]any{"user_id": 42}
+	meta := map[string]any{"query": "select secret"}
 
-	err := Wrap(
-		cause,
-		"query user",
-		WithCode("db.query"),
-		WithKind(KindUnavailable),
+	err := New(
+		"user.not_found",
+		KindNotFound,
+		WithParams(params),
+		WithMetadata(meta),
 		WithOp("user.lookup"),
-		WithMeta("user_id", 42),
+		WithMessage("lookup user"),
+		WithCause(cause),
 	)
+	params["user_id"] = 7
+	meta["query"] = "changed"
+
+	if err.ID != "user.not_found" || err.Kind != KindNotFound {
+		t.Fatalf("identity = (%q, %q)", err.ID, err.Kind)
+	}
+	if err.Params["user_id"] != 42 || err.Meta["query"] != "select secret" {
+		t.Fatalf("maps were not copied: params=%v meta=%v", err.Params, err.Meta)
+	}
+	if !errors.Is(err, cause) || !errors.Is(err, &Error{ID: "user.not_found"}) {
+		t.Fatal("structured error should match cause and ID")
+	}
+}
+
+func TestWrapAddsInternalContextWithoutPublicIdentity(t *testing.T) {
+	cause := errors.New("store unavailable")
+	err := Wrap(cause, WithOp("user.lookup"), WithMessage("lookup user"), WithMeta("user_id", 42))
 
 	if !errors.Is(err, cause) {
 		t.Fatal("wrapped error should match cause")
 	}
-	if !errors.Is(err, &Error{Code: "db.query"}) {
-		t.Fatal("wrapped error should match target error code")
-	}
-	if !IsCode(err, "db.query") {
-		t.Fatal("IsCode should find wrapped code")
-	}
-	if !IsKind(err, KindUnavailable) {
-		t.Fatal("IsKind should find wrapped kind")
-	}
-
-	var got *Error
-	if !errors.As(err, &got) {
-		t.Fatal("wrapped error should expose *Error with errors.As")
-	}
-	if got.Op != "user.lookup" {
-		t.Fatalf("Op = %q, want user.lookup", got.Op)
-	}
-	if got.Meta["user_id"] != 42 {
-		t.Fatalf("Meta[user_id] = %v, want 42", got.Meta["user_id"])
+	descriptor, ok := Describe(err)
+	if ok {
+		t.Fatalf("Describe(internal wrapper) = %#v, true; want false", descriptor)
 	}
 }
 
-func TestNewErrorWithoutCauseMatchesCodeAndKind(t *testing.T) {
-	err := New("invalid request", WithCode("request.invalid"), WithKind(KindInvalid))
-
-	if !IsCode(err, "request.invalid") {
-		t.Fatal("IsCode should match direct error code")
-	}
-	if !IsKind(err, KindInvalid) {
-		t.Fatal("IsKind should match direct error kind")
-	}
-	if errors.Unwrap(err) != nil {
-		t.Fatal("new error without cause should not unwrap")
+func TestWrapCanReclassifyError(t *testing.T) {
+	err := Wrap(errors.New("missing"), WithID("user.not_found"), WithKind(KindNotFound), WithParam("user_id", 42))
+	descriptor, ok := Describe(err)
+	if !ok || descriptor.ID != "user.not_found" || descriptor.Params["user_id"] != 42 {
+		t.Fatalf("Describe() = %#v, %v", descriptor, ok)
 	}
 }
 
 func TestWrapNilReturnsNil(t *testing.T) {
-	if err := Wrap(nil, "ignored"); err != nil {
+	if err := Wrap(nil, WithMessage("ignored")); err != nil {
 		t.Fatalf("Wrap(nil) = %v, want nil", err)
+	}
+}
+
+func TestKindConstants(t *testing.T) {
+	for _, kind := range []Kind{KindInvalid, KindNotFound, KindConflict, KindUnauthenticated, KindPermission, KindRateLimited, KindUnavailable, KindTimeout, KindCanceled, KindInternal} {
+		if kind == KindUnknown {
+			t.Fatal("public kind must not be unknown")
+		}
 	}
 }
