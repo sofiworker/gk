@@ -28,8 +28,18 @@ func (n *defaultErrorNormalizer) NormalizeError(ctx context.Context, err error) 
 		err = errors.New("nil error")
 	}
 	normalized := NormalizedError{Cause: err}
+	var staged validationStageError
+	if errors.As(err, &staged) {
+		if result, ok := (defaultValidationErrorAdapter{}).AdaptValidationError(ctx, err); ok {
+			normalized.Kind = gerr.KindInvalid
+			normalized.Document.MessageID = "request.validation_failed"
+			normalized.Document.Details = result.Details
+		}
+	}
 	descriptor, described := gerr.Describe(err)
-	if described && allowedPublicID(err, descriptor.ID) {
+	if normalized.Document.MessageID != "" {
+		// The private validation-stage marker owns the public identity.
+	} else if described && allowedPublicID(err, descriptor.ID) {
 		normalized.Kind = descriptor.Kind
 		normalized.Document.MessageID = descriptor.ID
 		normalized.Document.Args, _ = sanitizePublicParams(descriptor.Params)

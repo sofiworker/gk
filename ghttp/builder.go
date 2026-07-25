@@ -701,7 +701,7 @@ func (b *RouteBuilder[Req, Resp]) parseAndValidateParamsWithPathParams(w http.Re
 	input := paramsFromRequestWithPathParams(r, server.config, params)
 	if validator != nil {
 		if err := validator(r.Context(), input); err != nil {
-			b.writeError(w, r, http.StatusUnprocessableEntity, mappedValidationError(b.validationError, err))
+			b.writeError(w, r, http.StatusUnprocessableEntity, validationStageError{err: mappedValidationError(b.validationError, err), input: input})
 			return Params{}, false
 		}
 	}
@@ -711,7 +711,7 @@ func (b *RouteBuilder[Req, Resp]) parseAndValidateParamsWithPathParams(w http.Re
 
 func (b *RouteBuilder[Req, Resp]) validateDirectParamsWithGlobalValidator(w http.ResponseWriter, r *http.Request, input *Params, validator Validator) bool {
 	if err := validator.Validate(r.Context(), input); err != nil {
-		b.writeError(w, r, http.StatusUnprocessableEntity, err)
+		b.writeError(w, r, http.StatusUnprocessableEntity, validationStageError{err: err, input: input})
 		return false
 	}
 	return true
@@ -754,7 +754,7 @@ func (b *RouteBuilder[Req, Resp]) parseAndValidateInputWithPathParams(w http.Res
 	}
 	if b.validator != nil {
 		if err := b.validator(r.Context(), input); err != nil {
-			b.writeError(w, r, http.StatusUnprocessableEntity, mappedValidationError(b.validationError, err))
+			b.writeError(w, r, http.StatusUnprocessableEntity, validationStageError{err: mappedValidationError(b.validationError, err), input: input})
 			var zero Req
 			return zero, false
 		}
@@ -762,7 +762,7 @@ func (b *RouteBuilder[Req, Resp]) parseAndValidateInputWithPathParams(w http.Res
 
 	if server.validator != nil && !b.skipValidation {
 		if err := server.validator.Validate(r.Context(), target); err != nil {
-			b.writeError(w, r, http.StatusUnprocessableEntity, err)
+			b.writeError(w, r, http.StatusUnprocessableEntity, validationStageError{err: err, input: target})
 			var zero Req
 			return zero, false
 		}
