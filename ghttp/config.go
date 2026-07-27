@@ -20,6 +20,11 @@ type Config struct {
 	logger            Logger
 	envelope          EnvelopeFunc
 	errorHandler      ErrorHandler
+	errorNormalizer   ErrorNormalizer
+	errorRenderer     ErrorRenderer
+	errorObservers    []ErrorObserver
+	kindStatusMapper  KindStatusMapper
+	errorDetails      []ErrorDetailAdapter
 	bodyDecoder       BodyDecodeFunc
 	produces          []string
 	consumes          []string
@@ -89,6 +94,31 @@ func WithErrorHandler(handler ErrorHandler) ServerOption {
 	return func(c *Config) {
 		c.errorHandler = handler
 	}
+}
+
+// WithErrorNormalizer replaces the default structured error normalizer.
+func WithErrorNormalizer(normalizer ErrorNormalizer) ServerOption {
+	return func(c *Config) { c.errorNormalizer = normalizer }
+}
+
+// WithErrorRenderer sets the server-wide structured error representation.
+func WithErrorRenderer(renderer ErrorRenderer) ServerOption {
+	return func(c *Config) { c.errorRenderer = renderer }
+}
+
+// WithErrorObservers registers synchronous observers for final errors.
+func WithErrorObservers(observers ...ErrorObserver) ServerOption {
+	return func(c *Config) { c.errorObservers = append(c.errorObservers, observers...) }
+}
+
+// WithKindStatusMapper replaces the default transport mapping for error kinds.
+func WithKindStatusMapper(mapper KindStatusMapper) ServerOption {
+	return func(c *Config) { c.kindStatusMapper = mapper }
+}
+
+// WithErrorDetailAdapters registers explicit adapters for public error details.
+func WithErrorDetailAdapters(adapters ...ErrorDetailAdapter) ServerOption {
+	return func(c *Config) { c.errorDetails = append(c.errorDetails, adapters...) }
 }
 
 // WithBodyDecoder sets a custom request body decoder for this server.

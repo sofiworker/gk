@@ -25,14 +25,17 @@ type Server struct {
 	config   *Config
 	compiled atomic.Pointer[compiledState]
 
-	codecMgr     *CodecManager
-	renderer     Renderer
-	envelope     EnvelopeFunc
-	errorHandler ErrorHandler
-	validator    Validator
-	logger       Logger
-	produces     []string
-	consumes     []string
+	codecMgr        *CodecManager
+	renderer        Renderer
+	envelope        EnvelopeFunc
+	errorHandler    ErrorHandler
+	errorNormalizer ErrorNormalizer
+	errorRenderer   ErrorRenderer
+	errorObservers  []ErrorObserver
+	validator       Validator
+	logger          Logger
+	produces        []string
+	consumes        []string
 
 	middlewares []Middleware
 
@@ -58,15 +61,24 @@ func New(opts ...ServerOption) *Server {
 	}
 
 	s := &Server{
-		registry:     newRouteRegistry(c.strictRouting),
-		config:       c,
-		codecMgr:     NewCodecManager(),
-		envelope:     c.envelope,
-		errorHandler: c.errorHandler,
-		validator:    newDefaultValidator(),
-		logger:       c.logger,
-		produces:     c.produces,
-		consumes:     c.consumes,
+		registry:       newRouteRegistry(c.strictRouting),
+		config:         c,
+		codecMgr:       NewCodecManager(),
+		envelope:       c.envelope,
+		errorHandler:   c.errorHandler,
+		errorRenderer:  c.errorRenderer,
+		errorObservers: append([]ErrorObserver(nil), c.errorObservers...),
+		validator:      newDefaultValidator(),
+		logger:         c.logger,
+		produces:       c.produces,
+		consumes:       c.consumes,
+	}
+	if s.errorRenderer == nil {
+		s.errorRenderer = JSONErrorRenderer()
+	}
+	s.errorNormalizer = c.errorNormalizer
+	if s.errorNormalizer == nil {
+		s.errorNormalizer = newDefaultErrorNormalizer(c.kindStatusMapper, c.errorDetails)
 	}
 	if c.validator != nil {
 		s.validator = c.validator
@@ -311,8 +323,12 @@ func (s *Server) dispatchError(w http.ResponseWriter, r *http.Request, defaultCo
 		}
 		return true
 	}
-	if s == nil || s.errorHandler == nil {
+	if s == nil {
 		return false
+	}
+	if s.errorHandler == nil {
+		s.respondError(w, r, defaultCode, err)
+		return true
 	}
 	if !beginResponseErrorHandler(r) {
 		if s.logger != nil {

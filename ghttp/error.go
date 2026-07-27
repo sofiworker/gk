@@ -49,6 +49,8 @@ func (e *HTTPError) Error() string {
 
 func (e *HTTPError) Unwrap() error { return e.Err }
 
+func (e *HTTPError) HTTPStatus() int { return e.Code }
+
 // ErrorOption configures an HTTPError.
 type ErrorOption func(*HTTPError)
 

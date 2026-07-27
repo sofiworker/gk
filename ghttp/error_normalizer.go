@@ -57,7 +57,9 @@ func (n *defaultErrorNormalizer) NormalizeError(ctx context.Context, err error) 
 	if normalized.Kind == gerr.KindCanceled {
 		normalized.SuppressResponse = true
 	}
-	if status, ok := outerHTTPStatus(err); ok {
+	if normalized.Document.MessageID == "request.validation_failed" {
+		normalized.Document.Status = http.StatusUnprocessableEntity
+	} else if status, ok := outerHTTPStatus(err); ok {
 		normalized.Document.Status = status
 	} else {
 		normalized.Document.Status = n.mapper.HTTPStatus(normalized.Kind)
