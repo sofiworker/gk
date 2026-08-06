@@ -3,6 +3,7 @@ package ghttp
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"mime"
@@ -905,6 +906,10 @@ func writeErrorWithCodec(w http.ResponseWriter, r *http.Request, s *Server, defa
 		return
 	}
 	code := statusCodeFromError(defaultCode, err)
+	if s.config.problemDetails {
+		writeProblemDetails(w, r, s, code, err)
+		return
+	}
 	body := HTTPError{Code: code, Message: http.StatusText(code), Err: err}
 	if he := AsError(err); he != nil {
 		body = *he
@@ -926,6 +931,27 @@ func writeErrorWithCodec(w http.ResponseWriter, r *http.Request, s *Server, defa
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(code)
 	_ = codec.Marshal(w, &body)
+}
+
+func writeProblemDetails(w http.ResponseWriter, r *http.Request, s *Server, code int, err error) {
+	detail := http.StatusText(code)
+	if he := AsError(err); he != nil {
+		if he.Message != "" {
+			detail = he.Message
+		}
+	} else if s.config.exposeErrorDetails {
+		detail = err.Error()
+	}
+	body := map[string]any{
+		"type":     "about:blank",
+		"title":    http.StatusText(code),
+		"status":   code,
+		"detail":   detail,
+		"instance": r.URL.Path,
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 func statusCodeFromError(defaultCode int, err error) int {
@@ -1002,15 +1028,15 @@ func negotiateRouteCodec(w http.ResponseWriter, r *http.Request, s *Server, prod
 	if matched {
 		return contentType, codec, true
 	}
-	if s.config.strictContentNegotiation {
-		writeError(w, r, s, http.StatusNotAcceptable, Err(http.StatusNotAcceptable, http.StatusText(http.StatusNotAcceptable)))
-		return "", nil, false
-	}
 	if len(codecs) == 0 {
 		writeError(w, r, s, http.StatusInternalServerError, ErrRouteProducesUnsupported)
 		return "", nil, false
 	}
-	return codecs[0].contentType, codecs[0].codec, true
+	if s.config.lenientContentNegotiation {
+		return codecs[0].contentType, codecs[0].codec, true
+	}
+	writeError(w, r, s, http.StatusNotAcceptable, Err(http.StatusNotAcceptable, http.StatusText(http.StatusNotAcceptable)))
+	return "", nil, false
 }
 
 func resolveResponseCodecs(s *Server, produces []string) []responseCodec {

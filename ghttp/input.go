@@ -306,14 +306,23 @@ func parseBody(r *http.Request, bodyField reflect.Value, c *Config, codecMgr *Co
 		codecMgr = NewCodecManager()
 	}
 	mediaType := normalizeContentType(ct)
-	codec, ok := codecMgr.Resolve(mediaType)
-	if !ok {
-		if c != nil && c.strictContentType {
-			return Err(http.StatusUnsupportedMediaType, fmt.Sprintf("unsupported media type %q", ct), WithCause(ErrUnsupportedMediaType))
-		}
+	var codec Codec
+	var ok bool
+	if mediaType == "" {
+		// Missing Content-Type is a documented protocol convenience: decode
+		// as JSON (gin-style). Unknown explicit types stay strict (415).
 		codec, ok = codecMgr.Resolve(MIMEJSON)
-		if !ok {
-			return fmt.Errorf("ghttp: json codec not registered")
+	} else {
+		codec, ok = codecMgr.Resolve(mediaType)
+	}
+	if !ok {
+		if c != nil && c.lenientContentType {
+			codec, ok = codecMgr.Resolve(MIMEJSON)
+			if !ok {
+				return fmt.Errorf("ghttp: json codec not registered")
+			}
+		} else {
+			return Err(http.StatusUnsupportedMediaType, fmt.Sprintf("unsupported media type %q", ct), WithCause(ErrUnsupportedMediaType))
 		}
 	}
 	return codec.Unmarshal(r.Body, bodyField.Addr().Interface())

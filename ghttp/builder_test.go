@@ -1015,7 +1015,7 @@ func TestSSEHandlerUsesParams(t *testing.T) {
 }
 
 func TestRouteBuilderProducesNegotiatesConfiguredContentTypes(t *testing.T) {
-	app := New(WithProduces(MIMEJSON, MIMEXML))
+	app := New(WithProduces(MIMEJSON, MIMEXML), WithLenientContentNegotiation())
 
 	type output struct {
 		Message string `json:"message" xml:"message"`

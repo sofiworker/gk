@@ -28,7 +28,7 @@ func TestStrictContentNegotiationReturns406(t *testing.T) {
 }
 
 func TestLenientContentNegotiationFallsBack(t *testing.T) {
-	app := New(WithProduces(MIMEJSON))
+	app := New(WithProduces(MIMEJSON), WithLenientContentNegotiation())
 	Route[Params, map[string]string](app).GET("/ping").To(func(context.Context, Params) (map[string]string, error) {
 		return map[string]string{"name": "pong"}, nil
 	})
@@ -53,7 +53,7 @@ func TestStrictContentTypeReturns415(t *testing.T) {
 			Name string `json:"name"`
 		}
 	}
-	app := New(WithProduces(MIMEJSON), WithStrictContentType())
+	app := New(WithProduces(MIMEJSON))
 	Route[input, struct{}](app).POST("/users").To(func(context.Context, input) (struct{}, error) {
 		return struct{}{}, nil
 	})
@@ -65,5 +65,33 @@ func TestStrictContentTypeReturns415(t *testing.T) {
 
 	if w.Code != http.StatusUnsupportedMediaType {
 		t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusUnsupportedMediaType, w.Body.String())
+	}
+}
+
+func TestLenientContentTypeFallsBackToJSON(t *testing.T) {
+	type input struct {
+		Params
+		Body struct {
+			Name string `json:"name"`
+		}
+	}
+	app := New(WithProduces(MIMEJSON), WithLenientContentType())
+	Route[input, struct {
+		Name string `json:"name"`
+	}](app).POST("/users").To(func(context.Context, input) (struct {
+		Name string `json:"name"`
+	}, error) {
+		return struct {
+			Name string `json:"name"`
+		}{}, nil
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(`{"name":"a"}`))
+	req.Header.Set("Content-Type", "application/octet-stream")
+	app.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
 	}
 }

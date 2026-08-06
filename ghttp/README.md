@@ -185,7 +185,20 @@ ghttp.Route[CreateUserInput, UserOutput](s).
 
 `Consumes` 只约束带 `Body` 的自动解析路由。请求 `Content-Type` 为空时仍按默认 JSON 解析；显式传入不匹配的媒体类型会返回 `415 Unsupported Media Type`。
 
-默认行为遵循“显式优于隐式”：无 `Accept` 匹配时响应回退到第一个 `Produces` 类型（`WithStrictContentNegotiation()` 可改为返回 `406 Not Acceptable`）；未知请求 `Content-Type` 默认按 JSON 解析（`WithStrictContentType()` 可改为返回 `415 Unsupported Media Type`）。
+`application/x-www-form-urlencoded` 表单支持显式 `form:"name"` tag 绑定到 `Body` 结构体字段（标量类型；重复 key 取第一个值）。
+
+### 默认值速查
+
+| 场景 | 默认行为 | 显式覆盖 |
+|------|----------|----------|
+| `Accept` 明确列出但无匹配 | `406 Not Acceptable`（huma/go-restful 风格） | `WithLenientContentNegotiation()` 回退第一个 `Produces` |
+| `Accept` 为空或 `*/*` | 第一个 `Produces` | — |
+| 显式但未注册的请求 `Content-Type` | `415 Unsupported Media Type`（huma/go-restful 风格） | `WithLenientContentType()` 按 JSON 解析 |
+| 缺失请求 `Content-Type` | 按 JSON 解析（gin 风格协议便利） | — |
+| 已注册 codec 无法解码目标类型 | `400 Bad Request`（codec 报错，不静默吞掉） | — |
+| 错误响应体 | `{code,message}` | `WithProblemDetails()` 使用 RFC 9457 `application/problem+json` |
+
+`WithStrictContentNegotiation()` / `WithStrictContentType()` 保留为兼容别名（当前默认已是严格行为，调用无额外效果）。
 
 `Params` 是请求输入的**惰性视图**：query/cookie/客户端 IP 在首次访问时解析并缓存，header 直接透读请求，构造本身几乎零开销。它不持有 `ResponseWriter`，也不负责中断请求或写响应；cookie 写入通过输出对象完成。
 
@@ -276,6 +289,8 @@ func (o LoginOutput) Cookies() []*http.Cookie {
 可通过 `WithEnvelope(fn)` 自定义包装格式。
 
 `EnvelopeFunc` 签名为 `func(w http.ResponseWriter, r *http.Request, statusCode int, resp interface{}, err error, contentType string, codec Codec)`；`contentType`/`codec` 是路由协商结果，envelope 只允许包装 body，不得改写 HTTP 状态码。错误响应默认只返回 HTTP 状态文本，`WithExposeErrorDetails()` 开启后才返回内部错误信息（显式 `HTTPError` 消息始终返回）。
+
+`WithProblemDetails()` 开启后，错误响应改用 RFC 9457 `application/problem+json`（`type/title/status/detail/instance`），错误场景优先于 envelope；显式 `WithErrorHandler` 优先级最高。
 
 类型化响应可显式声明状态码与响应头：响应对象实现 `StatusCode() int` 与/或 `WriteResponseHeaders(http.Header)`，或在 builder 上用 `.Status(code)`/`.ResponseHeader(name, value)` 声明固定值。204/304/1xx 自动不写 body；动态状态（`StatusCode()`）无法静态推断，OpenAPI 以 builder `Status` 为准。
 

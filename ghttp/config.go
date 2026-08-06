@@ -14,39 +14,40 @@ const DefaultMaxBodyBytes int64 = 4 << 20
 
 // Config holds server configuration.
 type Config struct {
-	address                  string
-	renderer                 Renderer
-	validator                Validator
-	logger                   Logger
-	envelope                 EnvelopeFunc
-	errorHandler             ErrorHandler
-	bodyDecoder              BodyDecodeFunc
-	produces                 []string
-	consumes                 []string
-	clientIPResolver         ClientIPResolver
-	vfsPath                  string
-	strictRouting            bool
-	exposeErrorDetails       bool
-	openAPIEnabled           bool
-	openAPITitle             string
-	openAPIVersion           string
-	openAPIPath              string
-	openAPIPathSet           bool
-	openAPIServers           []string
-	openAPISecurity          []map[string][]string
-	strictContentNegotiation bool
-	strictContentType        bool
-	webSocketCheckOrigin     func(*http.Request) bool
-	readTimeout              time.Duration
-	readHeaderTimeout        time.Duration
-	writeTimeout             time.Duration
-	idleTimeout              time.Duration
-	maxHeaderBytes           int
-	maxBodyBytes             int64
-	tlsConfig                *tls.Config
-	baseContext              func(net.Listener) context.Context
-	connContext              func(context.Context, net.Conn) context.Context
-	errorLog                 *log.Logger
+	address                   string
+	renderer                  Renderer
+	validator                 Validator
+	logger                    Logger
+	envelope                  EnvelopeFunc
+	errorHandler              ErrorHandler
+	bodyDecoder               BodyDecodeFunc
+	produces                  []string
+	consumes                  []string
+	clientIPResolver          ClientIPResolver
+	vfsPath                   string
+	strictRouting             bool
+	exposeErrorDetails        bool
+	openAPIEnabled            bool
+	openAPITitle              string
+	openAPIVersion            string
+	openAPIPath               string
+	openAPIPathSet            bool
+	openAPIServers            []string
+	openAPISecurity           []map[string][]string
+	lenientContentNegotiation bool
+	lenientContentType        bool
+	problemDetails            bool
+	webSocketCheckOrigin      func(*http.Request) bool
+	readTimeout               time.Duration
+	readHeaderTimeout         time.Duration
+	writeTimeout              time.Duration
+	idleTimeout               time.Duration
+	maxHeaderBytes            int
+	maxBodyBytes              int64
+	tlsConfig                 *tls.Config
+	baseContext               func(net.Listener) context.Context
+	connContext               func(context.Context, net.Conn) context.Context
+	errorLog                  *log.Logger
 }
 
 // ClientIPResolver resolves a client IP from an HTTP request.
@@ -157,21 +158,45 @@ func WithOpenAPISecurity(requirements ...map[string][]string) ServerOption {
 	}
 }
 
-// WithStrictContentNegotiation returns 406 when no route Produces candidate
-// is acceptable per the request Accept header. Default: fall back to the
-// first declared Produces type (documented default).
+// WithStrictContentNegotiation is kept for compatibility. Since the default
+// behavior already returns 406 when no Produces candidate is acceptable, this
+// option is a no-op.
 func WithStrictContentNegotiation() ServerOption {
 	return func(c *Config) {
-		c.strictContentNegotiation = true
+		c.lenientContentNegotiation = false
 	}
 }
 
-// WithStrictContentType returns 415 when a request Content-Type is not
-// registered with the CodecManager and no route/server Consumes matched.
-// Default: unknown types are decoded as JSON (documented default).
+// WithLenientContentNegotiation falls back to the first declared Produces
+// type when no Accept candidate matches (gin-style convenience).
+func WithLenientContentNegotiation() ServerOption {
+	return func(c *Config) {
+		c.lenientContentNegotiation = true
+	}
+}
+
+// WithStrictContentType is kept for compatibility. Since the default behavior
+// already returns 415 for unknown request Content-Types, this option is a
+// no-op.
 func WithStrictContentType() ServerOption {
 	return func(c *Config) {
-		c.strictContentType = true
+		c.lenientContentType = false
+	}
+}
+
+// WithLenientContentType decodes unknown request Content-Types as JSON
+// (gin-style convenience). Default: 415 Unsupported Media Type.
+func WithLenientContentType() ServerOption {
+	return func(c *Config) {
+		c.lenientContentType = true
+	}
+}
+
+// WithProblemDetails enables RFC 9457 application/problem+json error
+// responses. Default: framework's {code,message} error body.
+func WithProblemDetails() ServerOption {
+	return func(c *Config) {
+		c.problemDetails = true
 	}
 }
 

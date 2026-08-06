@@ -95,6 +95,22 @@ func TestFormCodecUnmarshal(t *testing.T) {
 	}
 }
 
+func TestFormCodecUnmarshalStruct(t *testing.T) {
+	codec := &FormCodec{}
+	type profile struct {
+		Name string `form:"name"`
+		Age  int    `form:"age"`
+		Tag  string `form:"-"`
+	}
+	var p profile
+	if err := codec.Unmarshal(strings.NewReader("name=alice&age=18"), &p); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if p.Name != "alice" || p.Age != 18 || p.Tag != "" {
+		t.Fatalf("profile = %#v", p)
+	}
+}
+
 func TestPlainCodecUnmarshalRejectsUnsupportedTarget(t *testing.T) {
 	codec := &PlainCodec{}
 	var target struct {

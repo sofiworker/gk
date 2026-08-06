@@ -90,6 +90,24 @@ func TestParseMultipartFormValues(t *testing.T) {
 	assert.Equal(t, 30, input.Body.Age)
 }
 
+func TestParseURLEncodedFormValues(t *testing.T) {
+	req := httptest.NewRequest("POST", "/submit", bytes.NewBufferString("name=Carol&age=28"))
+	req.Header.Set("Content-Type", MIMEPOSTForm)
+
+	type formInput struct {
+		Body struct {
+			Name string `form:"name"`
+			Age  int    `form:"age"`
+		}
+	}
+
+	var input formInput
+	err := parseInput(req, &input)
+	require.NoError(t, err)
+	assert.Equal(t, "Carol", input.Body.Name)
+	assert.Equal(t, 28, input.Body.Age)
+}
+
 func TestParseMultipartFormEmptyBody(t *testing.T) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)

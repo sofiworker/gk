@@ -1976,8 +1976,8 @@ git commit -m "perf(ghttp): reduce full-chain allocations with single response w
 
 ## 已确认决策（2026-08-06 review 确认）
 
-1. 406 默认行为：**宽松回退 + 显式 `WithStrictContentNegotiation()`**，按 Task 1.3 实施。
-2. 请求 Content-Type 默认：**未知类型按 JSON + 显式 `WithStrictContentType()`**，按 Task 1.4 实施。
+1. 406 默认行为：**已被 `docs/superpowers/specs/2026-08-06-ghttp-negotiation-form-problem-design.md` 取代**——默认 406，`WithLenientContentNegotiation()` 显式宽松；`WithStrictContentNegotiation()` 保留为兼容别名。
+2. 请求 Content-Type 默认：**已被上述设计取代**——显式未知类型默认 415，缺失类型按 JSON；`WithLenientContentType()` 显式宽松，`WithStrictContentType()` 保留为兼容别名。
 3. server 级 validator：**默认关闭**，需 `WithValidator` 显式启用，按 Task 2.2 实施（标注破坏性）。
 4. 类型化状态码：**接口（`StatusCoder`/`ResponseHeaderWriter`）+ builder 固定值（`.Status()`/`.ResponseHeader()`）**，不引入 tag 反射，按 Task 3.1 实施。
 5. WebSocket 默认策略：**同源放行、缺 Origin 放行、跨源 403**，用户未提出异议，按 Task 5.2 实施。

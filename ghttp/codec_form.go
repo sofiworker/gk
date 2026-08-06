@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"reflect"
+	"strings"
 )
 
 // FormCodec handles application/x-www-form-urlencoded.
@@ -56,6 +58,47 @@ func (c *FormCodec) Unmarshal(r io.Reader, v interface{}) error {
 		*target = data
 		return nil
 	default:
-		return fmt.Errorf("form codec: unsupported target %T", v)
+		rv := reflect.ValueOf(v)
+		if rv.Kind() != reflect.Ptr || rv.IsNil() || rv.Elem().Kind() != reflect.Struct {
+			return fmt.Errorf("form codec: unsupported target %T", v)
+		}
+		return fillFormStruct(values, rv.Elem())
 	}
+}
+
+func fillFormStruct(values url.Values, target reflect.Value) error {
+	t := target.Type()
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		name, ok := formFieldName(f)
+		if !ok {
+			continue
+		}
+		value := values.Get(name)
+		if value == "" {
+			value = f.Tag.Get("default")
+		}
+		if value == "" {
+			continue
+		}
+		if err := setValueFromString(target.Field(i), value); err != nil {
+			return fmt.Errorf("bind form %q to %s: %w", name, f.Name, err)
+		}
+	}
+	return nil
+}
+
+func formFieldName(f reflect.StructField) (string, bool) {
+	tag := f.Tag.Get("form")
+	if tag == "" || tag == "-" {
+		return "", false
+	}
+	name := strings.Split(tag, ",")[0]
+	if name == "" {
+		return "", false
+	}
+	return name, true
 }
