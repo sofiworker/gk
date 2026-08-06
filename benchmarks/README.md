@@ -11,8 +11,7 @@
 
 | 名称 | 版本 | 类型 | 说明 |
 |------|------|------|------|
-| `ghttp-radix` | 本仓库 | 泛型类型化 | ghttp 默认 RadixRouter |
-| `ghttp-std` | 本仓库 | 泛型类型化 | ghttp + Go 1.22 ServeMux 适配路由器 |
+| `ghttp` | 本仓库 | 泛型类型化 | ghttp 重建后的编译路由器 |
 | `stdmux` | 标准库 | 基线 | `net/http` ServeMux（Go 1.22+ 方法/模式路由）|
 | `gin` | v1.12 | 传统 | 最流行的 Go Web 框架 |
 | `echo` | v4.15 | 传统 | labstack/echo |

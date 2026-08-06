@@ -233,16 +233,29 @@ func (r *hertzMatchRunner) probe(spec reqSpec) int {
 
 var noopHTTP = http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 
-func buildGhttpMatch(newRouter func() ghttp.Router) func([]apiRoute) matchRunner {
-	return func(routes []apiRoute) matchRunner {
-		r := newRouter()
-		for _, rt := range routes {
-			if err := r.Register(rt.method, curlyPath(rt.path), noopHTTP); err != nil {
-				panic(err)
-			}
-		}
-		return httpMatchRunner{h: r}
+func buildGhttpMatch(routes []apiRoute) matchRunner {
+	s := ghttp.New(ghttp.WithProduces(ghttp.MIMEJSON))
+	handler := func(context.Context, ghttp.Params) (struct{}, error) {
+		return struct{}{}, nil
 	}
+	for _, rt := range routes {
+		path := curlyPath(rt.path)
+		switch rt.method {
+		case http.MethodGet:
+			ghttp.Route[ghttp.Params, struct{}](s).GET(path).To(handler)
+		case http.MethodPost:
+			ghttp.Route[ghttp.Params, struct{}](s).POST(path).To(handler)
+		case http.MethodPut:
+			ghttp.Route[ghttp.Params, struct{}](s).PUT(path).To(handler)
+		case http.MethodDelete:
+			ghttp.Route[ghttp.Params, struct{}](s).DELETE(path).To(handler)
+		case http.MethodPatch:
+			ghttp.Route[ghttp.Params, struct{}](s).PATCH(path).To(handler)
+		default:
+			panic(fmt.Sprintf("ghttp: unsupported benchmark method %s", rt.method))
+		}
+	}
+	return httpMatchRunner{h: s}
 }
 
 func buildStdMuxMatch(routes []apiRoute) matchRunner {
@@ -394,8 +407,7 @@ var routingAdapters = []routingAdapter{
 	{"echo", buildEchoMatch},
 	{"fiber", buildFiberMatch},
 	{"fuego", buildFuegoMatch},
-	{"ghttp-radix", buildGhttpMatch(func() ghttp.Router { return ghttp.NewRadixRouter() })},
-	{"ghttp-std", buildGhttpMatch(func() ghttp.Router { return ghttp.NewStdRouter() })},
+	{"ghttp", buildGhttpMatch},
 	{"gin", buildGinMatch},
 	{"go-restful", buildGoRestfulMatch},
 	{"gorilla-mux", buildGorillaMatch},

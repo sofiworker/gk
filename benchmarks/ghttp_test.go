@@ -7,8 +7,7 @@ import (
 	"github.com/sofiworker/gk/ghttp"
 )
 
-// ghttp (this repository). Two variants: the default RadixRouter and the
-// Go 1.22+ ServeMux-based StdRouter.
+// ghttp (this repository). Single variant using the rebuilt compiled router.
 //
 // Note: ghttp's idiomatic response is the typed-handler pipeline with the
 // default JSON envelope ({code,msg,data}), so its responses carry a small,
@@ -45,12 +44,8 @@ type ghttpOrderIn struct {
 	Body orderIn
 }
 
-func newGhttpServer(router ghttp.Router) *ghttp.Server {
-	opts := []ghttp.ServerOption{ghttp.WithProduces(ghttp.MIMEJSON)}
-	if router != nil {
-		opts = append(opts, ghttp.WithRouter(router))
-	}
-	s := ghttp.New(opts...)
+func newGhttpServer() *ghttp.Server {
+	s := ghttp.New(ghttp.WithProduces(ghttp.MIMEJSON))
 
 	// static
 	ghttp.Route[ghttp.Params, pingOut](s).GET("/ping").
@@ -167,6 +162,5 @@ func newGhttpServer(router ghttp.Router) *ghttp.Server {
 }
 
 func init() {
-	register(&httpTarget{n: "ghttp-radix", h: newGhttpServer(nil)}, nil)
-	register(&httpTarget{n: "ghttp-std", h: newGhttpServer(ghttp.NewStdRouter())}, nil)
+	register(&httpTarget{n: "ghttp", h: newGhttpServer()}, nil)
 }
