@@ -104,9 +104,7 @@ func parseRequestPath(rawPath string, strict bool) (requestPath, error) {
 		return requestPath{}, nil
 	}
 	path := rawPath
-	if strings.HasPrefix(path, "/") {
-		path = path[1:]
-	}
+	path = strings.TrimPrefix(path, "/")
 	trailing := strings.HasSuffix(path, "/")
 	if trailing {
 		path = path[:len(path)-1]

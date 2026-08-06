@@ -284,6 +284,7 @@ func (o LoginOutput) Cookies() []*http.Cookie {
 ```go
 // 注入结构化 logger，glog.Default() 可直接满足 ghttp.Logger。
 s := ghttp.New(ghttp.WithLogger(glog.Default()))
+// 或使用标准库 slog 适配：s := ghttp.New(ghttp.WithLogger(ghttp.NewSlogLogger(slog.Default())))
 
 s.Use(ghttp.RequestID())
 s.Use(ghttp.CORS(ghttp.CORSConfig{
@@ -296,6 +297,22 @@ s.Use(ghttp.Timeout(5 * time.Second))
 // 分组路由添加中间件
 group := s.Group("/api")
 group.Use(authMiddleware)
+
+// 中间件中读取已匹配的路径参数（显式访问器，默认不注入 context）
+s.Use(func(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        id := s.MatchedParams(r).Path("id")
+        _ = id
+        next.ServeHTTP(w, r)
+    })
+})
+
+// RBAC 能力：Authorizer 接口 + 默认 RBAC 实现
+s.Use(ghttp.RBACMiddleware(authz,
+    func(r *http.Request) string { return r.Header.Get("X-User") },
+    func(r *http.Request) string { return "users:read" },
+    func(r *http.Request) string { return r.URL.Path },
+))
 ```
 
 ### WebSocket
@@ -311,6 +328,8 @@ ghttp.Route[struct{}, struct{}](s).GET("/ws/{room}").ToWebSocket(func(ctx contex
 })
 ```
 
+WebSocket 默认执行同源校验：同源或缺 `Origin` 放行，跨源返回 403。可用 `WithWebSocketOriginChecker(fn)` 替换默认策略。
+
 ### SSE
 
 ```go
@@ -321,6 +340,9 @@ ghttp.Route[struct{}, struct{}](s).GET("/events").ToSSE(func(ctx context.Context
     }
     return nil
 })
+
+// SSEWriter 还提供 WriteEventWithID / WriteComment / Retry；
+// data 含换行时会按规范拆成多行 data: 字段。
 
 stream, err := client.SSE("/events", ghttp.SSEConfig{
     Reconnect:     true,
@@ -368,6 +390,8 @@ ghttp.Route[NoInput, NoOutput](s).GET("/page").Produces(ghttp.MIMEJSON, ghttp.MI
 document, err := s.OpenAPI()
 ```
 
+`WithOpenAPIServers(urls...)` 与 `WithOpenAPISecurity(requirements...)` 可声明文档级 servers/security；envelope 启用时自动生成 `{code,msg,data}` 包装 schema，类型化路由附带 404/405 错误响应。
+
 ### 验证器
 
 ```go
@@ -382,6 +406,8 @@ func (v *validator) Validate(i any) error {
 
 s = ghttp.New(ghttp.WithValidator(&validator{}))
 ```
+
+server 级 validator **默认关闭**：`New()` 不自动安装任何 validator，需要 `WithValidator(v)` 显式启用（破坏性变更）；`ghttp.NewDefaultValidator()` 可恢复内置 struct-tag 校验。路由级 `.Validate(fn)` 与 `.SkipValidation()` 不受影响。
 
 ---
 

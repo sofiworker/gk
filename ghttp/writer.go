@@ -62,28 +62,7 @@ func beginResponseErrorHandler(r *http.Request) bool {
 
 func newResponseWriteState(w http.ResponseWriter, suppressBody bool) (*responseWriteState, http.ResponseWriter) {
 	state := &responseWriteState{ResponseWriter: w, suppressBody: suppressBody}
-	_, flushes := w.(http.Flusher)
-	_, hijacks := w.(http.Hijacker)
-	_, pushes := w.(http.Pusher)
-
-	switch {
-	case flushes && hijacks && pushes:
-		return state, &responseWriteStateFlushHijackPush{responseWriteState: state}
-	case flushes && hijacks:
-		return state, &responseWriteStateFlushHijack{responseWriteState: state}
-	case flushes && pushes:
-		return state, &responseWriteStateFlushPush{responseWriteState: state}
-	case hijacks && pushes:
-		return state, &responseWriteStateHijackPush{responseWriteState: state}
-	case flushes:
-		return state, &responseWriteStateFlush{responseWriteState: state}
-	case hijacks:
-		return state, &responseWriteStateHijack{responseWriteState: state}
-	case pushes:
-		return state, &responseWriteStatePush{responseWriteState: state}
-	default:
-		return state, state
-	}
+	return state, state
 }
 
 func (w *responseWriteState) WriteHeader(code int) {
@@ -144,77 +123,31 @@ func (w *responseWriteState) clearBuffered() {
 	w.mu.Unlock()
 }
 
-func (w *responseWriteState) flush() {
-	w.WriteHeader(http.StatusOK)
-	w.ResponseWriter.(http.Flusher).Flush()
+func (w *responseWriteState) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
-func (w *responseWriteState) hijack() (net.Conn, *bufio.ReadWriter, error) {
-	conn, readWriter, err := w.ResponseWriter.(http.Hijacker).Hijack()
+func (w *responseWriteState) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	conn, rw, err := h.Hijack()
 	if err == nil {
 		w.mu.Lock()
 		w.hijacked = true
 		w.mu.Unlock()
 	}
-	return conn, readWriter, err
+	return conn, rw, err
 }
 
-func (w *responseWriteState) push(target string, options *http.PushOptions) error {
-	return w.ResponseWriter.(http.Pusher).Push(target, options)
-}
-
-type responseWriteStateFlush struct{ *responseWriteState }
-
-func (w *responseWriteStateFlush) Flush() { w.responseWriteState.flush() }
-
-type responseWriteStateHijack struct{ *responseWriteState }
-
-func (w *responseWriteStateHijack) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	return w.responseWriteState.hijack()
-}
-
-type responseWriteStatePush struct{ *responseWriteState }
-
-func (w *responseWriteStatePush) Push(target string, options *http.PushOptions) error {
-	return w.responseWriteState.push(target, options)
-}
-
-type responseWriteStateFlushHijack struct{ *responseWriteState }
-
-func (w *responseWriteStateFlushHijack) Flush() { w.responseWriteState.flush() }
-
-func (w *responseWriteStateFlushHijack) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	return w.responseWriteState.hijack()
-}
-
-type responseWriteStateFlushPush struct{ *responseWriteState }
-
-func (w *responseWriteStateFlushPush) Flush() { w.responseWriteState.flush() }
-
-func (w *responseWriteStateFlushPush) Push(target string, options *http.PushOptions) error {
-	return w.responseWriteState.push(target, options)
-}
-
-type responseWriteStateHijackPush struct{ *responseWriteState }
-
-func (w *responseWriteStateHijackPush) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	return w.responseWriteState.hijack()
-}
-
-func (w *responseWriteStateHijackPush) Push(target string, options *http.PushOptions) error {
-	return w.responseWriteState.push(target, options)
-}
-
-type responseWriteStateFlushHijackPush struct{ *responseWriteState }
-
-func (w *responseWriteStateFlushHijackPush) Flush() { w.responseWriteState.flush() }
-
-func (w *responseWriteStateFlushHijackPush) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	return w.responseWriteState.hijack()
-}
-
-func (w *responseWriteStateFlushHijackPush) Push(target string, options *http.PushOptions) error {
-	return w.responseWriteState.push(target, options)
+func (w *responseWriteState) Push(target string, options *http.PushOptions) error {
+	if p, ok := w.ResponseWriter.(http.Pusher); ok {
+		return p.Push(target, options)
+	}
+	return http.ErrNotSupported
 }
 
 // ResponseWriter wraps http.ResponseWriter with additional convenience methods.

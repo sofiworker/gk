@@ -28,6 +28,8 @@ var (
 
 	ErrRendererNotConfigured = errors.New("renderer is not configured")
 	ErrStaticRootRequired    = errors.New("static root cannot be empty")
+	ErrRBACNotConfigured     = errors.New("rbac not configured")
+	ErrForbidden             = errors.New("forbidden")
 )
 
 // HTTPError is a structured HTTP error with code and message.

@@ -11,20 +11,6 @@ import (
 	"testing"
 )
 
-type scenarioLogger struct {
-	lines []string
-}
-
-func (l *scenarioLogger) DebugContext(context.Context, string, ...interface{}) {}
-
-func (l *scenarioLogger) InfoContext(context.Context, string, ...interface{}) {}
-
-func (l *scenarioLogger) WarnContext(ctx context.Context, msg string, args ...interface{}) {
-	l.lines = append(l.lines, msg)
-}
-
-func (l *scenarioLogger) ErrorContext(context.Context, string, ...interface{}) {}
-
 type scenarioValidator struct{}
 
 func (scenarioValidator) Validate(context.Context, interface{}) error {

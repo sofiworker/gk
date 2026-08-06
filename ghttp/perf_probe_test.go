@@ -305,6 +305,31 @@ func BenchmarkProbe_FullChainInProcessPost(b *testing.B) {
 	}
 }
 
+func TestFullChainAllocBudget(t *testing.T) {
+	server := New(WithProduces(MIMEJSON))
+	Route[Params, struct {
+		ID string `json:"id"`
+	}](server).GET("/users/{id}").To(func(context.Context, Params) (struct {
+		ID string `json:"id"`
+	}, error) {
+		return struct {
+			ID string `json:"id"`
+		}{ID: "42"}, nil
+	})
+	req := httptest.NewRequest(http.MethodGet, "/users/42", nil)
+	rec := httptest.NewRecorder()
+	res := testing.Benchmark(func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			rec.Body.Reset()
+			server.ServeHTTP(rec, req)
+		}
+	})
+	allocs := res.AllocsPerOp()
+	if allocs > 15 {
+		t.Fatalf("allocs/op = %d, want <= 15 (final budget 8 after WS9 iterations)", allocs)
+	}
+}
+
 var _ = reflect.TypeOf // keep reflect import if prototypes change
 
 // --- Prototype: what the full typed chain costs if Params is lazy, input

@@ -255,3 +255,43 @@ func TestServerRejectsAnyUserMethodOnOpenAPIEndpointPath(t *testing.T) {
 		POST("/openapi.json").
 		ToHTTP(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 }
+
+type openAPIResp struct {
+	ID string `json:"id"`
+}
+
+func (r openAPIResp) StatusCode() int { return http.StatusCreated }
+
+func TestOpenAPIEnvelopeErrorResponsesAndServers(t *testing.T) {
+	app := New(
+		WithProduces(MIMEJSON),
+		WithOpenAPI("t", "v1"),
+		WithEnvelope(DefaultEnvelope),
+		WithOpenAPIServers("https://api.example.com"),
+		WithOpenAPISecurity(map[string][]string{"apiKey": {}}),
+	)
+	Route[Params, openAPIResp](app).POST("/users").Status(http.StatusCreated).To(func(context.Context, Params) (openAPIResp, error) {
+		return openAPIResp{ID: "u-1"}, nil
+	})
+
+	doc, err := app.OpenAPI()
+	if err != nil {
+		t.Fatalf("OpenAPI error = %v", err)
+	}
+	text := string(doc)
+	if !strings.Contains(text, `"201"`) {
+		t.Fatalf("missing 201 response: %s", text)
+	}
+	if !strings.Contains(text, `"data"`) || !strings.Contains(text, `"code"`) {
+		t.Fatalf("envelope schema missing: %s", text)
+	}
+	if !strings.Contains(text, `"404"`) || !strings.Contains(text, `"405"`) {
+		t.Fatalf("error responses missing: %s", text)
+	}
+	if !strings.Contains(text, `"servers"`) || !strings.Contains(text, `"https://api.example.com"`) {
+		t.Fatalf("servers missing: %s", text)
+	}
+	if !strings.Contains(text, `"security"`) || !strings.Contains(text, `"apiKey"`) {
+		t.Fatalf("security missing: %s", text)
+	}
+}

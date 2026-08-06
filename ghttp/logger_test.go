@@ -43,10 +43,7 @@ func (l *testLogger) ErrorContext(ctx context.Context, msg string, args ...inter
 }
 
 func TestLoggerInterface(t *testing.T) {
-	var l Logger = &testLogger{}
-	if l == nil {
-		t.Fatal("Logger interface should be assignable")
-	}
+	var _ Logger = &testLogger{}
 }
 
 func TestLoggerLevels(t *testing.T) {

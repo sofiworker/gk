@@ -235,3 +235,23 @@ func TestWebSocketOptionsConfigureClient(t *testing.T) {
 		t.Fatalf("writeBufferSize = %d, want 2048", cfg.writeBufferSize)
 	}
 }
+
+func TestWebSocketRejectsCrossOriginByDefault(t *testing.T) {
+	app := New()
+	Route[Params, struct{}](app).GET("/ws").ToWebSocket(func(context.Context, Params, *WebSocketConn) error {
+		return nil
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/ws", nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	req.Header.Set("Origin", "https://evil.example")
+	app.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", w.Code)
+	}
+}

@@ -56,6 +56,38 @@ func TestSSEEventTypes(t *testing.T) {
 	assert.Equal(t, `{"x":1}`, event.Data)
 }
 
+func TestSSEWriterSplitsMultilineData(t *testing.T) {
+	w := &mockResponseWriter{header: make(http.Header)}
+	sw := &SSEWriter{w: w, flusher: &mockFlusher{}}
+
+	err := sw.WriteEvent("message", "line1\nline2")
+	assert.NoError(t, err)
+
+	output := w.buf.String()
+	assert.Equal(t, "event: message\ndata: line1\ndata: line2\n\n", output)
+}
+
+func TestSSEWriterRejectsNewlineInEventName(t *testing.T) {
+	w := &mockResponseWriter{header: make(http.Header)}
+	sw := &SSEWriter{w: w, flusher: &mockFlusher{}}
+
+	assert.Error(t, sw.WriteEvent("bad\nevent", "x"))
+}
+
+func TestSSEWriterEventWithIDCommentRetry(t *testing.T) {
+	w := &mockResponseWriter{header: make(http.Header)}
+	sw := &SSEWriter{w: w, flusher: &mockFlusher{}}
+
+	assert.NoError(t, sw.WriteEventWithID("update", "evt-1", "hello"))
+	assert.NoError(t, sw.WriteComment("keepalive"))
+	assert.NoError(t, sw.Retry(3000))
+
+	output := w.buf.String()
+	assert.Contains(t, output, "id: evt-1\n")
+	assert.Contains(t, output, ": keepalive\n")
+	assert.Contains(t, output, "retry: 3000\n")
+}
+
 func TestClientSSEReconnectSendsLastEventID(t *testing.T) {
 	var calls int32
 	lastEventID := make(chan string, 1)

@@ -29,12 +29,52 @@ type SSEEvent struct {
 }
 
 func (s *SSEWriter) WriteEvent(event, data string) error {
-	_, err := fmt.Fprintf(s.w, "event: %s\ndata: %s\n\n", event, data)
-	if err != nil {
+	if strings.ContainsAny(event, "\r\n") {
+		return fmt.Errorf("sse: event name contains newline")
+	}
+	if _, err := fmt.Fprintf(s.w, "event: %s\n", event); err != nil {
+		return err
+	}
+	normalized := strings.ReplaceAll(data, "\r\n", "\n")
+	for _, line := range strings.Split(normalized, "\n") {
+		if _, err := fmt.Fprintf(s.w, "data: %s\n", line); err != nil {
+			return err
+		}
+	}
+	if _, err := io.WriteString(s.w, "\n"); err != nil {
 		return err
 	}
 	s.flusher.Flush()
 	return nil
+}
+
+func (s *SSEWriter) WriteEventWithID(event, id, data string) error {
+	if strings.ContainsAny(id, "\r\n") {
+		return fmt.Errorf("sse: event id contains newline")
+	}
+	if _, err := fmt.Fprintf(s.w, "id: %s\n", id); err != nil {
+		return err
+	}
+	return s.WriteEvent(event, data)
+}
+
+func (s *SSEWriter) WriteComment(text string) error {
+	if _, err := fmt.Fprintf(s.w, ": %s\n", strings.ReplaceAll(text, "\n", " ")); err != nil {
+		return err
+	}
+	s.flusher.Flush()
+	return nil
+}
+
+func (s *SSEWriter) Retry(millis int) error {
+	if millis < 0 {
+		return fmt.Errorf("sse: retry must be non-negative")
+	}
+	_, err := fmt.Fprintf(s.w, "retry: %d\n\n", millis)
+	if err == nil {
+		s.flusher.Flush()
+	}
+	return err
 }
 
 func (s *SSEWriter) WriteJSON(event string, data interface{}) error {
@@ -224,9 +264,7 @@ func splitSSELine(line string) (string, string) {
 	if !ok {
 		return line, ""
 	}
-	if strings.HasPrefix(value, " ") {
-		value = strings.TrimPrefix(value, " ")
-	}
+	value = strings.TrimPrefix(value, " ")
 	return field, value
 }
 

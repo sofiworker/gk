@@ -45,12 +45,26 @@ func (c *WebSocketConn) Close() error {
 // WebSocketHandler is the handler type for WebSocket upgrades.
 type WebSocketHandler func(ctx context.Context, params Params, conn *WebSocketConn) error
 
+func webSocketSameOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return origin == scheme+"://"+r.Host
+}
+
 func buildWebSocketHandler(s *Server, handler WebSocketHandler) http.Handler {
 	return pathParamHandlerFunc(func(w http.ResponseWriter, r *http.Request, routeParams pathParamList) {
+		checkOrigin := s.config.webSocketCheckOrigin
+		if checkOrigin == nil {
+			checkOrigin = webSocketSameOrigin
+		}
 		upgrader := gwebsocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool {
-				return true
-			},
+			CheckOrigin: checkOrigin,
 		}
 		params := paramsFromRequestWithPathParams(r, s.config, routeParams)
 		ws, err := upgrader.Upgrade(w, r, nil)

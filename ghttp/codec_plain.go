@@ -3,7 +3,6 @@ package ghttp
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 )
 
 // PlainCodec handles text/plain content.
@@ -28,7 +27,7 @@ func (c *PlainCodec) Marshal(w io.Writer, v interface{}) error {
 }
 
 func (c *PlainCodec) Unmarshal(r io.Reader, v interface{}) error {
-	data, err := ioutil.ReadAll(r)
+	data, err := io.ReadAll(r)
 	if err != nil {
 		return err
 	}

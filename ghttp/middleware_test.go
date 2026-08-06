@@ -414,3 +414,32 @@ func TestGroupUseAfterRouteRegistrationApplies(t *testing.T) {
 		t.Fatalf("X-Group = %q, want applied", got)
 	}
 }
+
+func TestMiddlewareSeesMatchedPathParams(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	var got string
+	app.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			got = app.MatchedParams(r).Path("id")
+			next.ServeHTTP(w, r)
+		})
+	})
+	Route[Params, struct {
+		ID string `json:"id"`
+	}](app).GET("/users/{id}").To(func(context.Context, Params) (struct {
+		ID string `json:"id"`
+	}, error) {
+		return struct {
+			ID string `json:"id"`
+		}{ID: "ok"}, nil
+	})
+
+	w := httptest.NewRecorder()
+	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/users/42", nil))
+	if got != "42" {
+		t.Fatalf("matched id = %q, want 42", got)
+	}
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+}

@@ -15,10 +15,17 @@ func (s *Server) OpenAPI() ([]byte, error) {
 		return nil, ErrOpenAPIDisabled
 	}
 
-	return compileOpenAPI(s.registry.snapshot(), s.config.openAPITitle, s.config.openAPIVersion)
+	return compileOpenAPI(
+		s.registry.snapshot(),
+		s.config.openAPITitle,
+		s.config.openAPIVersion,
+		s.envelope != nil,
+		s.config.openAPIServers,
+		s.config.openAPISecurity,
+	)
 }
 
-func compileOpenAPI(definitions []routeDefinition, title, version string) ([]byte, error) {
+func compileOpenAPI(definitions []routeDefinition, title, version string, envelope bool, servers []string, security []map[string][]string) ([]byte, error) {
 	paths := make(map[string]map[string]any)
 	for _, definition := range definitions {
 		if definition.internal {
@@ -32,7 +39,7 @@ func compileOpenAPI(definitions []routeDefinition, title, version string) ([]byt
 			paths[path] = pathItem
 		}
 
-		operation := openAPIOperationForDefinition(definition)
+		operation := openAPIOperationForDefinition(definition, envelope)
 		if isOpenAPIPathMethod(definition.method) {
 			pathItem[strings.ToLower(definition.method)] = operation
 			continue
@@ -64,6 +71,16 @@ func compileOpenAPI(definitions []routeDefinition, title, version string) ([]byt
 			"version": version,
 		},
 		"paths": paths,
+	}
+	if len(servers) > 0 {
+		serverItems := make([]any, 0, len(servers))
+		for _, url := range servers {
+			serverItems = append(serverItems, map[string]any{"url": url})
+		}
+		document["servers"] = serverItems
+	}
+	if len(security) > 0 {
+		document["security"] = security
 	}
 	return json.Marshal(document)
 }
@@ -102,7 +119,7 @@ func openAPIStaticSegment(segment string) string {
 	return url.PathEscape(segment)
 }
 
-func openAPIOperationForDefinition(definition routeDefinition) map[string]any {
+func openAPIOperationForDefinition(definition routeDefinition, envelope bool) map[string]any {
 	op := make(map[string]any)
 	if definition.doc.Summary != "" {
 		op["summary"] = definition.doc.Summary
@@ -150,7 +167,7 @@ func openAPIOperationForDefinition(definition routeDefinition) map[string]any {
 		op["requestBody"] = map[string]any{"required": true, "content": content}
 	}
 
-	responses := openAPIResponsesForDefinition(definition)
+	responses := openAPIResponsesForDefinition(definition, envelope)
 	op["responses"] = responses
 	if definition.terminal == routeTerminalWebSocket {
 		op["x-ghttp-websocket"] = true
@@ -210,14 +227,14 @@ func openAPIParameter(parameter *parameter) map[string]any {
 	return result
 }
 
-func openAPIResponsesForDefinition(definition routeDefinition) map[string]any {
+func openAPIResponsesForDefinition(definition routeDefinition, envelope bool) map[string]any {
 	if definition.method == http.MethodHead {
-		return openAPIHeadResponses(openAPIResponsesForTerminal(definition))
+		return openAPIHeadResponses(openAPIResponsesForTerminal(definition, envelope))
 	}
-	return openAPIResponsesForTerminal(definition)
+	return openAPIResponsesForTerminal(definition, envelope)
 }
 
-func openAPIResponsesForTerminal(definition routeDefinition) map[string]any {
+func openAPIResponsesForTerminal(definition routeDefinition, envelope bool) map[string]any {
 	switch definition.terminal {
 	case routeTerminalTyped:
 		status := definition.responseStatus
@@ -232,11 +249,26 @@ func openAPIResponsesForTerminal(definition routeDefinition) map[string]any {
 		if definition.respType != nil && len(definition.produces) > 0 {
 			content := make(map[string]any, len(definition.produces))
 			for _, contentType := range definition.produces {
-				content[contentType] = map[string]any{"schema": generateSchema(definition.respType)}
+				schema := generateSchema(definition.respType)
+				if envelope {
+					schema = map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"code": map[string]any{"type": "integer"},
+							"msg":  map[string]any{"type": "string"},
+							"data": schema,
+						},
+					}
+				}
+				content[contentType] = map[string]any{"schema": schema}
 			}
 			response["content"] = content
 		}
-		return map[string]any{strconv.Itoa(status): response}
+		return map[string]any{
+			strconv.Itoa(status): response,
+			"404":                openAPIErrorResponse("Not Found"),
+			"405":                openAPIErrorResponse("Method Not Allowed"),
+		}
 	case routeTerminalRedirect:
 		status := definition.responseStatus
 		if status < http.StatusMultipleChoices || status >= http.StatusBadRequest {
@@ -269,6 +301,23 @@ func openAPIResponsesForTerminal(definition routeDefinition) map[string]any {
 
 func openAPIDefaultResponse() map[string]any {
 	return map[string]any{"default": map[string]any{"description": "Response written by handler"}}
+}
+
+func openAPIErrorResponse(description string) map[string]any {
+	return map[string]any{
+		"description": description,
+		"content": map[string]any{
+			MIMEJSON: map[string]any{
+				"schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"code":    map[string]any{"type": "integer"},
+						"message": map[string]any{"type": "string"},
+					},
+				},
+			},
+		},
+	}
 }
 
 func openAPIHeadOperation(operation map[string]any) map[string]any {
