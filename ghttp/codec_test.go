@@ -95,6 +95,16 @@ func TestFormCodecUnmarshal(t *testing.T) {
 	}
 }
 
+func TestPlainCodecUnmarshalRejectsUnsupportedTarget(t *testing.T) {
+	codec := &PlainCodec{}
+	var target struct {
+		Name string
+	}
+	if err := codec.Unmarshal(strings.NewReader("name=alice"), &target); err == nil {
+		t.Fatal("expected error for unsupported decode target")
+	}
+}
+
 func TestCodecManagerNegotiateCacheHitAndInvalidate(t *testing.T) {
 	mgr := NewCodecManager()
 

@@ -39,5 +39,5 @@ func (c *PlainCodec) Unmarshal(r io.Reader, v interface{}) error {
 		*ptr = data
 		return nil
 	}
-	return nil
+	return fmt.Errorf("plain codec: unsupported target %T", v)
 }
