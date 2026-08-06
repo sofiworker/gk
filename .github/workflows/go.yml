@@ -19,7 +19,7 @@ jobs:
       fail-fast: false
       matrix:
         go-version:
-          - "1.25.0" # minimum supported version, locked before v1.0.0
+          - "1.25.x" # minimum supported minor, latest patch
           - "stable" # latest stable release
     steps:
       - name: Checkout
