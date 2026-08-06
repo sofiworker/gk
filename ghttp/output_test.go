@@ -14,7 +14,7 @@ func TestEnvelopeDefault_Success(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/test", nil)
 
-	app.envelope(w, r, http.StatusOK, map[string]string{"id": "1"}, nil, app.codecMgr)
+	app.envelope(w, r, http.StatusOK, map[string]string{"id": "1"}, nil, MIMEJSON, &JSONCodec{})
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
@@ -36,7 +36,7 @@ func TestEnvelopeDefault_Error(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/test", nil)
 
-	app.envelope(w, r, http.StatusNotFound, nil, Err(http.StatusNotFound, "user not found"), app.codecMgr)
+	app.envelope(w, r, http.StatusNotFound, nil, Err(http.StatusNotFound, "user not found"), MIMEJSON, &JSONCodec{})
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", w.Code)
@@ -47,6 +47,27 @@ func TestEnvelopeDefault_Error(t *testing.T) {
 	code := body["code"].(float64)
 	if int(code) != http.StatusNotFound {
 		t.Fatalf("expected code=404, got %v", code)
+	}
+}
+
+func TestEnvelopeUsesRouteProduces(t *testing.T) {
+	type Resp struct {
+		Name string `json:"name"`
+	}
+	app := New(WithEnvelope(DefaultEnvelope), WithProduces(MIMEJSON))
+	Route[struct{}, Resp](app).GET("/users/{id}").
+		Produces(MIMEXML).
+		To(func(context.Context, struct{}) (Resp, error) {
+			return Resp{Name: "alice"}, nil
+		})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/users/1", nil)
+	req.Header.Set("Accept", MIMEXML)
+	app.ServeHTTP(w, req)
+
+	if got := w.Header().Get("Content-Type"); got != MIMEXML {
+		t.Fatalf("content type = %q, want %q", got, MIMEXML)
 	}
 }
 

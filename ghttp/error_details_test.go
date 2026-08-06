@@ -1,0 +1,93 @@
+package ghttp
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+func TestErrorDetailsHiddenByDefault(t *testing.T) {
+	type input struct {
+		Params
+		Body struct {
+			Name string `json:"name"`
+		}
+	}
+	app := New(WithProduces(MIMEJSON))
+	Route[input, struct{}](app).POST("/users").To(func(context.Context, input) (struct{}, error) {
+		return struct{}{}, Err(http.StatusBadRequest, "internal secret detail")
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(`{"name":`))
+	req.Header.Set("Content-Type", MIMEJSON)
+	app.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if strings.Contains(w.Body.String(), "unexpected EOF") {
+		t.Fatalf("parse error details leaked: %s", w.Body.String())
+	}
+}
+
+func TestPlainErrorDetailsHiddenByDefault(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	Route[Params, struct{}](app).GET("/boom").To(func(context.Context, Params) (struct{}, error) {
+		return struct{}{}, errInternalSecret
+	})
+
+	w := httptest.NewRecorder()
+	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/boom", nil))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", w.Code)
+	}
+	if strings.Contains(w.Body.String(), "internal secret detail") {
+		t.Fatalf("error details leaked: %s", w.Body.String())
+	}
+}
+
+func TestErrorDetailsExposedWhenEnabled(t *testing.T) {
+	type input struct {
+		Params
+		Body struct {
+			Name string `json:"name"`
+		}
+	}
+	app := New(WithProduces(MIMEJSON), WithExposeErrorDetails())
+	Route[input, struct{}](app).POST("/users").To(func(context.Context, input) (struct{}, error) {
+		return struct{}{}, nil
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(`{"name":`))
+	req.Header.Set("Content-Type", MIMEJSON)
+	app.ServeHTTP(w, req)
+
+	if !strings.Contains(w.Body.String(), "unexpected EOF") {
+		t.Fatalf("parse error details missing: %s", w.Body.String())
+	}
+}
+
+func TestExplicitHTTPErrorMessageAlwaysReturned(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	Route[Params, struct{}](app).GET("/users/{id}").To(func(context.Context, Params) (struct{}, error) {
+		return struct{}{}, Err(http.StatusNotFound, "user not found")
+	})
+
+	w := httptest.NewRecorder()
+	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/users/1", nil))
+
+	if !strings.Contains(w.Body.String(), "user not found") {
+		t.Fatalf("explicit error message missing: %s", w.Body.String())
+	}
+}
+
+var errInternalSecret = &internalSecretError{}
+
+type internalSecretError struct{}
+
+func (e *internalSecretError) Error() string { return "internal secret detail" }

@@ -8,8 +8,6 @@ import (
 	"mime"
 	"net/http"
 	"reflect"
-	"sort"
-	"strconv"
 	"strings"
 )
 
@@ -54,6 +52,8 @@ type RouteBuilder[Req, Resp any] struct {
 	setupErr        error
 	skipValidation  bool
 	finalized       bool
+	responseStatus  int
+	responseHeaders []responseHeader
 }
 
 // compiledInput is the registration-time compiled constructor for a route's
@@ -96,6 +96,11 @@ type routeTarget interface {
 type responseCodec struct {
 	contentType string
 	codec       Codec
+}
+
+type responseHeader struct {
+	name  string
+	value string
 }
 
 // Route creates a new RouteBuilder on the given target.
@@ -249,6 +254,20 @@ func (b *RouteBuilder[Req, Resp]) SkipValidation() *RouteBuilder[Req, Resp] {
 	return b
 }
 
+// Status declares the fixed success status for To handlers.
+func (b *RouteBuilder[Req, Resp]) Status(code int) *RouteBuilder[Req, Resp] {
+	b.ensureMutable()
+	b.responseStatus = code
+	return b
+}
+
+// ResponseHeader declares a fixed response header for To handlers.
+func (b *RouteBuilder[Req, Resp]) ResponseHeader(name, value string) *RouteBuilder[Req, Resp] {
+	b.ensureMutable()
+	b.responseHeaders = append(b.responseHeaders, responseHeader{name: name, value: value})
+	return b
+}
+
 // Use adds route-level middleware.
 func (b *RouteBuilder[Req, Resp]) Use(mws ...Middleware) *RouteBuilder[Req, Resp] {
 	b.ensureMutable()
@@ -278,11 +297,11 @@ func (b *RouteBuilder[Req, Resp]) To(handler HandlerFunc[Req, Resp]) {
 		if validator := b.directParamsGlobalValidator(); validator != nil {
 			directParamsHandler = b.buildParamsHandlerWithGlobalValidator(directHandler, validator)
 		}
-		b.registerHandler(directParamsHandler, true, routeTerminalTyped, 0)
+		b.registerHandler(directParamsHandler, true, routeTerminalTyped, b.responseStatus)
 		return
 	}
 	b.handler = handler
-	b.registerHandler(b.buildHandlerChain(), true, routeTerminalTyped, 0)
+	b.registerHandler(b.buildHandlerChain(), true, routeTerminalTyped, b.responseStatus)
 }
 
 // ToHTTP registers a raw http.Handler with the selected route method and path.
@@ -449,19 +468,20 @@ func (b *RouteBuilder[Req, Resp]) registerHandler(handler http.Handler, needsExt
 	definitions := make([]routeDefinition, 0, len(b.methods))
 	for _, method := range b.methods {
 		definitions = append(definitions, routeDefinition{
-			method:         method,
-			pattern:        pattern,
-			handler:        handler,
-			middlewares:    append([]Middleware(nil), b.middlewares...),
-			group:          b.target.routeGroup(),
-			needsExtractor: needsExtractor,
-			terminal:       terminal,
-			responseStatus: responseStatus,
-			doc:            b.doc.clone(),
-			reqType:        reflect.TypeFor[Req](),
-			respType:       reflect.TypeFor[Resp](),
-			consumes:       append([]string(nil), b.consumes...),
-			produces:       append([]string(nil), b.produces...),
+			method:          method,
+			pattern:         pattern,
+			handler:         handler,
+			middlewares:     append([]Middleware(nil), b.middlewares...),
+			group:           b.target.routeGroup(),
+			needsExtractor:  needsExtractor,
+			terminal:        terminal,
+			responseStatus:  responseStatus,
+			responseHeaders: append([]responseHeader(nil), b.responseHeaders...),
+			doc:             b.doc.clone(),
+			reqType:         reflect.TypeFor[Req](),
+			respType:        reflect.TypeFor[Resp](),
+			consumes:        append([]string(nil), b.consumes...),
+			produces:        append([]string(nil), b.produces...),
 		})
 	}
 	if err := b.target.owner().registerDefinitions(definitions...); err != nil {
@@ -552,11 +572,7 @@ func (b *RouteBuilder[Req, Resp]) buildHandler() http.Handler {
 		}
 
 		writeResponseCookies(w, resp)
-		if server.envelope != nil {
-			server.envelope(w, r, http.StatusOK, resp, nil, server.codecMgr)
-			return
-		}
-		writeResponse(w, r, server, http.StatusOK, b.produces, b.codecs, resp)
+		b.writeTypedResponse(w, r, server, resp)
 	})
 }
 
@@ -579,11 +595,7 @@ func (b *RouteBuilder[Req, Resp]) buildParamsHandler(handler HandlerFunc[Params,
 		}
 
 		writeResponseCookies(w, resp)
-		if server.envelope != nil {
-			server.envelope(w, r, http.StatusOK, resp, nil, server.codecMgr)
-			return
-		}
-		writeResponse(w, r, server, http.StatusOK, b.produces, b.codecs, resp)
+		b.writeTypedResponse(w, r, server, resp)
 	})
 }
 
@@ -606,11 +618,7 @@ func (b *RouteBuilder[Req, Resp]) buildParamsHandlerWithGlobalValidator(handler 
 		}
 
 		writeResponseCookies(w, resp)
-		if server.envelope != nil {
-			server.envelope(w, r, http.StatusOK, resp, nil, server.codecMgr)
-			return
-		}
-		writeResponse(w, r, server, http.StatusOK, b.produces, b.codecs, resp)
+		b.writeTypedResponse(w, r, server, resp)
 	})
 }
 
@@ -687,9 +695,6 @@ func (b *RouteBuilder[Req, Resp]) directParamsGlobalValidator() Validator {
 	if b.skipValidation || server.validator == nil {
 		return nil
 	}
-	if _, defaultValidator := server.validator.(*defaultValidator); defaultValidator {
-		return nil
-	}
 	return server.validator
 }
 
@@ -738,8 +743,11 @@ func (b *RouteBuilder[Req, Resp]) parseAndValidateInputWithPathParams(w http.Res
 		return zero, false
 	}
 	if !b.input.directParams {
-		if err := parseInputWithConfigAndPathParams(r, target, server.config, params); err != nil {
+		if err := parseInputWithConfigAndPathParams(r, target, server.config, server.codecMgr, params); err != nil {
 			code := http.StatusBadRequest
+			if he := AsError(err); he != nil {
+				code = he.Code
+			}
 			if isRequestBodyTooLarge(err) {
 				code = http.StatusRequestEntityTooLarge
 				err = Err(code, ErrRequestBodyTooLarge.Error(), WithCause(err))
@@ -896,29 +904,24 @@ func writeErrorWithCodec(w http.ResponseWriter, r *http.Request, s *Server, defa
 		http.Error(w, err.Error(), statusCodeFromError(defaultCode, err))
 		return
 	}
-	if s.envelope != nil {
-		code := defaultCode
-		if he := AsError(err); he != nil {
-			code = he.Code
-		}
-		s.envelope(w, r, code, nil, err, s.codecMgr)
-		return
-	}
 	code := statusCodeFromError(defaultCode, err)
 	body := HTTPError{Code: code, Message: http.StatusText(code), Err: err}
-	if code < http.StatusInternalServerError {
-		body.Message = err.Error()
-	}
 	if he := AsError(err); he != nil {
 		body = *he
+	} else if s.config.exposeErrorDetails {
+		body.Message = err.Error()
 	}
 	if strings.TrimSpace(body.Message) == "" {
 		body.Message = http.StatusText(code)
 	}
-	contentType, codec := selectResponseCodec(s, r.Header.Get("Accept"), produces, codecs)
+	contentType, codec, _ := selectResponseCodec(s, r.Header.Get("Accept"), produces, codecs)
 	if codec == nil {
 		contentType = MIMEJSON
 		codec, _ = s.codecMgr.Resolve(MIMEJSON)
+	}
+	if s.envelope != nil {
+		s.envelope(w, r, code, nil, err, contentType, codec)
+		return
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(code)
@@ -932,19 +935,48 @@ func statusCodeFromError(defaultCode int, err error) int {
 	return defaultCode
 }
 
-// writeResponse writes resp with a codec selected from the route produces list.
-func writeResponse(w http.ResponseWriter, r *http.Request, s *Server, statusCode int, produces []string, codecs []responseCodec, resp interface{}) {
-	contentType, codec := selectResponseCodec(s, r.Header.Get("Accept"), produces, codecs)
-	if codec == nil {
-		writeError(w, r, s, http.StatusInternalServerError, ErrRouteProducesUnsupported)
+func responseHasBody(status int) bool {
+	return status >= http.StatusOK && status != http.StatusNoContent && status != http.StatusNotModified
+}
+
+func (b *RouteBuilder[Req, Resp]) writeTypedResponse(w http.ResponseWriter, r *http.Request, server *Server, resp interface{}) {
+	status := b.responseStatus
+	if status == 0 {
+		status = http.StatusOK
+	}
+	if sc, ok := resp.(StatusCoder); ok {
+		if code := sc.StatusCode(); code != 0 {
+			status = code
+		}
+	}
+	if status < http.StatusContinue || status > 599 {
+		b.writeError(w, r, http.StatusInternalServerError, Err(http.StatusInternalServerError, "invalid response status"))
+		return
+	}
+	if hw, ok := resp.(ResponseHeaderWriter); ok {
+		hw.WriteResponseHeaders(w.Header())
+	}
+	for _, h := range b.responseHeaders {
+		w.Header().Set(h.name, h.value)
+	}
+	contentType, codec, ok := negotiateRouteCodec(w, r, server, b.produces, b.codecs)
+	if !ok {
+		return
+	}
+	if !responseHasBody(status) {
+		w.WriteHeader(status)
+		return
+	}
+	if server.envelope != nil {
+		server.envelope(w, r, status, resp, nil, contentType, codec)
 		return
 	}
 	w.Header().Set("Content-Type", contentType)
-	w.WriteHeader(statusCode)
+	w.WriteHeader(status)
 	_ = codec.Marshal(w, resp)
 }
 
-func selectResponseCodec(s *Server, accept string, produces []string, codecs []responseCodec) (string, Codec) {
+func selectResponseCodec(s *Server, accept string, produces []string, codecs []responseCodec) (string, Codec, bool) {
 	if len(codecs) == 0 {
 		if len(produces) == 0 && s != nil {
 			produces = s.produces
@@ -952,20 +984,33 @@ func selectResponseCodec(s *Server, accept string, produces []string, codecs []r
 		codecs = resolveResponseCodecs(s, produces)
 	}
 	if len(codecs) == 0 {
-		return "", nil
+		return "", nil, false
 	}
-	if strings.TrimSpace(accept) == "" || strings.TrimSpace(accept) == "*/*" {
-		return codecs[0].contentType, codecs[0].codec
+	candidates := make([]string, len(codecs))
+	for i, c := range codecs {
+		candidates[i] = c.contentType
 	}
+	contentType, codec, ok := s.codecMgr.Select(accept, candidates)
+	if !ok {
+		return "", nil, false
+	}
+	return contentType, codec, true
+}
 
-	for _, item := range sortedAcceptItems(accept) {
-		for _, candidate := range codecs {
-			if mediaTypeMatches(item.contentType, candidate.contentType) {
-				return candidate.contentType, candidate.codec
-			}
-		}
+func negotiateRouteCodec(w http.ResponseWriter, r *http.Request, s *Server, produces []string, codecs []responseCodec) (string, Codec, bool) {
+	contentType, codec, matched := selectResponseCodec(s, r.Header.Get("Accept"), produces, codecs)
+	if matched {
+		return contentType, codec, true
 	}
-	return codecs[0].contentType, codecs[0].codec
+	if s.config.strictContentNegotiation {
+		writeError(w, r, s, http.StatusNotAcceptable, Err(http.StatusNotAcceptable, http.StatusText(http.StatusNotAcceptable)))
+		return "", nil, false
+	}
+	if len(codecs) == 0 {
+		writeError(w, r, s, http.StatusInternalServerError, ErrRouteProducesUnsupported)
+		return "", nil, false
+	}
+	return codecs[0].contentType, codecs[0].codec, true
 }
 
 func resolveResponseCodecs(s *Server, produces []string) []responseCodec {
@@ -981,49 +1026,6 @@ func resolveResponseCodecs(s *Server, produces []string) []responseCodec {
 		out = append(out, responseCodec{contentType: contentType, codec: codec})
 	}
 	return out
-}
-
-type acceptItem struct {
-	contentType string
-	quality     float64
-	index       int
-}
-
-func sortedAcceptItems(accept string) []acceptItem {
-	parts := strings.Split(accept, ",")
-	items := make([]acceptItem, 0, len(parts))
-	for i, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		mediaType, params, err := mime.ParseMediaType(part)
-		if err != nil {
-			mediaType = normalizeContentType(part)
-		}
-		if mediaType == "" {
-			continue
-		}
-		quality := 1.0
-		if params != nil {
-			if q, ok := params["q"]; ok {
-				if parsed, err := strconv.ParseFloat(q, 64); err == nil {
-					quality = parsed
-				}
-			}
-		}
-		if quality <= 0 {
-			continue
-		}
-		items = append(items, acceptItem{contentType: strings.ToLower(mediaType), quality: quality, index: i})
-	}
-	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].quality == items[j].quality {
-			return items[i].index < items[j].index
-		}
-		return items[i].quality > items[j].quality
-	})
-	return items
 }
 
 func renderHTML(w http.ResponseWriter, s *Server, status int, name string, data interface{}) error {

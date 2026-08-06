@@ -16,6 +16,12 @@ type defaultValidator struct {
 	validate *playgroundValidator.Validate
 }
 
+// NewDefaultValidator returns the built-in struct-tag validator using
+// go-playground/validator. It is opt-in: New() does not install it.
+func NewDefaultValidator() Validator {
+	return newDefaultValidator()
+}
+
 func newDefaultValidator() Validator {
 	return &defaultValidator{validate: playgroundValidator.New()}
 }

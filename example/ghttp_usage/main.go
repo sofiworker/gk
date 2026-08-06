@@ -224,6 +224,7 @@ func buildServer() *ghttp.Server {
 		ghttp.WithConsumes(ghttp.MIMEJSON),
 		ghttp.WithOpenAPI("Blog API", "1.0.0"),
 		ghttp.WithMaxBodyBytes(10<<20), // 10MB
+		ghttp.WithValidator(ghttp.NewDefaultValidator()),
 	)
 
 	// 全局中间件

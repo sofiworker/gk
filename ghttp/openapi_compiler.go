@@ -220,7 +220,11 @@ func openAPIResponsesForDefinition(definition routeDefinition) map[string]any {
 func openAPIResponsesForTerminal(definition routeDefinition) map[string]any {
 	switch definition.terminal {
 	case routeTerminalTyped:
-		description := "OK"
+		status := definition.responseStatus
+		if status == 0 {
+			status = http.StatusOK
+		}
+		description := http.StatusText(status)
 		if definition.doc.Success != nil && definition.doc.Success.Message != "" {
 			description = definition.doc.Success.Message
 		}
@@ -232,7 +236,7 @@ func openAPIResponsesForTerminal(definition routeDefinition) map[string]any {
 			}
 			response["content"] = content
 		}
-		return map[string]any{strconv.Itoa(http.StatusOK): response}
+		return map[string]any{strconv.Itoa(status): response}
 	case routeTerminalRedirect:
 		status := definition.responseStatus
 		if status < http.StatusMultipleChoices || status >= http.StatusBadRequest {

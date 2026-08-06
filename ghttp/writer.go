@@ -7,8 +7,6 @@ import (
 	"sync"
 )
 
-type responseStateContextKey struct{}
-
 type responseWriteState struct {
 	http.ResponseWriter
 	mu           sync.Mutex
@@ -28,8 +26,8 @@ func responseWriteStateFromRequest(r *http.Request) *responseWriteState {
 	if r == nil {
 		return nil
 	}
-	state, _ := r.Context().Value(responseStateContextKey{}).(*responseWriteState)
-	return state
+	reqState, _ := r.Context().Value(requestStateContextKey{}).(requestState)
+	return reqState.responseState
 }
 
 func responseErrorHandlerStarted(r *http.Request) bool {

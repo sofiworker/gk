@@ -31,7 +31,7 @@ func (f serverValidatorFunc) Validate(ctx context.Context, input interface{}) er
 
 func TestServerNewInitializesDefaultsAndOptions(t *testing.T) {
 	validator := serverValidatorFunc(func(context.Context, interface{}) error { return nil })
-	envelope := func(http.ResponseWriter, *http.Request, int, interface{}, error, *CodecManager) {}
+	envelope := func(http.ResponseWriter, *http.Request, int, interface{}, error, string, Codec) {}
 
 	app := New(WithAddress("127.0.0.1:0"), WithValidator(validator), WithEnvelope(envelope), WithProduces(MIMEJSON))
 
@@ -296,7 +296,7 @@ func TestServerRouteUsesValidator(t *testing.T) {
 	}
 }
 
-func TestServerUsesDefaultGoPlaygroundValidator(t *testing.T) {
+func TestServerUsesGoPlaygroundValidatorWhenExplicit(t *testing.T) {
 	type input struct {
 		Body struct {
 			Name string `json:"name" validate:"required"`
@@ -304,7 +304,7 @@ func TestServerUsesDefaultGoPlaygroundValidator(t *testing.T) {
 	}
 	type output struct{}
 
-	app := New(WithProduces(MIMEJSON))
+	app := New(WithProduces(MIMEJSON), WithValidator(newDefaultValidator()))
 	Route[input, output](app).POST("/validate/default").To(func(context.Context, input) (output, error) {
 		t.Fatal("handler should not run after default validation error")
 		return output{}, nil
@@ -414,7 +414,7 @@ func TestServerShutdownWithoutRunAndAfterRunFailure(t *testing.T) {
 func TestServerShutdownRequiresContext(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 
-	err := app.Shutdown(nil)
+	err := app.Shutdown(nil) //nolint:staticcheck // intentionally verifies ErrNilContext
 
 	if !errors.Is(err, ErrNilContext) {
 		t.Fatalf("Shutdown(nil) error = %v, want ErrNilContext", err)

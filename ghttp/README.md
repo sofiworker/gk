@@ -185,6 +185,8 @@ ghttp.Route[CreateUserInput, UserOutput](s).
 
 `Consumes` 只约束带 `Body` 的自动解析路由。请求 `Content-Type` 为空时仍按默认 JSON 解析；显式传入不匹配的媒体类型会返回 `415 Unsupported Media Type`。
 
+默认行为遵循“显式优于隐式”：无 `Accept` 匹配时响应回退到第一个 `Produces` 类型（`WithStrictContentNegotiation()` 可改为返回 `406 Not Acceptable`）；未知请求 `Content-Type` 默认按 JSON 解析（`WithStrictContentType()` 可改为返回 `415 Unsupported Media Type`）。
+
 `Params` 是请求输入的**惰性视图**：query/cookie/客户端 IP 在首次访问时解析并缓存，header 直接透读请求，构造本身几乎零开销。它不持有 `ResponseWriter`，也不负责中断请求或写响应；cookie 写入通过输出对象完成。
 
 视图在 handler 存活期内有效，且应在单个 goroutine 中使用；如需在 handler 返回后留存、或跨 goroutine 传递，先调用 `Detach()` 获得不再引用底层请求的不可变快照：
@@ -272,6 +274,10 @@ func (o LoginOutput) Cookies() []*http.Cookie {
 ```
 
 可通过 `WithEnvelope(fn)` 自定义包装格式。
+
+`EnvelopeFunc` 签名为 `func(w http.ResponseWriter, r *http.Request, statusCode int, resp interface{}, err error, contentType string, codec Codec)`；`contentType`/`codec` 是路由协商结果，envelope 只允许包装 body，不得改写 HTTP 状态码。错误响应默认只返回 HTTP 状态文本，`WithExposeErrorDetails()` 开启后才返回内部错误信息（显式 `HTTPError` 消息始终返回）。
+
+类型化响应可显式声明状态码与响应头：响应对象实现 `StatusCode() int` 与/或 `WriteResponseHeaders(http.Header)`，或在 builder 上用 `.Status(code)`/`.ResponseHeader(name, value)` 声明固定值。204/304/1xx 自动不写 body；动态状态（`StatusCode()`）无法静态推断，OpenAPI 以 builder `Status` 为准。
 
 ### 中间件
 
@@ -389,7 +395,7 @@ Server 使用唯一的未导出 method-first matcher。没有 Router、WithRoute
 
 中间件顺序固定为内建 Recovery、Server、父 Group、子 Group、Route、Handler。这与 Gin 和 Fiber 等按注册时机嵌套的常见模型不同。Server middleware 同时覆盖成功、400、404、405 和 OpenAPI endpoint。
 
-类型化 To 成功状态固定为 200。需要 201、202 或 204 时使用 ToHTTP、ToRaw、ToHTTPFunc 或其他自写响应终结器。ToHTTP 与 ToRaw 得到原始 request；ghttp 不设置 PathValue 或把捕获参数注入 context。
+类型化 To 支持显式状态码与响应头（见“输出”一节）。ToHTTP 与 ToRaw 得到原始 request；ghttp 不设置 PathValue，middleware 通过 `Server.MatchedParams(r)` 读取路径参数。
 
 ---
 
@@ -401,6 +407,8 @@ s := ghttp.New(
     ghttp.WithValidator(myValidator),                        // 验证器
     ghttp.WithEnvelope(myEnvelope),                          // Envelope 函数
     ghttp.WithConsumes(ghttp.MIMEJSON),                      // 默认请求 Content-Type
+server 级 validator **默认关闭**：`New()` 不自动安装任何 validator，需要 `WithValidator(v)` 显式启用（破坏性变更）；`ghttp.NewDefaultValidator()` 可恢复内置 struct-tag 校验。路由级 `.Validate(fn)` 与 `.SkipValidation()` 不受影响。
+
     ghttp.WithBodyDecoder(func(r io.Reader, contentType string, target interface{}) error { // 自定义 Body 解码
         return customDecoder.Decode(r, target)
     }),

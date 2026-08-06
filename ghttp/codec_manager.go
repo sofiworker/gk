@@ -78,6 +78,30 @@ func (m *CodecManager) Resolve(contentType string) (Codec, bool) {
 	return codec, ok
 }
 
+// Select negotiates the best registered codec from candidates using RFC 9110
+// Accept semantics: q=0 excludes a media range, wildcards match, equal
+// qualities keep declaration order. ok=false means no candidate is acceptable.
+func (m *CodecManager) Select(accept string, candidates []string) (string, Codec, bool) {
+	if len(candidates) == 0 {
+		return "", nil, false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if strings.TrimSpace(accept) == "" || strings.TrimSpace(accept) == "*/*" {
+		codec, ok := m.codecs[candidates[0]]
+		return candidates[0], codec, ok
+	}
+	for _, item := range parseAcceptItems(accept) {
+		for _, candidate := range candidates {
+			if acceptMediaTypeMatches(item.contentType, candidate) {
+				codec, ok := m.codecs[candidate]
+				return candidate, codec, ok
+			}
+		}
+	}
+	return "", nil, false
+}
+
 // Negotiate selects the best Codec based on the Accept header. Results are
 // cached per Accept value: real-world traffic carries very few distinct
 // values, so repeated requests skip the parse/sort entirely.
@@ -102,43 +126,92 @@ func (m *CodecManager) Negotiate(accept string) Codec {
 }
 
 func (m *CodecManager) negotiate(accept string) Codec {
-	types := strings.Split(accept, ",")
-	type acceptItem struct {
-		ct      string
-		quality float64
-	}
-	var items []acceptItem
-
-	for _, t := range types {
-		t = strings.TrimSpace(t)
-		if t == "" {
-			continue
-		}
-
-		mediaType, params, _ := mime.ParseMediaType(t)
-		q := 1.0
-		if params != nil {
-			if qs, ok := params["q"]; ok {
-				if f, err := strconv.ParseFloat(qs, 64); err == nil {
-					q = f
-				}
-			}
-		}
-		items = append(items, acceptItem{ct: mediaType, quality: q})
-	}
-
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].quality > items[j].quality
-	})
-
+	items := parseAcceptItems(accept)
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	for _, item := range items {
-		if codec, ok := m.codecs[item.ct]; ok {
+		if codec, ok := m.codecs[item.contentType]; ok {
 			return codec
 		}
 	}
 
 	return m.codecs[m.defaultCT]
+}
+
+type acceptItem struct {
+	contentType string
+	quality     float64
+	index       int
+}
+
+var (
+	acceptParseCache sync.Map
+	acceptParseSize  atomic.Int32
+)
+
+const maxAcceptParseCacheEntries = 256
+
+func parseAcceptItems(accept string) []acceptItem {
+	accept = strings.TrimSpace(accept)
+	if accept == "" {
+		return nil
+	}
+	if cached, ok := acceptParseCache.Load(accept); ok {
+		return cached.([]acceptItem)
+	}
+	items := parseAcceptItemsUncached(accept)
+	if acceptParseSize.Load() < maxAcceptParseCacheEntries {
+		if _, loaded := acceptParseCache.LoadOrStore(accept, items); !loaded {
+			acceptParseSize.Add(1)
+		}
+	}
+	return items
+}
+
+func parseAcceptItemsUncached(accept string) []acceptItem {
+	parts := strings.Split(accept, ",")
+	items := make([]acceptItem, 0, len(parts))
+	for i, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		mediaType, params, err := mime.ParseMediaType(part)
+		if err != nil {
+			mediaType = normalizeContentType(part)
+		}
+		if mediaType == "" {
+			continue
+		}
+		quality := 1.0
+		if params != nil {
+			if q, ok := params["q"]; ok {
+				if parsed, err := strconv.ParseFloat(q, 64); err == nil {
+					quality = parsed
+				}
+			}
+		}
+		if quality <= 0 {
+			continue
+		}
+		items = append(items, acceptItem{contentType: strings.ToLower(mediaType), quality: quality, index: i})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].quality == items[j].quality {
+			return items[i].index < items[j].index
+		}
+		return items[i].quality > items[j].quality
+	})
+	return items
+}
+
+func acceptMediaTypeMatches(acceptMedia, candidate string) bool {
+	if acceptMedia == "*/*" {
+		return true
+	}
+	if strings.HasSuffix(acceptMedia, "/*") {
+		return strings.HasPrefix(candidate, strings.TrimSuffix(acceptMedia, "*"))
+	}
+	return acceptMedia == candidate
 }

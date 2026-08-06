@@ -1,8 +1,6 @@
 package ghttp
 
 import (
-	"encoding/json"
-	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -134,10 +132,10 @@ func parseInput(r *http.Request, input interface{}) error {
 }
 
 func parseInputWithConfig(r *http.Request, input interface{}, c *Config) error {
-	return parseInputWithConfigAndPathParams(r, input, c, pathParamList{})
+	return parseInputWithConfigAndPathParams(r, input, c, nil, pathParamList{})
 }
 
-func parseInputWithConfigAndPathParams(r *http.Request, input interface{}, c *Config, routeParams pathParamList) error {
+func parseInputWithConfigAndPathParams(r *http.Request, input interface{}, c *Config, codecMgr *CodecManager, routeParams pathParamList) error {
 	v := reflect.ValueOf(input)
 	if v.Kind() != reflect.Ptr || v.IsNil() {
 		return nil
@@ -181,7 +179,7 @@ func parseInputWithConfigAndPathParams(r *http.Request, input interface{}, c *Co
 				return err
 			}
 		} else if r.Body != nil && r.Body != http.NoBody {
-			if err := parseBody(r, bodyField, c); err != nil {
+			if err := parseBody(r, bodyField, c, codecMgr); err != nil {
 				return err
 			}
 		}
@@ -295,32 +293,28 @@ func setValueFromString(field reflect.Value, value string) error {
 	}
 }
 
-func parseBody(r *http.Request, bodyField reflect.Value, c *Config) error {
-	if bodyField.Kind() != reflect.Struct {
-		return nil
-	}
-
-	// When Body is a nested struct (e.g. `Body struct { Name string }`),
-	// we decode the JSON into this nested struct directly.
-	if bodyField.Type().NumField() == 0 {
+func parseBody(r *http.Request, bodyField reflect.Value, c *Config, codecMgr *CodecManager) error {
+	if bodyField.Kind() != reflect.Struct || bodyField.Type().NumField() == 0 {
 		return nil
 	}
 
 	ct := r.Header.Get("Content-Type")
-
 	if c != nil && c.bodyDecoder != nil {
 		return c.bodyDecoder(r.Body, ct, bodyField.Addr().Interface())
 	}
-
-	// Default streaming handling
-	ct = strings.Split(ct, ";")[0] // strip charset etc.
-	switch ct {
-	case "application/json":
-		return json.NewDecoder(r.Body).Decode(bodyField.Addr().Interface())
-	case "application/xml", "text/xml":
-		return xml.NewDecoder(r.Body).Decode(bodyField.Addr().Interface())
-	default:
-		// Default to JSON
-		return json.NewDecoder(r.Body).Decode(bodyField.Addr().Interface())
+	if codecMgr == nil {
+		codecMgr = NewCodecManager()
 	}
+	mediaType := normalizeContentType(ct)
+	codec, ok := codecMgr.Resolve(mediaType)
+	if !ok {
+		if c != nil && c.strictContentType {
+			return Err(http.StatusUnsupportedMediaType, fmt.Sprintf("unsupported media type %q", ct), WithCause(ErrUnsupportedMediaType))
+		}
+		codec, ok = codecMgr.Resolve(MIMEJSON)
+		if !ok {
+			return fmt.Errorf("ghttp: json codec not registered")
+		}
+	}
+	return codec.Unmarshal(r.Body, bodyField.Addr().Interface())
 }

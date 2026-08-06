@@ -27,7 +27,7 @@ func TestParseInput_ParamsAndBody(t *testing.T) {
 	routeParams.Add("orgId", "org-42")
 
 	var input Req
-	if err := parseInputWithConfigAndPathParams(r, &input, nil, routeParams); err != nil {
+	if err := parseInputWithConfigAndPathParams(r, &input, nil, nil, routeParams); err != nil {
 		t.Fatalf("parseInput failed: %v", err)
 	}
 
@@ -73,7 +73,7 @@ func TestParseInput_BindsPathQueryHeaderCookieTags(t *testing.T) {
 	routeParams.Add("id", "99")
 
 	var input Req
-	if err := parseInputWithConfigAndPathParams(r, &input, nil, routeParams); err != nil {
+	if err := parseInputWithConfigAndPathParams(r, &input, nil, nil, routeParams); err != nil {
 		t.Fatalf("parseInput failed: %v", err)
 	}
 
@@ -92,7 +92,7 @@ func TestParseInput_DirectParams(t *testing.T) {
 	routeParams.Add("id", "99")
 
 	var params Params
-	if err := parseInputWithConfigAndPathParams(r, &params, nil, routeParams); err != nil {
+	if err := parseInputWithConfigAndPathParams(r, &params, nil, nil, routeParams); err != nil {
 		t.Fatalf("parseInput failed: %v", err)
 	}
 
@@ -180,7 +180,7 @@ func TestParseInput_ParamsPathFromRouteExtractor(t *testing.T) {
 	routeParams.Add("id", "99")
 
 	var input Req
-	if err := parseInputWithConfigAndPathParams(r, &input, nil, routeParams); err != nil {
+	if err := parseInputWithConfigAndPathParams(r, &input, nil, nil, routeParams); err != nil {
 		t.Fatalf("parseInput failed: %v", err)
 	}
 	if input.Path("id") != "99" {

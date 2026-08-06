@@ -21,20 +21,21 @@ const (
 )
 
 type routeDefinition struct {
-	method         string
-	pattern        routePattern
-	handler        http.Handler
-	middlewares    []Middleware
-	group          *Group
-	needsExtractor bool
-	terminal       routeTerminalKind
-	responseStatus int
-	internal       bool
-	doc            RouteDoc
-	reqType        reflect.Type
-	respType       reflect.Type
-	consumes       []string
-	produces       []string
+	method          string
+	pattern         routePattern
+	handler         http.Handler
+	middlewares     []Middleware
+	group           *Group
+	needsExtractor  bool
+	terminal        routeTerminalKind
+	responseStatus  int
+	responseHeaders []responseHeader
+	internal        bool
+	doc             RouteDoc
+	reqType         reflect.Type
+	respType        reflect.Type
+	consumes        []string
+	produces        []string
 }
 
 func (d routeDefinition) clone() routeDefinition {
@@ -44,6 +45,7 @@ func (d routeDefinition) clone() routeDefinition {
 	cloned.doc = d.doc.clone()
 	cloned.consumes = append([]string(nil), d.consumes...)
 	cloned.produces = append([]string(nil), d.produces...)
+	cloned.responseHeaders = append([]responseHeader(nil), d.responseHeaders...)
 	return cloned
 }
 

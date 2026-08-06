@@ -334,13 +334,7 @@ func requireRole(roles ...string) ghttp.Middleware {
 // 自定义 Envelope
 // ============================================================================
 
-func customEnvelope(w http.ResponseWriter, r *http.Request, statusCode int, resp interface{}, err error, codecMgr *ghttp.CodecManager) {
-	accept := r.Header.Get("Accept")
-	codec := codecMgr.Negotiate(accept)
-	contentType := ghttp.MIMEJSON
-	if len(codec.ContentTypes()) > 0 {
-		contentType = codec.ContentTypes()[0]
-	}
+func customEnvelope(w http.ResponseWriter, r *http.Request, statusCode int, resp interface{}, err error, contentType string, codec ghttp.Codec) {
 	w.Header().Set("Content-Type", contentType)
 
 	type envelope struct {

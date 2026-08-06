@@ -1091,12 +1091,15 @@ func TestRouteBuilderValidateStopsHandlerWithDefaultValidationError(t *testing.T
 
 	Route[input, struct{}](app).
 		POST("/validated").
-		Validate(func(req input) error {
-			if req.Body.Name == "" {
-				return errors.New("name required")
-			}
-			return nil
-		}).
+		Validate(
+			func(req input) error {
+				if req.Body.Name == "" {
+					return errors.New("name required")
+				}
+				return nil
+			},
+			ValidationError(Err(http.StatusUnprocessableEntity, "name required")),
+		).
 		To(func(context.Context, input) (struct{}, error) {
 			called = true
 			return struct{}{}, nil
@@ -1167,12 +1170,15 @@ func TestRouteBuilderSkipValidationSkipsGlobalValidatorOnly(t *testing.T) {
 	Route[input, struct{}](app).
 		POST("/skip-global-validation").
 		SkipValidation().
-		Validate(func(req input) error {
-			if req.Body.Name == "" {
-				return errors.New("route validation still runs")
-			}
-			return nil
-		}).
+		Validate(
+			func(req input) error {
+				if req.Body.Name == "" {
+					return errors.New("route validation still runs")
+				}
+				return nil
+			},
+			ValidationError(Err(http.StatusUnprocessableEntity, "route validation still runs")),
+		).
 		To(func(context.Context, input) (struct{}, error) {
 			called = true
 			return struct{}{}, nil
@@ -1198,5 +1204,124 @@ func TestRouteBuilderSkipValidationSkipsGlobalValidatorOnly(t *testing.T) {
 	}
 	if !called {
 		t.Fatal("handler was not called after route validation passed")
+	}
+}
+
+func TestServerValidatorOffByDefault(t *testing.T) {
+	type input struct {
+		Params
+		Body struct {
+			Name string `json:"name" validate:"required"`
+		}
+	}
+	app := New(WithProduces(MIMEJSON))
+	Route[input, struct{}](app).POST("/users").To(func(context.Context, input) (struct{}, error) {
+		return struct{}{}, nil
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", MIMEJSON)
+	app.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (validator must be off by default)", w.Code)
+	}
+}
+
+func TestServerValidatorExplicitOn(t *testing.T) {
+	type validatedInput struct {
+		Params
+		Body struct {
+			Name string `json:"name" validate:"required"`
+		}
+	}
+	app := New(WithProduces(MIMEJSON), WithValidator(newDefaultValidator()))
+	Route[validatedInput, struct{}](app).POST("/users").To(func(context.Context, validatedInput) (struct{}, error) {
+		return struct{}{}, nil
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(`{"name":""}`))
+	req.Header.Set("Content-Type", MIMEJSON)
+	app.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", w.Code)
+	}
+}
+
+type createdResp struct {
+	ID string `json:"id"`
+}
+
+func (r createdResp) StatusCode() int { return http.StatusCreated }
+
+func (r createdResp) WriteResponseHeaders(h http.Header) {
+	h.Set("X-Resource-ID", r.ID)
+}
+
+type noContentResp struct{}
+
+func (noContentResp) StatusCode() int { return http.StatusNoContent }
+
+func TestTypedRouteExplicitStatusAndHeaders(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	Route[struct{}, createdResp](app).POST("/users").To(func(context.Context, struct{}) (createdResp, error) {
+		return createdResp{ID: "u-1"}, nil
+	})
+
+	w := httptest.NewRecorder()
+	app.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/users", nil))
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", w.Code)
+	}
+	if got := w.Header().Get("X-Resource-ID"); got != "u-1" {
+		t.Fatalf("header = %q, want u-1", got)
+	}
+}
+
+func TestTypedRouteNoBodyStatus(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	Route[struct{}, noContentResp](app).DELETE("/users/{id}").To(func(context.Context, struct{}) (noContentResp, error) {
+		return noContentResp{}, nil
+	})
+
+	w := httptest.NewRecorder()
+	app.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/users/1", nil))
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", w.Code)
+	}
+	if w.Body.Len() != 0 {
+		t.Fatalf("body = %q, want empty", w.Body.String())
+	}
+}
+
+func TestTypedRouteBuilderFixedStatus(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	Route[struct{}, struct {
+		Created bool `json:"created"`
+	}](app).
+		POST("/resources").
+		Status(http.StatusCreated).
+		ResponseHeader("X-Resource", "r-1").
+		To(func(context.Context, struct{}) (struct {
+			Created bool `json:"created"`
+		}, error) {
+			return struct {
+				Created bool `json:"created"`
+			}{Created: true}, nil
+		})
+
+	w := httptest.NewRecorder()
+	app.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/resources", nil))
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", w.Code)
+	}
+	if got := w.Header().Get("X-Resource"); got != "r-1" {
+		t.Fatalf("header = %q, want r-1", got)
 	}
 }

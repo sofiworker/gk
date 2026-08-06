@@ -21,5 +21,15 @@ type RawHandler func(w http.ResponseWriter, r *http.Request)
 // HTTPHandlerFunc is a parsed-input handler that writes the HTTP response itself.
 type HTTPHandlerFunc[Req any] func(w http.ResponseWriter, r *http.Request, input Req) error
 
+// StatusCoder lets a typed response explicitly declare its HTTP status.
+type StatusCoder interface {
+	StatusCode() int
+}
+
+// ResponseHeaderWriter lets a typed response explicitly add response headers.
+type ResponseHeaderWriter interface {
+	WriteResponseHeaders(http.Header)
+}
+
 // RedirectFunc resolves a redirect target for a parsed request.
 type RedirectFunc[Req any] func(input Req) (string, error)

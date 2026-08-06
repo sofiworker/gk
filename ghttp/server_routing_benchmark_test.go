@@ -44,8 +44,7 @@ type benchmarkLegacyRequestAdapter struct {
 
 func (a benchmarkLegacyRequestAdapter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	responseState, w := newResponseWriteState(w, r.Method == http.MethodHead)
-	r = r.WithContext(context.WithValue(r.Context(), serverContextKey{}, nil))
-	r = r.WithContext(context.WithValue(r.Context(), responseStateContextKey{}, responseState))
+	r = r.WithContext(context.WithValue(r.Context(), requestStateContextKey{}, requestState{responseState: responseState}))
 	a.router.ServeHTTP(w, r)
 }
 

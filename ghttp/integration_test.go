@@ -482,9 +482,8 @@ func TestIntegration_CustomEnvelope(t *testing.T) {
 		Data interface{} `json:"data,omitempty"`
 	}
 
-	s := New(WithEnvelope(func(w http.ResponseWriter, r *http.Request, statusCode int, resp interface{}, err error, codecMgr *CodecManager) {
-		codec := codecMgr.Negotiate(r.Header.Get("Accept"))
-		w.Header().Set("Content-Type", codec.ContentTypes()[0])
+	s := New(WithEnvelope(func(w http.ResponseWriter, r *http.Request, statusCode int, resp interface{}, err error, contentType string, codec Codec) {
+		w.Header().Set("Content-Type", contentType)
 		if err != nil {
 			w.WriteHeader(statusCode)
 			codec.Marshal(w, &myEnvelope{OK: false})

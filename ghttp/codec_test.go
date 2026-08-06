@@ -3,6 +3,7 @@ package ghttp
 import (
 	"bytes"
 	"io"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -50,6 +51,47 @@ func TestCodecManagerNegotiate(t *testing.T) {
 	codec2 := mgr.Negotiate("text/plain")
 	if codec2.ContentTypes()[0] != "text/plain" {
 		t.Fatalf("expected text/plain, got %s", codec2.ContentTypes()[0])
+	}
+}
+
+func TestCodecManagerSelect(t *testing.T) {
+	m := NewCodecManager()
+
+	cases := []struct {
+		name       string
+		accept     string
+		candidates []string
+		wantCT     string
+		wantOK     bool
+	}{
+		{name: "empty accept picks first", accept: "", candidates: []string{MIMEJSON, MIMEXML}, wantCT: MIMEJSON, wantOK: true},
+		{name: "q=0 excludes candidate", accept: "application/json;q=0, application/xml", candidates: []string{MIMEJSON, MIMEXML}, wantCT: MIMEXML, wantOK: true},
+		{name: "all q=0 no match", accept: "application/json;q=0", candidates: []string{MIMEJSON}, wantOK: false},
+		{name: "wildcard type matches", accept: "application/*", candidates: []string{MIMEJSON, "text/plain"}, wantCT: MIMEJSON, wantOK: true},
+		{name: "no acceptable candidate", accept: "text/html", candidates: []string{MIMEJSON}, wantOK: false},
+		{name: "higher q wins", accept: "application/xml;q=0.5, application/json;q=0.9", candidates: []string{MIMEJSON, MIMEXML}, wantCT: MIMEJSON, wantOK: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ct, _, ok := m.Select(tc.accept, tc.candidates)
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
+			}
+			if ok && ct != tc.wantCT {
+				t.Fatalf("content type = %q, want %q", ct, tc.wantCT)
+			}
+		})
+	}
+}
+
+func TestFormCodecUnmarshal(t *testing.T) {
+	codec := &FormCodec{}
+	var values url.Values
+	if err := codec.Unmarshal(strings.NewReader("name=alice&age=18"), &values); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if values.Get("name") != "alice" || values.Get("age") != "18" {
+		t.Fatalf("values = %#v", values)
 	}
 }
 

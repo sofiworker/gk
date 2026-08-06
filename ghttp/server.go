@@ -12,7 +12,13 @@ import (
 	"sync/atomic"
 )
 
-type serverContextKey struct{}
+type requestStateContextKey struct{}
+type matchedParamsContextKey struct{}
+
+type requestState struct {
+	server        *Server
+	responseState *responseWriteState
+}
 
 // Server is the core HTTP server.
 // It implements http.Handler, so it can be:
@@ -63,7 +69,7 @@ func New(opts ...ServerOption) *Server {
 		codecMgr:     NewCodecManager(),
 		envelope:     c.envelope,
 		errorHandler: c.errorHandler,
-		validator:    newDefaultValidator(),
+		validator:    nil,
 		logger:       c.logger,
 		produces:     c.produces,
 		consumes:     c.consumes,
@@ -84,8 +90,8 @@ func New(opts ...ServerOption) *Server {
 // ServeHTTP implements http.Handler.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	responseState, w := newResponseWriteState(w, r.Method == http.MethodHead)
-	r = r.WithContext(context.WithValue(r.Context(), serverContextKey{}, s))
-	r = r.WithContext(context.WithValue(r.Context(), responseStateContextKey{}, responseState))
+	ctx := context.WithValue(r.Context(), requestStateContextKey{}, requestState{server: s, responseState: responseState})
+	r = r.WithContext(ctx)
 	s.finalizeRoutes()
 	state := s.compiled.Load()
 	if state == nil {
@@ -384,6 +390,18 @@ func (s *Server) owner() *Server {
 	return s
 }
 
+// MatchedParams returns the request's path params plus the lazy request view.
+// It is safe to call from any middleware or handler on the request path.
+func (s *Server) MatchedParams(r *http.Request) Params {
+	if r == nil {
+		return Params{}
+	}
+	if list, ok := r.Context().Value(matchedParamsContextKey{}).(pathParamList); ok {
+		return paramsFromRequestWithPathParams(r, s.config, list)
+	}
+	return paramsFromRequest(r, s.config)
+}
+
 func (s *Server) finalizeRoutes() {
 	if s.compiled.Load() != nil {
 		return
@@ -493,6 +511,14 @@ func (s *compiledState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	result := s.mux.match(r.Method, requestPath)
 	switch result.kind {
 	case routeMatchFound:
+		if result.route.definition.needsExtractor {
+			params, err := result.route.extract(requestPath)
+			if err != nil {
+				s.badRequest.ServeHTTP(w, r)
+				return
+			}
+			r = r.WithContext(context.WithValue(r.Context(), matchedParamsContextKey{}, params))
+		}
 		result.route.handler.ServeHTTP(w, r)
 	case routeMatchMethodNotAllowed:
 		w.Header().Set("Allow", strings.Join(result.allow, ", "))

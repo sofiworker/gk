@@ -91,10 +91,8 @@ func TestFileUploadActual(t *testing.T) {
 // ============================================================================
 
 func TestCustomEnvelope(t *testing.T) {
-	customEnv := func(w http.ResponseWriter, r *http.Request, statusCode int, resp interface{}, err error, codecMgr *ghttp.CodecManager) {
-		accept := r.Header.Get("Accept")
-		codec := codecMgr.Negotiate(accept)
-		w.Header().Set("Content-Type", codec.ContentTypes()[0])
+	customEnv := func(w http.ResponseWriter, r *http.Request, statusCode int, resp interface{}, err error, contentType string, codec ghttp.Codec) {
+		w.Header().Set("Content-Type", contentType)
 		w.WriteHeader(statusCode)
 		var body map[string]interface{}
 		if err != nil {

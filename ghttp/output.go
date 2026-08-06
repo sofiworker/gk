@@ -4,15 +4,18 @@ import (
 	"net/http"
 )
 
-// EnvelopeFunc wraps responses before they are written.
-type EnvelopeFunc func(w http.ResponseWriter, r *http.Request, statusCode int, resp interface{}, err error, codecMgr *CodecManager)
+// EnvelopeFunc wraps responses before they are written. The contentType and
+// codec are the route-negotiated representation; the envelope must not change
+// the HTTP status code.
+type EnvelopeFunc func(w http.ResponseWriter, r *http.Request, statusCode int, resp interface{}, err error, contentType string, codec Codec)
 
 // DefaultEnvelope wraps responses in {code, msg, data}.
-func DefaultEnvelope(w http.ResponseWriter, r *http.Request, statusCode int, resp interface{}, err error, codecMgr *CodecManager) {
-	accept := r.Header.Get("Accept")
-	codec := codecMgr.Negotiate(accept)
-
-	w.Header().Set("Content-Type", codec.ContentTypes()[0])
+func DefaultEnvelope(w http.ResponseWriter, r *http.Request, statusCode int, resp interface{}, err error, contentType string, codec Codec) {
+	if codec == nil {
+		codec = &JSONCodec{}
+		contentType = MIMEJSON
+	}
+	w.Header().Set("Content-Type", contentType)
 
 	var envelope struct {
 		Code int         `json:"code"`

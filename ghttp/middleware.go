@@ -234,8 +234,8 @@ func serverFromRequest(r *http.Request) *Server {
 	if r == nil {
 		return nil
 	}
-	server, _ := r.Context().Value(serverContextKey{}).(*Server)
-	return server
+	state, _ := r.Context().Value(requestStateContextKey{}).(requestState)
+	return state.server
 }
 
 // Timeout adds a timeout to the request context.

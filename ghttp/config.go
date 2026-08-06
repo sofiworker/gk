@@ -14,33 +14,39 @@ const DefaultMaxBodyBytes int64 = 4 << 20
 
 // Config holds server configuration.
 type Config struct {
-	address           string
-	renderer          Renderer
-	validator         Validator
-	logger            Logger
-	envelope          EnvelopeFunc
-	errorHandler      ErrorHandler
-	bodyDecoder       BodyDecodeFunc
-	produces          []string
-	consumes          []string
-	clientIPResolver  ClientIPResolver
-	vfsPath           string
-	strictRouting     bool
-	openAPIEnabled    bool
-	openAPITitle      string
-	openAPIVersion    string
-	openAPIPath       string
-	openAPIPathSet    bool
-	readTimeout       time.Duration
-	readHeaderTimeout time.Duration
-	writeTimeout      time.Duration
-	idleTimeout       time.Duration
-	maxHeaderBytes    int
-	maxBodyBytes      int64
-	tlsConfig         *tls.Config
-	baseContext       func(net.Listener) context.Context
-	connContext       func(context.Context, net.Conn) context.Context
-	errorLog          *log.Logger
+	address                  string
+	renderer                 Renderer
+	validator                Validator
+	logger                   Logger
+	envelope                 EnvelopeFunc
+	errorHandler             ErrorHandler
+	bodyDecoder              BodyDecodeFunc
+	produces                 []string
+	consumes                 []string
+	clientIPResolver         ClientIPResolver
+	vfsPath                  string
+	strictRouting            bool
+	exposeErrorDetails       bool
+	openAPIEnabled           bool
+	openAPITitle             string
+	openAPIVersion           string
+	openAPIPath              string
+	openAPIPathSet           bool
+	openAPIServers           []string
+	openAPISecurity          []map[string][]string
+	strictContentNegotiation bool
+	strictContentType        bool
+	webSocketCheckOrigin     func(*http.Request) bool
+	readTimeout              time.Duration
+	readHeaderTimeout        time.Duration
+	writeTimeout             time.Duration
+	idleTimeout              time.Duration
+	maxHeaderBytes           int
+	maxBodyBytes             int64
+	tlsConfig                *tls.Config
+	baseContext              func(net.Listener) context.Context
+	connContext              func(context.Context, net.Conn) context.Context
+	errorLog                 *log.Logger
 }
 
 // ClientIPResolver resolves a client IP from an HTTP request.
@@ -134,6 +140,55 @@ func WithOpenAPIPath(path string) ServerOption {
 	return func(c *Config) {
 		c.openAPIPath = path
 		c.openAPIPathSet = true
+	}
+}
+
+// WithOpenAPIServers sets the OpenAPI servers list.
+func WithOpenAPIServers(urls ...string) ServerOption {
+	return func(c *Config) {
+		c.openAPIServers = append([]string(nil), urls...)
+	}
+}
+
+// WithOpenAPISecurity sets the OpenAPI top-level security requirements.
+func WithOpenAPISecurity(requirements ...map[string][]string) ServerOption {
+	return func(c *Config) {
+		c.openAPISecurity = append([]map[string][]string(nil), requirements...)
+	}
+}
+
+// WithStrictContentNegotiation returns 406 when no route Produces candidate
+// is acceptable per the request Accept header. Default: fall back to the
+// first declared Produces type (documented default).
+func WithStrictContentNegotiation() ServerOption {
+	return func(c *Config) {
+		c.strictContentNegotiation = true
+	}
+}
+
+// WithStrictContentType returns 415 when a request Content-Type is not
+// registered with the CodecManager and no route/server Consumes matched.
+// Default: unknown types are decoded as JSON (documented default).
+func WithStrictContentType() ServerOption {
+	return func(c *Config) {
+		c.strictContentType = true
+	}
+}
+
+// WithWebSocketOriginChecker replaces the default same-origin WebSocket
+// origin check. Default: same-origin or missing Origin is allowed.
+func WithWebSocketOriginChecker(check func(*http.Request) bool) ServerOption {
+	return func(c *Config) {
+		c.webSocketCheckOrigin = check
+	}
+}
+
+// WithExposeErrorDetails enables returning internal error messages in error
+// response bodies. Default: non-HTTPError failures return only the HTTP
+// status text; explicit HTTPError messages are always returned.
+func WithExposeErrorDetails() ServerOption {
+	return func(c *Config) {
+		c.exposeErrorDetails = true
 	}
 }
 
