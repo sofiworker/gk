@@ -57,7 +57,21 @@ func TestSystemResolver_LookupMethods(t *testing.T) {
 	})
 
 	t.Run("测试 LookupCNAME", func(t *testing.T) {
-		cname, err := resolver.LookupCNAME(ctx, testDomain)
+		// Use a dedicated server without A/AAAA records. LookupCNAME issues
+		// A, AAAA and CNAME queries concurrently, and the stdlib resolver can
+		// adopt the A answer's owner name before the CNAME answer arrives.
+		cnameServer := newTestDNSServer(t)
+		cnameServer.answerCNAME("google.com.", "dns.google.")
+		cnameResolver := &SystemResolver{
+			Resolver: &net.Resolver{
+				PreferGo: true,
+				Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+					dialer := &net.Dialer{}
+					return dialer.DialContext(ctx, "udp", cnameServer.address())
+				},
+			},
+		}
+		cname, err := cnameResolver.LookupCNAME(ctx, testDomain)
 		if err != nil {
 			t.Errorf("LookupCNAME() error = %v", err)
 			return
