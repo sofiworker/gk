@@ -28,14 +28,14 @@ options ndots:2 timeout:2s attempts:3
 		t.Fatalf("ParseResolveFile failed: %v", err)
 	}
 
-	if len(conf.Nameservers) != 0 {
-		// Wait, implementation of ParseResolveFile:
-		// case "nameserver": empty! It does nothing in the switch!
-		// case "domain": empty!
-		// case "search": empty!
-		t.Logf("nameservers = %v (parser currently ignores nameserver lines)", conf.Nameservers)
-		// Only "options" is implemented.
-		// So nameservers will be empty (default).
+	if len(conf.Nameservers) != 2 || conf.Nameservers[0] != "8.8.8.8:53" || conf.Nameservers[1] != "8.8.4.4:53" {
+		t.Errorf("nameservers = %v, want [8.8.8.8:53 8.8.4.4:53]", conf.Nameservers)
+	}
+	if len(conf.Search) != 1 || conf.Search[0] != "example.com" {
+		t.Errorf("search = %v, want [example.com]", conf.Search)
+	}
+	if conf.Domain != "example.net" {
+		t.Errorf("domain = %q, want example.net", conf.Domain)
 	}
 
 	// Test Options parsing which IS implemented
@@ -52,13 +52,7 @@ options ndots:2 timeout:2s attempts:3
 	// Validate defaults
 	conf.Validate()
 	if len(conf.Nameservers) == 0 {
-		if len(DefaultNS) > 0 {
-			// It should assign default NS
-			// Wait, Validate() checks len(Nameservers) == 0.
-			// But since parser didn't parse them, it is 0.
-			// So it should be DefaultNS.
-			t.Logf("default nameservers = %v (parser currently ignores nameserver lines)", DefaultNS)
-		}
+		t.Fatal("Validate should assign default nameservers")
 	}
 }
 

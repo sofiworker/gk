@@ -93,6 +93,46 @@ func TestConfigLoading(t *testing.T) {
 	})
 }
 
+func TestConfigTypedAccessors(t *testing.T) {
+	assert := assert.New(t)
+	tempDir, err := os.MkdirTemp("", "gconfig_accessors")
+	assert.NoError(err)
+	defer os.RemoveAll(tempDir)
+
+	content := "" +
+		"server:\n" +
+		"  host: \"127.0.0.1\"\n" +
+		"  port: 8080\n" +
+		"debug: true\n" +
+		"timeout: 3s\n" +
+		"tags:\n" +
+		"  - \"a\"\n" +
+		"  - \"b\"\n"
+	configFilePath := setupTestFile(t, tempDir, "accessors.yaml", content)
+
+	loader, err := New(WithFile(configFilePath))
+	assert.NoError(err)
+
+	assert.Equal("127.0.0.1", loader.GetString("server.host"))
+	assert.Equal(8080, loader.GetInt("server.port"))
+	assert.True(loader.GetBool("debug"))
+	assert.Equal(3*time.Second, loader.GetDuration("timeout"))
+	assert.Equal([]string{"a", "b"}, loader.GetStringSlice("tags"))
+
+	type server struct {
+		Host string `json:"host"`
+		Port int    `json:"port"`
+	}
+	var s server
+	assert.NoError(loader.UnmarshalKey("server", &s))
+	assert.Equal("127.0.0.1", s.Host)
+	assert.Equal(8080, s.Port)
+
+	loader.Set("server.port", 9090)
+	assert.Equal(9090, loader.GetInt("server.port"))
+	assert.NotEmpty(loader.AllSettings())
+}
+
 func TestHotReloadOnFileChange(t *testing.T) {
 	assert := assert.New(t)
 	tempDir, err := os.MkdirTemp("", "gconfig_hot_reload")

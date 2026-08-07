@@ -16,6 +16,12 @@ const (
 
 var DefaultNS = []string{"127.0.0.1:53", "[::1]:53"}
 
+// DefaultNameservers returns a copy of DefaultNS so callers cannot mutate
+// the package-level slice.
+func DefaultNameservers() []string {
+	return append([]string(nil), DefaultNS...)
+}
+
 type DnsConfig struct {
 	Nameservers []string
 	Search      []string
@@ -50,8 +56,15 @@ func ParseResolveFile(file string) (*DnsConfig, error) {
 		args := fields[1:]
 		switch directive {
 		case "nameserver":
+			for _, ns := range args {
+				conf.Nameservers = append(conf.Nameservers, normalizeNameserver(ns))
+			}
 		case "domain":
+			if len(args) > 0 {
+				conf.Domain = args[0]
+			}
 		case "search":
+			conf.Search = append(conf.Search, args...)
 		case "options":
 			for _, opt := range args {
 				switch {
@@ -95,7 +108,7 @@ func ParseResolveFile(file string) (*DnsConfig, error) {
 
 func (c *DnsConfig) Validate() {
 	if len(c.Nameservers) == 0 {
-		c.Nameservers = DefaultNS
+		c.Nameservers = DefaultNameservers()
 	}
 	if c.Timeout <= 0 {
 		c.Timeout = 5 * time.Second
@@ -106,6 +119,18 @@ func (c *DnsConfig) Validate() {
 	if c.Ndots <= 0 {
 		c.Ndots = 1
 	}
+}
+
+func normalizeNameserver(ns string) string {
+	ns = strings.TrimSuffix(ns, ".")
+	if strings.Contains(ns, ":") && !strings.HasPrefix(ns, "[") {
+		// IPv6 without brackets: keep as-is; resolvers accept "2001:db8::1"
+		return ns
+	}
+	if !strings.Contains(ns, ":") {
+		return ns + ":53"
+	}
+	return ns
 }
 
 type Option func(*DnsConfig)

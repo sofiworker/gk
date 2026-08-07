@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/mitchellh/mapstructure"
@@ -227,30 +228,83 @@ func (l *defaultLogger) Printf(format string, v ...interface{}) {
 
 // Unmarshal 将已加载的配置解析到 target 结构体中。
 func (c *Config) Unmarshal(target interface{}, opts ...DecoderOptionFunc) error {
-	c.mu.RLock()
-	if !c.loaded {
-		c.mu.RUnlock() // 释放读锁，以便 Load 方法可以获取写锁
-		if err := c.Load(); err != nil {
-			return err
-		}
-	} else {
-		c.mu.RUnlock()
+	if err := c.ensureLoaded(); err != nil {
+		return err
 	}
 
 	// 从全局选项克隆一份解码器选项
-	finalOpt := &DecoderOption{}
-	if c.opts.DecoderOption != nil {
-		// copy
-		*finalOpt = *c.opts.DecoderOption
-	}
-
-	// 应用所有传入的 Unmarshal 选项
-	for _, opt := range opts {
-		opt(finalOpt)
-	}
+	finalOpt := c.finalDecoderOptions(opts...)
 
 	// 将我们声明式的 DecoderOption 结构体转换为 viper 需要的函数式选项。
 	return c.v.Unmarshal(target, c.buildViperDecoderOptions(finalOpt)...)
+}
+
+func (c *Config) ensureLoaded() error {
+	c.mu.RLock()
+	loaded := c.loaded
+	c.mu.RUnlock()
+	if loaded {
+		return nil
+	}
+	return c.Load()
+}
+
+func (c *Config) finalDecoderOptions(opts ...DecoderOptionFunc) *DecoderOption {
+	finalOpt := &DecoderOption{}
+	if c.opts.DecoderOption != nil {
+		*finalOpt = *c.opts.DecoderOption
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(finalOpt)
+		}
+	}
+	return finalOpt
+}
+
+// Get 返回指定 key 的值（未加载时先自动加载）。
+func (c *Config) Get(key string) interface{} {
+	_ = c.ensureLoaded()
+	return c.v.Get(key)
+}
+
+func (c *Config) GetInt(key string) int {
+	_ = c.ensureLoaded()
+	return c.v.GetInt(key)
+}
+
+func (c *Config) GetBool(key string) bool {
+	_ = c.ensureLoaded()
+	return c.v.GetBool(key)
+}
+
+func (c *Config) GetDuration(key string) time.Duration {
+	_ = c.ensureLoaded()
+	return c.v.GetDuration(key)
+}
+
+func (c *Config) GetStringSlice(key string) []string {
+	_ = c.ensureLoaded()
+	return c.v.GetStringSlice(key)
+}
+
+func (c *Config) GetStringMap(key string) map[string]interface{} {
+	_ = c.ensureLoaded()
+	return c.v.GetStringMap(key)
+}
+
+// Set 设置配置项（仅内存，不写回文件）。
+func (c *Config) Set(key string, value interface{}) {
+	c.v.Set(key, value)
+}
+
+// UnmarshalKey 将指定 key 下的配置解析到 target。
+func (c *Config) UnmarshalKey(key string, target interface{}, opts ...DecoderOptionFunc) error {
+	if err := c.ensureLoaded(); err != nil {
+		return err
+	}
+	finalOpt := c.finalDecoderOptions(opts...)
+	return c.v.UnmarshalKey(key, target, c.buildViperDecoderOptions(finalOpt)...)
 }
 
 // buildViperDecoderOptions 是一个内部转换函数。
@@ -301,11 +355,13 @@ func (c *Config) SetDefault(key string, value interface{}) {
 
 // GetString 获取一个字符串类型的配置项。
 func (c *Config) GetString(key string) string {
+	_ = c.ensureLoaded()
 	return c.v.GetString(key)
 }
 
 // AllSettings 返回所有配置项的 map。
 func (c *Config) AllSettings() map[string]interface{} {
+	_ = c.ensureLoaded()
 	return c.v.AllSettings()
 }
 

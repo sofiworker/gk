@@ -9,6 +9,12 @@ import "github.com/sofiworker/gk/gconfig"
 
 loader, _ := gconfig.New(gconfig.WithFile("config.yaml"))
 loader.Unmarshal(&cfg)
+
+// 类型化访问器（懒加载）
+host := loader.GetString("server.host")
+port := loader.GetInt("server.port")
+timeout := loader.GetDuration("server.timeout")
+loader.UnmarshalKey("server", &serverCfg)
 ```
 
 ## Remote Sources
