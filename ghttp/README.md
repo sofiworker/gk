@@ -108,7 +108,7 @@ _, err = io.Copy(dst, streamResp.RawBody())
 
 | 函数 | 说明 |
 |------|------|
-| `Route[Req,Resp](target)` | 链式构建器起始，`target` 可以是 `*Server` 或 `*Group`；Go 1.27 起该函数仅作兼容 shim，类型参数被忽略 |
+| `Route[Req,Resp](target)` | 链式构建器起始，`target` 可以是 `*Server` 或 `*Group`；Go 1.27 起仅作 deprecated 兼容 shim（空壳返回同一个根组 builder），新代码直接使用 `s.GET(path)` 等动词方法 |
 | `.GET(path)` | 注册 GET 路由 |
 | `.POST(path)` | 注册 POST 路由 |
 | `.PUT(path)` | 注册 PUT 路由 |
@@ -153,7 +153,7 @@ _, err = io.Copy(dst, streamResp.RawBody())
 模块内同时保留两套 API，编译时按工具链版本**自动选择**（类似 Go 标准库的 `//go:build` 版本约束），使用者不需要传任何 build tag：
 
 - Go < 1.27：`ghttp.Route[Req, Resp](target).GET(path).To(handler)`，类型参数在包级函数上（Go 1.27 前方法不支持类型参数）；
-- Go ≥ 1.27：`server.GET(path).Doc(...).To[Req, Resp](handler)`，类型参数在终结方法上并由 handler 自动推断；Server/Group 本身即“根组”（gin 风格），无需先 `.Route()`；`.Route()` 仅保留给 `ANY`/`CUSTOM` 或显式起点；小写 `server.Get/Post/...` 为立即注册的快捷方式。
+- Go ≥ 1.27：`server.GET(path).Doc(...).To[Req, Resp](handler)`，类型参数在终结方法上并由 handler 自动推断；Server/Group 本身即“根组”（gin 风格），路由动词直接挂在上面，**没有 `.Route()` 方法**；`ANY`/`CUSTOM` 也有直接链式起点（`s.ANY(path)` / `s.CUSTOM(method, path)`）；小写 `server.Get/Post/...` 为立即注册的快捷方式；包级 `Route[Req,Resp](target)` 仅保留为 deprecated 兼容 shim（空壳，直接返回同一个根组 builder），供 1.27 前代码无痛迁移。
 
 ```go
 // Go 1.27+ 写法
@@ -176,8 +176,9 @@ api.Post("/users", func(ctx context.Context, req *CreateUserReq) (*CreateUserRes
     return &CreateUserResp{ID: "u-1"}, nil
 })
 
-// 显式起点：自定义方法或全方法路由仍可用 .Route()
-s.Route().ANY("/health").ToNoInput(func(ctx context.Context) (*HealthResp, error) { ... })
+// 显式起点：自定义方法或全方法路由直接链式
+s.ANY("/health").ToNoInput(func(ctx context.Context) (*HealthResp, error) { ... })
+s.CUSTOM("PURGE", "/cache").ToNoOutput(func(ctx context.Context, req *PurgeReq) error { ... })
 ```
 
 两套 API 共享同一内部实现（`routeBuilderCore`），行为完全一致。注意：Go 1.27 专用文件包含泛型方法语法，`go fmt`/`gofmt` 需使用 Go 1.27+ 工具链（旧工具链的 gofmt 无法解析该文件）。
