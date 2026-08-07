@@ -2,6 +2,7 @@ package ghttp
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,6 +19,10 @@ type terminalNoOutputReq struct {
 
 type terminalNoOutputQueryReq struct {
 	Name string `query:"name"`
+}
+
+type terminalGroupReq struct {
+	ID string `path:"id"`
 }
 
 func TestRouteBuilderToNoInputIgnoresRequestInput(t *testing.T) {
@@ -144,4 +149,60 @@ func TestRouteBuilderToNoOutputValidationRejects(t *testing.T) {
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422", w.Code)
 	}
+}
+
+func TestRouteBuilderGroupBranchLikeGin(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	var mwRan bool
+	api := Route[struct{}, struct{}](app).Group("/api", func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mwRan = true
+			next.ServeHTTP(w, r)
+		})
+	})
+	Route[terminalGroupReq, terminalNoInputResp](api).GET("/users/{id}").To(func(ctx context.Context, req terminalGroupReq) (terminalNoInputResp, error) {
+		return terminalNoInputResp{OK: req.ID == "u1"}, nil
+	})
+
+	w := httptest.NewRecorder()
+	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/users/u1", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if !mwRan {
+		t.Fatal("group middleware did not run")
+	}
+	if !strings.Contains(w.Body.String(), `"ok":true`) {
+		t.Fatalf("body = %q, want ok=true", w.Body.String())
+	}
+}
+
+func TestRouteBuilderGroupBranchNested(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	api := Route[struct{}, struct{}](app).Group("/api")
+	v1 := Route[struct{}, struct{}](api).Group("/v1")
+	Route[terminalGroupReq, terminalNoInputResp](v1).GET("/users/{id}").To(func(ctx context.Context, req terminalGroupReq) (terminalNoInputResp, error) {
+		return terminalNoInputResp{OK: req.ID == "u1"}, nil
+	})
+
+	w := httptest.NewRecorder()
+	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/users/u1", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+}
+
+func TestRouteBuilderGroupAfterMethodSetPanics(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			t.Fatal("expected panic")
+		}
+		err, ok := recovered.(error)
+		if !ok || !errors.Is(err, ErrRouteMethodAlreadySet) {
+			t.Fatalf("panic = %v, want ErrRouteMethodAlreadySet", recovered)
+		}
+	}()
+	Route[struct{}, struct{}](app).GET("/x").Group("/api")
 }

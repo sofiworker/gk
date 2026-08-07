@@ -180,6 +180,21 @@ func (c *routeBuilderCore) use(mws ...Middleware) {
 	c.middlewares = append(c.middlewares, mws...)
 }
 
+// group branches into a new route group rooted at the builder target, in the
+// spirit of gin's r.Group. It must be called before a method/path is set; any
+// route-level options already configured on the builder are not transferred.
+func (c *routeBuilderCore) group(prefix string, mws ...Middleware) *Group {
+	c.ensureMethodUnset()
+	switch target := c.target.(type) {
+	case *Server:
+		return target.Group(prefix, mws...)
+	case *Group:
+		return target.Group(prefix, mws...)
+	default:
+		panic(fmt.Sprintf("ghttp: unsupported route target %T", c.target))
+	}
+}
+
 func (c *routeBuilderCore) ensureMethodUnset() {
 	c.ensureMutable()
 	if len(c.methods) > 0 {

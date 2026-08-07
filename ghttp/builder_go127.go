@@ -173,6 +173,13 @@ func (b *RouteBuilder) Use(mws ...Middleware) *RouteBuilder {
 	return b
 }
 
+// Group branches into a new route group rooted at the builder target, like
+// gin's r.Group. It must be called before a method/path is set; route-level
+// options already configured on this builder are not transferred.
+func (b *RouteBuilder) Group(prefix string, mws ...Middleware) *Group {
+	return b.core.group(prefix, mws...)
+}
+
 // To registers a typed handler and finalizes the route. Req and Resp are
 // inferred from the handler.
 func (b *RouteBuilder) To[Req, Resp any](handler func(context.Context, Req) (Resp, error)) {

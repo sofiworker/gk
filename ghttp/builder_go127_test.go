@@ -122,6 +122,38 @@ func TestGo127GroupRoute(t *testing.T) {
 	}
 }
 
+func TestGo127BuilderGroupBranchLikeGin(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	var mwRan bool
+	api := app.Route().Group("/api", func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mwRan = true
+			next.ServeHTTP(w, r)
+		})
+	})
+	api.Route().GET("/users/{id}").To(func(ctx context.Context, in *go127Params) (*go127Resp, error) {
+		return &go127Resp{ID: in.ID}, nil
+	})
+	api.Get("/pings", func(ctx context.Context, _ struct{}) (*go127Resp, error) {
+		return &go127Resp{ID: "pong"}, nil
+	})
+
+	w := httptest.NewRecorder()
+	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/users/u1", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"id":"u1"`) {
+		t.Fatalf("builder group route status = %d body = %q", w.Code, w.Body.String())
+	}
+	if !mwRan {
+		t.Fatal("builder group middleware did not run")
+	}
+
+	w = httptest.NewRecorder()
+	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/pings", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"id":"pong"`) {
+		t.Fatalf("builder group shorthand status = %d body = %q", w.Code, w.Body.String())
+	}
+}
+
 func TestGo127LegacyRouteSpellingStillWorks(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	Route[go127Params, go127Resp](app).GET("/users/{id}").To(func(ctx context.Context, in *go127Params) (*go127Resp, error) {
