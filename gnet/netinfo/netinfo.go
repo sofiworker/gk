@@ -11,28 +11,25 @@ import (
 
 // Interface 汇总网卡及其常见网络属性。
 type Interface struct {
-	Name         string
-	MTU          int
-	HardwareAddr net.HardwareAddr
-	Flags        net.Flags
-	Index        int
-	Addresses    []net.Addr
-	Description  string
-	MAC          string
-	Speed        int64
-	Up           bool
-	Loopback     bool
-	Virtual      bool
-	IPv4Addrs    []string
-	IPv6Addrs    []string
-	Subnets      []string
-	Gateways     []string
-	DNSServers   []string
-	DHCPServer   string
-	VendorID     string
-	DeviceID     string
-	Driver       string
-	Location     string
+	Name          string
+	MTU           int
+	HardwareAddr  net.HardwareAddr
+	Flags         net.Flags
+	Index         int
+	Addresses     []net.Addr
+	Description   string
+	MAC           string
+	Speed         int64
+	Up            bool
+	Loopback      bool
+	Virtual       bool
+	IPv4Addrs     []string
+	IPv6Addrs     []string
+	Subnets       []string
+	Gateways      []string
+	Driver        string
+	DriverVersion string
+	BusInfo       string
 }
 
 // Interfaces 返回当前主机的网卡信息，结合 link/addr/route/ethtool。
@@ -64,15 +61,17 @@ func Interfaces() ([]Interface, error) {
 			Speed:        l.SpeedMbps,
 			Up:           l.Up,
 			Loopback:     l.Flags&net.FlagLoopback != 0,
-			Virtual:      l.Flags&net.FlagLoopback != 0 || l.HardwareAddr == nil,
-			Driver:       l.Driver,
+			// 无硬件地址或回环视为虚拟接口（近似判定，依赖平台能力）。
+			Virtual:       l.Flags&net.FlagLoopback != 0 || l.HardwareAddr == nil,
+			Driver:        l.Driver,
+			DriverVersion: l.DriverVersion,
 		}
 
 		if l.Ethtool != nil {
 			iface.Driver = l.Ethtool.Driver
 			iface.Description = l.Ethtool.Driver
-			iface.VendorID = l.Ethtool.BusInfo
-			iface.DeviceID = l.Ethtool.DriverVersion
+			iface.DriverVersion = l.Ethtool.DriverVersion
+			iface.BusInfo = l.Ethtool.BusInfo
 		}
 
 		if addrs := addrByIf[l.Name]; len(addrs) > 0 {

@@ -41,6 +41,13 @@ func WithFilterRaw(raw []byte) func(*Config) {
 	}
 }
 
+// WithFilterInstructions 设置预编译的 BPF 指令（可读性更佳）。
+func WithFilterInstructions(instructions []bpf.Instruction) func(*Config) {
+	return func(c *Config) {
+		c.Filter.Instructions = append(c.Filter.Instructions, instructions...)
+	}
+}
+
 // WithWriter 指定自定义 writer。
 func WithWriter(w io.Writer) func(*Config) {
 	return func(c *Config) {

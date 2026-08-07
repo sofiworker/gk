@@ -24,6 +24,7 @@
 - gcompress：新增 zlib/flate 压缩（`Zlib*`/`Flate*`）。
 - glog：新增 `DebugfContext/InfofContext/WarnfContext/ErrorfContext`。
 - gcache：新增 `GetOrSet`/`GetOrSetWithContext`（loader 模式，未命中自动加载并写入），Memory/Redis/Valkey 均实现。
+- gnet：`netinfo.Interface` 移除永不填充/错位字段（DNSServers/DHCPServer/Location/VendorID/DeviceID），新增 `BusInfo`/`DriverVersion` 正确映射 ethtool；`capture` 新增 `WithFilterInstructions`；`netinfo` 补测试与 gnet 子包文档。
 
 ### Changed
 
