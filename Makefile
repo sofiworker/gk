@@ -4,14 +4,16 @@ TESTFLAGS ?=
 VETFLAGS ?=
 BENCHFLAGS ?= -bench=. -benchmem
 GOLANGCI_LINT ?= golangci-lint
+GOFMT ?= gofmt
 
 .DEFAULT_GOAL := help
 
-.PHONY: help fmt vet test test-race test-cover bench lint tidy check ci all webbench webbench-sanity
+.PHONY: help fmt fmt-check vet test test-race test-cover bench lint tidy check ci all webbench webbench-sanity
 
 help:
 	@echo "Available targets:"
 	@echo "  make fmt         Format Go code with go fmt"
+	@echo "  make fmt-check   Check formatting (requires Go 1.27+ gofmt for ghttp/1.27 files)"
 	@echo "  make vet         Run go vet"
 	@echo "  make test        Run unit tests"
 	@echo "  make test-race   Run unit tests with the race detector"
@@ -26,6 +28,9 @@ help:
 
 fmt:
 	$(GO) fmt $(PKGS)
+
+fmt-check:
+	@test -z "$$($(GOFMT) -l .)" || (echo "unformatted files:"; $(GOFMT) -l .; exit 1)
 
 vet:
 	$(GO) vet $(VETFLAGS) $(PKGS)

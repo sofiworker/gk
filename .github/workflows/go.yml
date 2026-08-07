@@ -36,6 +36,104 @@ jobs:
       - name: Test
         run: go test ./...
 
+  preview:
+    # Go 1.27 generic methods are only active in the go1.27 build-tagged
+    # files; verify them with the preview toolchain. Replace go1.27rc2 with
+    # the stable version once Go 1.27 is released.
+    name: Go 1.27 preview (generic methods)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - name: Toolchain
+        run: GOTOOLCHAIN=go1.27rc2 go version
+
+      - name: Vet
+        run: GOTOOLCHAIN=go1.27rc2 go vet ./...
+
+      - name: Test
+        run: GOTOOLCHAIN=go1.27rc2 go test ./...
+
+  fmt:
+    # builder_go127.go uses generic-method syntax, so formatting must be
+    # checked with a Go 1.27+ gofmt.
+    name: gofmt (1.27)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - name: Check formatting
+        run: |
+          test -z "$(GOTOOLCHAIN=go1.27rc2 gofmt -l .)"
+
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # Keep below 1.27 so the go1.27-tagged files are excluded from the
+          # load and golangci-lint v1 (built with an older parser) can run.
+          go-version: "1.26.x"
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64.8
+          args: run ./...
+
+  race:
+    name: race detector
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - name: Test with race detector
+        run: go test -race ./...
+
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - name: Collect coverage
+        run: go test -coverprofile=coverage.out ./...
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+
   webbench:
     name: Web benchmarks (sanity)
     runs-on: ubuntu-latest
@@ -57,6 +155,3 @@ jobs:
 
       - name: Sanity (all frameworks answer all scenarios)
         run: go test -run TestScenarioSanity -v
-
-      - name: Benchmarks smoke run
-        run: go test -run xxx -bench . -benchtime 1x
