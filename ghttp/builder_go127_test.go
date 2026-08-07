@@ -79,12 +79,12 @@ func TestGo127RouteChainNoInputNoOutput(t *testing.T) {
 	}
 }
 
-func TestGo127ServerShorthands(t *testing.T) {
+func TestGo127ServerVerbChains(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	app.Get("/users/{id}", func(ctx context.Context, in *go127Params) (*go127Resp, error) {
+	app.GET("/users/{id}").To(func(ctx context.Context, in *go127Params) (*go127Resp, error) {
 		return &go127Resp{ID: in.ID}, nil
 	})
-	app.Post("/users", func(ctx context.Context, in *go127Params) (*go127Resp, error) {
+	app.POST("/users").To(func(ctx context.Context, in *go127Params) (*go127Resp, error) {
 		return &go127Resp{ID: in.ID}, nil
 	})
 
@@ -110,14 +110,20 @@ func TestGo127GroupRoute(t *testing.T) {
 	group.GET("/users/{id}").To(func(ctx context.Context, in *go127Params) (*go127Resp, error) {
 		return &go127Resp{ID: in.ID}, nil
 	})
-	group.Get("/pings", func(ctx context.Context, in *go127Params) (*go127Resp, error) {
-		return &go127Resp{ID: in.ID}, nil
+	group.GET("/pings").To(func(ctx context.Context, _ struct{}) (*go127Resp, error) {
+		return &go127Resp{ID: "pong"}, nil
 	})
 
 	w := httptest.NewRecorder()
 	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/users/u1", nil))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"id":"u1"`) {
 		t.Fatalf("group route status = %d body = %q", w.Code, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/pings", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"id":"pong"`) {
+		t.Fatalf("group pings status = %d body = %q", w.Code, w.Body.String())
 	}
 }
 
@@ -133,7 +139,7 @@ func TestGo127BuilderGroupBranchLikeGin(t *testing.T) {
 	api.GET("/users/{id}").To(func(ctx context.Context, in *go127Params) (*go127Resp, error) {
 		return &go127Resp{ID: in.ID}, nil
 	})
-	api.Get("/pings", func(ctx context.Context, _ struct{}) (*go127Resp, error) {
+	api.GET("/pings").To(func(ctx context.Context, _ struct{}) (*go127Resp, error) {
 		return &go127Resp{ID: "pong"}, nil
 	})
 
