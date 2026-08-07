@@ -7,8 +7,15 @@
 - 实施优先级从高到低：
   1. **标准 HTTP 方法的 server 侧**：路由、HTTP 语义、协商、错误、能力层、OpenAPI；
   2. **WS/SSE 的 server 侧**：允许实施，但不得挤占标准 HTTP 方法相关改动；
-  3. **client 侧**：不做正式实现。
-- **client 侧不做正式实现**：仅允许 demo 或明确标记为延后的占位；统一 client 实现由用户后续单独安排，本目录计划不得提前展开。
+  3. **client 侧**：2026-08-07 起开始正式实现（参考 go-resty / imroc/req 的能力）。
+
+### Client 库约束
+
+- client 与 server 共享类型/错误/编解码模型；公开 API 以链式（resty 风格）+ 泛型端点为双入口。
+- 重试默认条件：传输错误或状态码 >= 500；显式 `SetRetryConditions` 覆盖；退避指数增长并有上限。
+- 钩子顺序：client 级 before → request 级 before → 发送 → client 级 after → request 级 after；before 钩子在 header/auth/cookie 写入请求之前执行，允许修改请求。
+- 非 2xx 响应通过 `SetError` 绑定错误模型；2xx 通过 `SetResult` 绑定结果；`SetOutput` 写文件。
+- client 侧实现不得挤占 server 侧优先级（见上）；WS/SSE client 保持已有实现。
 
 ## 七条设计目标
 

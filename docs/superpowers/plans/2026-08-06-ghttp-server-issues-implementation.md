@@ -25,7 +25,7 @@
 
 ## 范围与批次
 
-非目标（本计划不实施）：WS6 client 修复、zap 适配子包、限流/审计/指标钩子。zap 适配与限流等留待后续独立计划。
+非目标（本计划不实施）：zap 适配子包、限流/审计/指标钩子。client 已于 2026-08-07 转为正式实现（见批次 7），zap 适配与限流等留待后续独立计划。
 
 | 批次 | 内容 | 对应 WS | 优先级 |
 |------|------|---------|--------|
@@ -2076,6 +2076,26 @@ git commit -m "perf(ghttp): reduce full-chain allocations with single response w
 
 - `SSEWriter.WriteJSONWithID(event, id, data)`：显式 `id:` 行，支持 Last-Event-ID 续传。
 - 文件：`ghttp/sse.go`；测试：`TestSSEWriterWriteJSONWithID`。
+
+## 批次 7：client 正式实现（P1，2026-08-07 追加，参考 go-resty / imroc/req）
+
+### Task 7.1: 重试、钩子与超时
+
+- client/request 级 `SetRetryCount/WaitTime/MaxWaitTime/Conditions`；默认条件传输错误或 >= 500；指数退避、ctx 感知等待。
+- `OnBeforeRequest`/`OnAfterResponse`（client 与 request 级，before 在 header/auth/cookie 写入前执行）。
+- request 级 `SetTimeout`（context.WithTimeout）生效。
+
+### Task 7.2: 绑定、输出、认证与查询
+
+- `SetError` 非 2xx 自动绑定 + `Response.Error()`；`SetOutput` 写文件；`SetBasicAuth`/`SetAuthScheme` 实际写入；`SetQueryParamsFromValues`/`SetQueryString`；client 级 cookies。
+
+### Task 7.3: Response 访问器与 1.27 类型化方法
+
+- `Time/ReceivedAt/Size/Cookies/Unmarshal/Error/Result`；`client_go127.go` 增加 `Client.Get/Post/Put/Delete` 泛型方法。
+
+### Task 7.4: 调试输出
+
+- `SetDebug` + `SetLogger`/`WithClientLogger` 输出请求摘要。
 
 ## 已确认决策（2026-08-06 review 确认）
 

@@ -100,6 +100,20 @@ defer streamResp.RawBody().Close()
 _, err = io.Copy(dst, streamResp.RawBody())
 ```
 
+客户端能力（参考 go-resty / imroc/req）：
+
+- **重试**：`client.SetRetryCount(n).SetRetryWaitTime(d).SetRetryMaxWaitTime(d).SetRetryConditions(func(*Response, error) bool)`；默认条件为传输错误或状态码 >= 500，请求级可用 `client.R().SetRetryCount(...)` 覆盖。
+- **钩子**：`client.OnBeforeRequest(func(*Request) error)` / `client.OnAfterResponse(func(*Response) error)`，请求级同样支持 `.OnBeforeRequest(...)` / `.OnAfterResponse(...)`；before 钩子可修改请求（header/cookie/body 等）。
+- **错误模型绑定**：`client.R().SetError(&apiErr)` 自动把非 2xx 响应体绑定到目标，`resp.Error()` 取回。
+- **认证**：`SetAuthToken` / `SetBasicAuth` / `SetAuthScheme`（Basic 认证实际写入请求）。
+- **输出文件**：`client.R().SetOutput("./out.json")` 把响应体写入文件。
+- **查询参数**：`SetQueryParam(s)` / `SetQueryParamsFromValues(url.Values)` / `SetQueryString("raw=1&b=2")`。
+- **超时与上下文**：`client.R().SetTimeout(d)`（按请求）与 `SetContext(ctx)`。
+- **Cookie**：`client.SetCookie(s)` / `client.R().SetCookies(...)`。
+- **响应访问器**：`Time()` / `ReceivedAt()` / `Size()` / `Cookies()` / `Unmarshal(target)`（按 Content-Type 自动 JSON/XML）/ `Error()` / `Result()`。
+- **调试**：`client.SetDebug(true)` + `SetLogger(...)`（或 `WithClientLogger`）输出请求摘要。
+- Go 1.27+ 类型化方法：`client.Get[Req,Resp](ctx, path)` / `client.Post/Put/Delete[...]`（与包级泛型函数等价）。
+
 ---
 
 ## API 概览
