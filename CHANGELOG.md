@@ -15,6 +15,9 @@
 - gretry：导出 `NextDelay`/`Wait` 作为仓库唯一退避/抖动实现；ghttp client 与 gsd 重试统一复用，删除各自内联实现。
 - glog：核心去除 OpenTelemetry 硬依赖，trace 字段改为可选 `WithTraceExtractor` 注入。
 - ghttp：新增与 gerr 的错误互操作——`FromGerr`/`ToGerr`/`GerrStatus` 双向转换与 HTTP 状态码 ↔ `gerr.Kind` 映射。
+- gotel：移除未实现的 `OTELProvider` 空壳与死代码，收敛为纯可观测性抽象（不依赖 OpenTelemetry）。
+- gsql：默认日志改为标准库实现，核心不再依赖 glog（保留 `Logger` 接口，用户可注入 glog 适配器）。
+- 仓库：新增 `scripts/check-deps.sh` 依赖方向检查（能力层互引即失败），接入 Makefile 与 CI。
 
 ### Changed
 

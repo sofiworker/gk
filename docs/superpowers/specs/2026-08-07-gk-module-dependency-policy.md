@@ -55,6 +55,8 @@
 | 日志核心耦合可观测性 | `glog/zap.go` import `go.opentelemetry.io/otel/trace` | trace 上下文改为可选注入（接口/函数选项），glog 只依赖 zap/lumberjack |
 | 占位 API 当正式导出 | `gotel.OTELProvider` 空结构体 + 注释实现 | 实现或删除/降级；未实现前不得承诺为正式 API |
 
+以上四项均已收敛（2026-08-07）。
+
 ## 5. 实施顺序（迁移行动项）
 
 1. **gsd → gretry**（最明确）：删除 `gsd/retry.go`，`ErrorHandlingOptions` 收敛为 gretry 的类型或别名，语义对齐；
@@ -83,11 +85,13 @@
 - `gsd` 删除自研 `calculateDelay`/`mathPow`，`retryWithBackoff` 委托 `gretry.Do`，`RetryStrategy` 收敛为 gretry 的类型别名。
 - `glog` 核心不再 import `go.opentelemetry.io/otel/trace`，trace 字段通过 `Config.TraceExtractor` / `WithTraceExtractor` 由使用方注入。
 - `ghttp` 与 `gerr` 错误互操作：`HTTPError.Unwrap` 穿透错误链；新增 `FromGerr`/`ToGerr`/`GerrStatus` 双向转换与状态码 ↔ `gerr.Kind` 映射（ghttp 单向依赖 gerr）。
+- `gsql` 核心不再依赖 glog：默认日志改用标准库实现，保留 `Logger` 接口由用户注入 glog 适配器。
+- `gotel` 移除未实现的 `OTELProvider` 空壳与死代码，收敛为纯可观测性抽象（不依赖 OpenTelemetry）。
+- CI 依赖方向检查落地：`scripts/check-deps.sh`（能力层互引即失败，gnet 族内允许），接入 Makefile `check-deps` 与 GitHub Actions。
 
 ### 待收敛
 
-- `gotel.OTELProvider` 空壳：实现或删除/降级；
-- CI 依赖方向检查（depguard/脚本）落地。
+当前无未决项（2026-08-07）。后续若出现新的跨层依赖需求，按第 6 节例外流程处理。
 
 ## 6. 例外与豁免
 
