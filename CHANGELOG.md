@@ -18,6 +18,11 @@
 - gotel：移除未实现的 `OTELProvider` 空壳与死代码，收敛为纯可观测性抽象（不依赖 OpenTelemetry）。
 - gsql：默认日志改为标准库实现，核心不再依赖 glog（保留 `Logger` 接口，用户可注入 glog 适配器）。
 - 仓库：新增 `scripts/check-deps.sh` 依赖方向检查（能力层互引即失败），接入 Makefile 与 CI。
+- gresolver：`ParseResolveFile` 完整解析 nameserver/search/domain/options（含 ndots/timeout/attempts），`DefaultNameservers` 返回副本。
+- gconfig：新增 `Get/GetInt/GetBool/GetDuration/GetStringSlice/GetStringMap/Set/UnmarshalKey` 类型化访问器（懒加载）。
+- gcrypt：新增 AES-GCM（`AESGCMEncrypt/Decrypt`）、Ed25519（`GenerateEd25519Key`/`SignWithEd25519`/`VerifyWithEd25519`）、`RandomBytes`。
+- gcompress：新增 zlib/flate 压缩（`Zlib*`/`Flate*`）。
+- glog：新增 `DebugfContext/InfofContext/WarnfContext/ErrorfContext`。
 
 ### Changed
 
