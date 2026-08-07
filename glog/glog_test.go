@@ -15,7 +15,8 @@ import (
 
 // --- Helpers ---
 
-// parseJSONLog is a helper to parse a single JSON log line.
+// parseJSONLog 解析单行 JSON 日志的辅助函数。
+// parseJSONLog parses a single JSON log line.
 func parseJSONLog(t *testing.T, logLine string) map[string]interface{} {
 	t.Helper()
 	var data map[string]interface{}
@@ -58,8 +59,8 @@ func countNonEmptyLines(content string) int {
 	return count
 }
 
-// createTempLogFile creates a temporary directory and a log file path for testing.
-// It automatically registers a cleanup function to remove the directory after the test.
+// createTempLogFile 创建测试用的临时目录与日志文件路径，并注册清理函数。
+// createTempLogFile creates a temp dir/path and registers cleanup.
 func createTempLogFile(t *testing.T) (string, string) {
 	t.Helper()
 	tempDir, err := os.MkdirTemp("", "glog-test-*")
@@ -89,23 +90,23 @@ func parseLastJSONLog(t *testing.T, content string) map[string]interface{} {
 
 // --- Tests ---
 
-// TestDefaultLogger verifies the "out-of-the-box" behavior.
+// TestDefaultLogger 验证开箱即用的默认行为。
+// TestDefaultLogger verifies the out-of-the-box behavior.
 func TestDefaultLogger(t *testing.T) {
-	// This test relies on the default init() behavior.
-	// We can't easily isolate it, so we'll just observe its output.
-	// For more controlled tests, we use Configure.
-	// A simple call to ensure it doesn't panic.
+	// 依赖默认 init() 行为，无法隔离，只观察输出并确保不 panic。
+	// Relies on default init(); just observe output and ensure no panic.
 	glog.Info("Default logger initialized")
 	if glog.Default() == nil {
 		t.Fatal("Default logger should not be nil")
 	}
 }
 
-// TestConfigure tests the comprehensive configuration capabilities.
+// TestConfigure 验证完整配置能力。
+// TestConfigure verifies the comprehensive configuration capabilities.
 func TestConfigure(t *testing.T) {
 	logFilePath, _ := createTempLogFile(t)
 
-	// Start with a clean slate for each sub-test
+	// 每个子测试从干净状态开始；start with a clean slate per sub-test.
 	baseConfig := []glog.Option{
 		glog.WithOutputPaths(logFilePath),
 		glog.WithEncoding(glog.JSONEncoding),
@@ -208,7 +209,8 @@ func TestConfigure(t *testing.T) {
 	})
 }
 
-// TestLoggingMethods verifies the correctness of different logging styles.
+// TestLoggingMethods 验证不同日志写法的正确性。
+// TestLoggingMethods verifies different logging styles.
 func TestLoggingMethods(t *testing.T) {
 	logFilePath, _ := createTempLogFile(t)
 	err := glog.Configure(
@@ -258,7 +260,8 @@ func TestLoggingMethods(t *testing.T) {
 	})
 }
 
-// TestErrorHandling verifies that invalid user input is handled gracefully.
+// TestErrorHandling 验证非法用户输入被妥善处理。
+// TestErrorHandling verifies invalid user input is handled gracefully.
 func TestErrorHandling(t *testing.T) {
 	logFilePath, _ := createTempLogFile(t)
 	err := glog.Configure(
@@ -271,7 +274,7 @@ func TestErrorHandling(t *testing.T) {
 	}
 
 	t.Run("InvalidKeyValuePairs", func(t *testing.T) {
-		glog.Warn("Invalid args", "key1", "value1", "key2") // Odd number
+		glog.Warn("Invalid args", "key1", "value1", "key2") // 奇数个参数；odd number of args.
 		_ = glog.Sync()
 		time.Sleep(100 * time.Millisecond)
 		content, _ := os.ReadFile(logFilePath)
@@ -283,7 +286,7 @@ func TestErrorHandling(t *testing.T) {
 	})
 
 	t.Run("KeyNotString", func(t *testing.T) {
-		glog.Error("Invalid key type", 123, "value") // Key is not a string
+		glog.Error("Invalid key type", 123, "value") // key 不是字符串；key is not a string.
 		_ = glog.Sync()
 		time.Sleep(100 * time.Millisecond)
 		content, _ := os.ReadFile(logFilePath)
@@ -295,6 +298,7 @@ func TestErrorHandling(t *testing.T) {
 	})
 }
 
+// TestSetLevel 验证动态级别切换。
 // TestSetLevel verifies dynamic level changes.
 func TestSetLevel(t *testing.T) {
 	logFilePath, _ := createTempLogFile(t)
@@ -366,7 +370,8 @@ func TestSetLevelFiltering(t *testing.T) {
 	}
 }
 
-// TestConcurrency ensures thread safety during concurrent logging and reconfiguration.
+// TestConcurrency 验证并发日志与重配置的线程安全。
+// TestConcurrency ensures thread safety under concurrent logging and reconfiguration.
 func TestConcurrency(t *testing.T) {
 	logFilePath, _ := createTempLogFile(t)
 	err := glog.Configure(
@@ -383,7 +388,7 @@ func TestConcurrency(t *testing.T) {
 	numLogsPerGoroutine := 50
 	errCh := make(chan error, 10)
 
-	// Logging goroutines
+	// 日志 goroutine；logging goroutines.
 	for i := 0; i < numGoroutines; i++ {
 		wg.Add(1)
 		go func(id int) {
@@ -394,7 +399,7 @@ func TestConcurrency(t *testing.T) {
 		}(i)
 	}
 
-	// Reconfiguring goroutines
+	// 重配置 goroutine；reconfiguring goroutines.
 	for i := 0; i < 10; i++ {
 		level := glog.Level(i % 2)
 		wg.Add(1)
@@ -422,8 +427,8 @@ func TestConcurrency(t *testing.T) {
 	}
 	logLines := strings.Split(strings.TrimSpace(string(content)), "\n")
 
-	// The main goal is to ensure no race conditions occurred (test won't fail with -race flag)
-	// and the output contains valid JSON entries under concurrent reconfiguration.
+	// 主要目标是确保无数据竞争（配合 -race）且并发重配置下输出仍是合法 JSON。
+	// Goal: no data races and valid JSON output under concurrent reconfiguration.
 	if len(logLines) == 0 {
 		t.Errorf("Expected some log lines, but file is empty")
 	}

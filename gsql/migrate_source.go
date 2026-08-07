@@ -245,9 +245,10 @@ func (c *CommentCollector) Collect(dir string) ([]*Migration, error) {
 		upSQL := strings.TrimSpace(upBuilder.String())
 		downSQL := strings.TrimSpace(downBuilder.String())
 
-		// Default behavior: Up is not optional unless a different collector is used.
+		// 默认行为：除非使用其它 collector，否则 Up 不是可选的。
+		// Default: Up is required unless another collector is used.
 		if upSQL == "" {
-			return nil // Silently skip files without Up directive
+			return nil // 静默跳过没有 Up 指令的文件；skip files without Up.
 		}
 
 		migration := &Migration{
@@ -350,7 +351,7 @@ func (c *FilenameCollector) Collect(dir string) ([]*Migration, error) {
 	var migrations []*Migration
 	for base, p := range pairs {
 		if p.upFile == "" {
-			continue // Skip down-only files
+			continue // 跳过仅含 Down 的文件；skip down-only files.
 		}
 		upContent, err := os.ReadFile(p.upFile)
 		if err != nil {

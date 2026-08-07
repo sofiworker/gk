@@ -5,15 +5,14 @@ import (
 	"sync"
 )
 
-// lfuEntry stores the key, value, and frequency of a cache entry.
 type lfuEntry struct {
 	key   string
 	value interface{}
 	freq  int
 }
 
-// LFUCache is a non-thread-safe LFU (Least Frequently Used) cache.
-// It provides O(1) time complexity for both Get and Set operations.
+// LFUCache 是非线程安全的 LFU（最不经常使用）缓存，Get/Set 均为 O(1)。
+// LFUCache is a non-thread-safe LFU cache with O(1) Get/Set.
 type LFUCache struct {
 	capacity   int
 	minFreq    int
@@ -21,8 +20,7 @@ type LFUCache struct {
 	freqToList map[int]*list.List
 }
 
-// NewLFUCache creates a new LFUCache with the specified capacity.
-// The capacity must be greater than 0.
+// NewLFUCache 创建指定容量的 LFUCache；容量必须大于 0。
 func NewLFUCache(capacity int) *LFUCache {
 	if capacity <= 0 {
 		capacity = 1
@@ -35,38 +33,31 @@ func NewLFUCache(capacity int) *LFUCache {
 	}
 }
 
-// Get retrieves a value from the cache for the given key.
-// If the key is found, its frequency is incremented.
 func (l *LFUCache) Get(key string) (interface{}, bool) {
 	elem, ok := l.cache[key]
 	if !ok {
 		return nil, false
 	}
 
-	// Increment frequency
 	l.incrementFrequency(elem)
 	return elem.Value.(*lfuEntry).value, true
 }
 
-// Set adds or updates a key-value pair in the cache.
 func (l *LFUCache) Set(key string, value interface{}) {
 	if l.capacity <= 0 {
 		return
 	}
 
-	// If the key already exists, update the value and increment frequency.
 	if elem, ok := l.cache[key]; ok {
 		elem.Value.(*lfuEntry).value = value
 		l.incrementFrequency(elem)
 		return
 	}
 
-	// If the cache is full, evict the least frequently used item.
 	if len(l.cache) >= l.capacity {
 		l.evict()
 	}
 
-	// Add the new entry.
 	entry := &lfuEntry{key: key, value: value, freq: 1}
 	if _, ok := l.freqToList[1]; !ok {
 		l.freqToList[1] = list.New()
@@ -76,26 +67,23 @@ func (l *LFUCache) Set(key string, value interface{}) {
 	l.minFreq = 1
 }
 
-// Len returns the current number of items in the cache.
 func (l *LFUCache) Len() int {
 	return len(l.cache)
 }
 
-// incrementFrequency moves an element to the list of the next higher frequency.
+// incrementFrequency 将元素移动到下一更高频率的链表。
+// incrementFrequency moves an element to the next-higher frequency list.
 func (l *LFUCache) incrementFrequency(elem *list.Element) {
 	entry := elem.Value.(*lfuEntry)
 	currentFreq := entry.freq
 	currentList := l.freqToList[currentFreq]
 
-	// Remove from current frequency list
 	currentList.Remove(elem)
 
-	// If the current frequency list is now empty and it was the minimum, update minFreq.
 	if currentList.Len() == 0 && currentFreq == l.minFreq {
 		l.minFreq++
 	}
 
-	// Increment frequency and add to the new list
 	entry.freq++
 	newFreq := entry.freq
 	if _, ok := l.freqToList[newFreq]; !ok {
@@ -105,54 +93,50 @@ func (l *LFUCache) incrementFrequency(elem *list.Element) {
 	l.cache[entry.key] = newElem
 }
 
-// evict removes the least frequently and least recently used item from the cache.
+// evict 淘汰最不经常且最久未使用的条目。
+// evict removes the least-frequently and least-recently used entry.
 func (l *LFUCache) evict() {
 	listToEvict, ok := l.freqToList[l.minFreq]
 	if !ok || listToEvict.Len() == 0 {
 		return
 	}
 
-	// Get the element to evict (the last one in the list, which is the LRU).
 	elemToEvict := listToEvict.Back()
 	if elemToEvict == nil {
 		return
 	}
 
-	// Remove from list and cache map.
 	listToEvict.Remove(elemToEvict)
 	delete(l.cache, elemToEvict.Value.(*lfuEntry).key)
 }
 
-// --- Thread-Safe LFU Cache ---
-
+// ThreadSafeLFUCache 是 LFUCache 的线程安全包装。
 // ThreadSafeLFUCache is a thread-safe wrapper around LFUCache.
 type ThreadSafeLFUCache struct {
 	lfu  *LFUCache
 	lock sync.RWMutex
 }
 
-// NewThreadSafeLFUCache creates a new thread-safe LFUCache with the specified capacity.
+// NewThreadSafeLFUCache 创建指定容量的线程安全 LFUCache；容量必须大于 0。
+// NewThreadSafeLFUCache creates a thread-safe LFU cache; capacity must be positive.
 func NewThreadSafeLFUCache(capacity int) *ThreadSafeLFUCache {
 	return &ThreadSafeLFUCache{
 		lfu: NewLFUCache(capacity),
 	}
 }
 
-// Get retrieves a value from the cache in a thread-safe manner.
 func (c *ThreadSafeLFUCache) Get(key string) (interface{}, bool) {
-	c.lock.Lock() // Use a write lock because frequency is modified
+	c.lock.Lock() // 频率会变更，使用写锁；frequency changes, so use a write lock.
 	defer c.lock.Unlock()
 	return c.lfu.Get(key)
 }
 
-// Set adds or updates a key-value pair in the cache in a thread-safe manner.
 func (c *ThreadSafeLFUCache) Set(key string, value interface{}) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	c.lfu.Set(key, value)
 }
 
-// Len returns the current number of items in the cache in a thread-safe manner.
 func (c *ThreadSafeLFUCache) Len() int {
 	c.lock.RLock()
 	defer c.lock.RUnlock()

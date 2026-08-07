@@ -25,11 +25,11 @@ func TestRetryWithBackoff(t *testing.T) {
 	if err == nil {
 		t.Error("expected error")
 	}
-	if count != 3 { // 1 initial + 2 retries
+	if count != 3 { // 1 次初始 + 2 次重试；1 initial + 2 retries.
 		t.Errorf("expected 3 attempts, got %d", count)
 	}
 
-	// Test success
+	// 成功场景；successful case.
 	count = 0
 	fnSuccess := func() error {
 		count++
@@ -59,7 +59,6 @@ func TestCalculateDelay(t *testing.T) {
 		MaxRetryDelay:     opts.MaxRetryDelay,
 	}
 
-	// Fixed
 	opts.RetryStrategy = RetryStrategyFixed
 	gopts.RetryStrategy = gretry.RetryStrategyFixed
 	d := gretry.NextDelay(0, gopts)
@@ -67,7 +66,6 @@ func TestCalculateDelay(t *testing.T) {
 		t.Errorf("expected >= 10ms, got %v", d)
 	}
 
-	// Linear
 	opts.RetryStrategy = RetryStrategyLinear
 	gopts.RetryStrategy = gretry.RetryStrategyLinear
 	d = gretry.NextDelay(1, gopts) // 10 * 2 = 20ms
@@ -75,7 +73,6 @@ func TestCalculateDelay(t *testing.T) {
 		t.Errorf("expected >= 20ms, got %v", d)
 	}
 
-	// Exponential
 	opts.RetryStrategy = RetryStrategyExponential
 	gopts.RetryStrategy = gretry.RetryStrategyExponential
 	d = gretry.NextDelay(1, gopts) // 10 * 2^1 = 20ms
@@ -90,7 +87,6 @@ func TestLoadBalancers(t *testing.T) {
 		{Name: "s2", Address: "a2"},
 	}
 
-	// Random
 	rlb := NewRandomLoadBalancer()
 	if s := rlb.Select(nil); s != nil {
 		t.Error("expected nil for empty services")
@@ -100,7 +96,6 @@ func TestLoadBalancers(t *testing.T) {
 		t.Error("expected service")
 	}
 
-	// RoundRobin
 	rrlb := NewRoundRobinLoadBalancer()
 	if s := rrlb.Select(nil); s != nil {
 		t.Error("expected nil for empty services")
@@ -129,7 +124,7 @@ func TestKeyFormatter(t *testing.T) {
 		t.Errorf("Format failed: %s", key)
 	}
 
-	// Parse is not implemented fully in default, just returns empty
+	// 默认解析未完整实现，仅返回空值；default parsing is not fully implemented and returns empty.
 	_, _ = kf.Parse(key)
 }
 

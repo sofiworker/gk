@@ -26,12 +26,12 @@ func TestAES(t *testing.T) {
 		t.Fatalf("mismatch")
 	}
 
-	// Boundary: Bad Key size
+	// 边界：非法的密钥长度；Boundary: bad key size.
 	if _, err := GenerateAESKey(10); err == nil {
 		t.Error("expected error for bad key size")
 	}
 
-	// Boundary: Short ciphertext
+	// 边界：密文过短；Boundary: short ciphertext.
 	if _, err := AESDecrypt([]byte("short"), key); err == nil {
 		t.Error("expected error for short ciphertext")
 	}
@@ -61,7 +61,6 @@ func TestDES(t *testing.T) {
 		t.Fatal("mismatch")
 	}
 
-	// Triple DES
 	key3, err := GenerateTripleDESKey()
 	if err != nil {
 		t.Fatal(err)
@@ -101,7 +100,6 @@ func TestHash(t *testing.T) {
 		t.Error("hmac512 empty")
 	}
 
-	// Password
 	hash, err := HashPassword(data)
 	if err != nil {
 		t.Fatal(err)
@@ -122,7 +120,6 @@ func TestRSA(t *testing.T) {
 
 	msg := []byte("secret message")
 
-	// PKCS1v15
 	enc, err := RSAEncrypt(msg, pub)
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +132,6 @@ func TestRSA(t *testing.T) {
 		t.Error("pkcs1v15 mismatch")
 	}
 
-	// OAEP
 	enc2, err := RSAEncryptOAEP(msg, pub)
 	if err != nil {
 		t.Fatal(err)
@@ -148,7 +144,6 @@ func TestRSA(t *testing.T) {
 		t.Error("oaep mismatch")
 	}
 
-	// Sign PKCS1v15
 	sig, err := SignWithRSA(msg, priv)
 	if err != nil {
 		t.Fatal(err)
@@ -157,7 +152,6 @@ func TestRSA(t *testing.T) {
 		t.Error("sign pkcs1v15 verify failed")
 	}
 
-	// Sign PSS
 	sig2, err := SignWithRSAPSS(msg, priv)
 	if err != nil {
 		t.Fatal(err)
@@ -166,7 +160,6 @@ func TestRSA(t *testing.T) {
 		t.Error("sign pss verify failed")
 	}
 
-	// PEM
 	pemPriv := EncodePrivateKeyToPEM(priv)
 	if len(pemPriv) == 0 {
 		t.Error("pem priv empty")
@@ -193,40 +186,22 @@ func TestRSA(t *testing.T) {
 		t.Error("parsed pub not equal")
 	}
 
-	// Boundary: Nil Key
+	// 边界：空密钥；Boundary: nil key.
 	if _, err := EncodePublicKeyToPEM(nil); err == nil {
 		t.Error("expected error for nil pub key")
 	}
 }
 
 func TestPKCS7(t *testing.T) {
-	// Indirectly tested via AES/DES, but let's test directly if exported?
-	// pkcs7Padding is unexported.
-	// We can test edge cases via AESEncrypt with specific lengths if we want,
-	// but unpadding error is handled in Decrypt.
-
-	// Test unpadding error
+	// 去填充错误已在 Decrypt 中处理，这里只验证边界；
+	// padding errors are handled in Decrypt; only the boundary is verified here.
 	key, _ := GenerateAESKey(16)
-	// Create invalid ciphertext (valid length but invalid padding)
+	// 构造长度合法但填充非法的密文；build a valid-length ciphertext with invalid padding.
 	block := make([]byte, 16)
-	// Decrypt will try to unpad
 	_, err := AESDecrypt(block, key)
-	// Since we passed 0s, unpadding might fail or succeed depending on last byte. 0 is likely invalid padding (padding bytes are 1..blocksize).
 	if err == nil {
-		// It's possible 0 is not checked?
-		// "unpadding := int(data[length-1])" -> 0.
-		// "return data[:(length - unpadding)]" -> data[:16].
-		// It doesn't check if padding bytes are all equal to padding value in the implementation shown?
-		// "padtext[i] = byte(padding)"
+		// 实现未做严格 PKCS7 校验，全 0 可能被当作合法填充；
+		// the implementation does not strictly validate PKCS7, all-zero may pass.
 		t.Logf("zero block decrypted without error (padding not validated)")
-		// "unpadding := int(data[length-1])"
-		// "if unpadding > length { return nil ... }"
-		// It does NOT verify the other padding bytes in the provided snippet!
-		// But 0 padding is technically invalid as PKCS7 padding is always > 0.
-		// Wait, if last byte is 0, unpadding is 0.
-		// The code: "unpadding := int(data[length-1])". If it is 0.
-		// It returns data[:16]. No error.
-		// So strict PKCS7 check is missing in the implementation, but that's an issue with the code, not the test.
-		// I will not fix the code.
 	}
 }

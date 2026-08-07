@@ -100,7 +100,7 @@ func TestDoWithContextCancellation(t *testing.T) {
 	defer cancel()
 
 	fn := func() error {
-		time.Sleep(100 * time.Millisecond) // Longer than context timeout
+		time.Sleep(100 * time.Millisecond) // 大于 context 超时时间；longer than the context timeout.
 		return nil
 	}
 
@@ -119,7 +119,7 @@ func TestDoWithTimeoutOption(t *testing.T) {
 	)
 
 	fn := func() error {
-		time.Sleep(100 * time.Millisecond) // Longer than timeout
+		time.Sleep(100 * time.Millisecond) // 大于超时时间；longer than the timeout.
 		return nil
 	}
 
@@ -186,9 +186,9 @@ func TestCalculateDelay(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			delay := NextDelay(tt.attempt, tt.options)
-			// Allow some tolerance for jitter
+			// 为抖动留出容忍度；allow tolerance for jitter.
 			if delay > tt.expectedDelay {
-				// For non-jitter tests, this should be exact
+				// 无抖动测试中应为精确值；non-jitter tests expect exact values.
 				if tt.options.JitterType == JitterNone || tt.options.JitterFactor == 0 {
 					t.Errorf("Expected delay %v, got %v", tt.expectedDelay, delay)
 				}
@@ -232,7 +232,7 @@ func TestApplyJitter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			for i := 0; i < 10; i++ { // Run multiple times to test randomness
+			for i := 0; i < 10; i++ { // 多次运行以验证随机性；run multiple times to test randomness.
 				delay := applyJitter(tt.delay, tt.options)
 				if !tt.expectInRange(delay) {
 					t.Errorf("Delay %v out of expected range", delay)
@@ -259,7 +259,7 @@ func TestCallbacks(t *testing.T) {
 		}),
 	)
 
-	// Test successful case
+	// 成功场景；successful case.
 	attempts := 0
 	fn := func() error {
 		attempts++
@@ -283,11 +283,11 @@ func TestCallbacks(t *testing.T) {
 		t.Errorf("Expected 0 failed calls, got %d", failedCalls)
 	}
 
-	// Reset counters
+	// 重置计数器；reset counters.
 	retryCalls, successCalls, failedCalls = 0, 0, 0
 	attempts = 0
 
-	// Test failed case
+	// 失败场景；failed case.
 	fnFail := func() error {
 		return fmt.Errorf("persistent error")
 	}
@@ -329,7 +329,7 @@ func TestShouldRetry(t *testing.T) {
 	}
 
 	result := Do(context.Background(), fn, options)
-	// Should only retry once because the second error is not retryable
+	// 第二个错误不可重试，因此只应重试一次；only retry once because the second error is not retryable.
 	if result.Attempts != 2 {
 		t.Errorf("Expected 2 attempts, got %d", result.Attempts)
 	}

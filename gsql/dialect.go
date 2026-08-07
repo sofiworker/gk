@@ -8,19 +8,26 @@ import (
 	"time"
 )
 
-// Dialect defines an interface for database-specific operations.
+// Dialect 定义数据库方言相关的操作接口。
+// Dialect defines database-specific operations.
 type Dialect interface {
-	// PlaceholderSQL replaces '?' with the database-specific placeholder.
+	// PlaceholderSQL 将 '?' 替换为数据库特定的占位符。
+	// PlaceholderSQL replaces '?' with the dialect placeholder.
 	PlaceholderSQL(sql string) string
-	// Placeholder returns the placeholder for a given index.
+	// Placeholder 返回给定索引对应的占位符。
+	// Placeholder returns the placeholder for the given index.
 	Placeholder(index int) string
-	// SupportsSavepoint indicates whether the dialect supports SAVEPOINT/RELEASE/ROLLBACK TO.
+	// SupportsSavepoint 表示方言是否支持 SAVEPOINT/RELEASE/ROLLBACK TO。
+	// SupportsSavepoint reports whether the dialect supports savepoints.
 	SupportsSavepoint() bool
-	// DataTypeOf returns the database-specific data type for a given Go type.
+	// DataTypeOf 返回给定 Go 类型对应的数据库数据类型。
+	// DataTypeOf maps a Go type to the dialect data type.
 	DataTypeOf(typ reflect.Type) string
-	// AutoIncrement returns the database-specific auto-increment keyword.
+	// AutoIncrement 返回数据库特定的自增关键字。
+	// AutoIncrement returns the auto-increment keyword.
 	AutoIncrement() string
-	// PrimaryKeyStr returns the optimal string type for a primary key.
+	// PrimaryKeyStr 返回适合作为主键的字符串类型。
+	// PrimaryKeyStr returns the recommended primary-key string type.
 	PrimaryKeyStr() string
 }
 
@@ -62,7 +69,7 @@ func (d *mysqlDialect) DataTypeOf(typ reflect.Type) string {
 	if typ == reflect.TypeOf(sql.NullString{}) {
 		return "VARCHAR(255)"
 	}
-	// Add other sql.Null types as needed
+	// 需要时补充其它 sql.Null 类型；add more sql.Null types as needed.
 	return "TEXT"
 }
 func (d *mysqlDialect) AutoIncrement() string { return "AUTO_INCREMENT" }
@@ -104,7 +111,7 @@ func (d *postgresDialect) DataTypeOf(typ reflect.Type) string {
 	}
 	return "TEXT"
 }
-func (d *postgresDialect) AutoIncrement() string { return "" } // PostgreSQL uses SERIAL or IDENTITY columns
+func (d *postgresDialect) AutoIncrement() string { return "" } // PostgreSQL 使用 SERIAL 或 IDENTITY 列；PostgreSQL uses SERIAL or IDENTITY.
 func (d *postgresDialect) PrimaryKeyStr() string { return "VARCHAR(255)" }
 
 // --- SQLite ---

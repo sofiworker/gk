@@ -38,7 +38,7 @@ options ndots:2 timeout:2s attempts:3
 		t.Errorf("domain = %q, want example.net", conf.Domain)
 	}
 
-	// Test Options parsing which IS implemented
+	// 验证 options 解析；verify options parsing.
 	if conf.Ndots != 2 {
 		t.Errorf("expected ndots 2, got %d", conf.Ndots)
 	}
@@ -49,7 +49,7 @@ options ndots:2 timeout:2s attempts:3
 		t.Errorf("expected attempts 3, got %d", conf.Attempts)
 	}
 
-	// Validate defaults
+	// 校验默认值；validate defaults.
 	conf.Validate()
 	if len(conf.Nameservers) == 0 {
 		t.Fatal("Validate should assign default nameservers")

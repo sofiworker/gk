@@ -16,8 +16,8 @@ const (
 
 var DefaultNS = []string{"127.0.0.1:53", "[::1]:53"}
 
-// DefaultNameservers returns a copy of DefaultNS so callers cannot mutate
-// the package-level slice.
+// DefaultNameservers 返回 DefaultNS 的副本，避免调用方修改包级切片。
+// DefaultNameservers returns a copy of DefaultNS so callers cannot mutate it.
 func DefaultNameservers() []string {
 	return append([]string(nil), DefaultNS...)
 }
@@ -91,7 +91,7 @@ func ParseResolveFile(file string) (*DnsConfig, error) {
 					}
 				default:
 					if strings.HasPrefix(opt, "edns0") {
-						// EDNS0 options are not handled in this parser
+						// EDNS0 选项本解析器暂不处理；EDNS0 options are not handled yet.
 						continue
 					} else {
 						conf.Options = append(conf.Options, opt)
@@ -124,7 +124,8 @@ func (c *DnsConfig) Validate() {
 func normalizeNameserver(ns string) string {
 	ns = strings.TrimSuffix(ns, ".")
 	if strings.Contains(ns, ":") && !strings.HasPrefix(ns, "[") {
-		// IPv6 without brackets: keep as-is; resolvers accept "2001:db8::1"
+		// 不带方括号的 IPv6 原样保留，解析器接受 "2001:db8::1"；
+		// IPv6 without brackets is kept as-is.
 		return ns
 	}
 	if !strings.Contains(ns, ":") {

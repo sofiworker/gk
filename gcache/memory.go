@@ -27,7 +27,7 @@ type MemoryCache struct {
 
 func NewMemoryCache(opts ...Option) (*MemoryCache, error) {
 	options := &Options{
-		CleanupInterval: time.Minute, // Default cleanup interval
+		CleanupInterval: time.Minute,
 	}
 	for _, o := range opts {
 		o(options)
@@ -265,7 +265,6 @@ func cloneBytes(b []byte) []byte {
 	return cp
 }
 
-// Stubs for unsupported operations
 func (m *MemoryCache) HashSetWithContext(ctx context.Context, key string, field string, value []byte) error {
 	return ErrNotSupported
 }

@@ -10,11 +10,13 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// Scan is a powerful replacement for sqlx.StructScan that handles custom tags
-// for default values and nil-to-zero-value conversion. It can scan into a
-// single struct pointer or a pointer to a slice of structs.
+// Scan 是 sqlx.StructScan 的增强替代：支持默认值自定义 tag，以及 nil 到零值
+// 的转换。可以扫描到单个结构体指针或结构体切片指针。
+// Scan is an enhanced replacement for sqlx.StructScan: custom default-value
+// tags and nil-to-zero conversion, into a struct or a slice of structs.
 //
-// Example Usage:
+// 示例：
+// Example:
 //
 //	var users []User
 //	rows, err := db.Queryx("SELECT * FROM users")

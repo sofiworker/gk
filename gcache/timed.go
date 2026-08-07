@@ -5,22 +5,21 @@ import (
 	"time"
 )
 
-// timedEntry stores the value and the expiration time for a cache item.
 type timedEntry struct {
 	value     interface{}
 	expiresAt time.Time
 }
 
-// TimedCache is a thread-safe cache that evicts items based on a timeout (TTL).
+// TimedCache 是基于超时（TTL）淘汰的线程安全缓存。
+// TimedCache is a thread-safe cache that evicts items by TTL.
 type TimedCache struct {
 	lock  sync.RWMutex
 	cache map[string]*timedEntry
 	stop  chan struct{}
 }
 
-// NewTimedCache creates a new TimedCache and starts a background cleanup process
-// that runs at the specified interval. If cleanupInterval is 0 or less, no
-// background cleanup will occur.
+// NewTimedCache 创建 TimedCache 并启动后台清理；cleanupInterval 小于等于 0 时不启动。
+// NewTimedCache starts background cleanup; interval <= 0 disables it.
 func NewTimedCache(cleanupInterval time.Duration) *TimedCache {
 	c := &TimedCache{
 		cache: make(map[string]*timedEntry),
@@ -34,8 +33,6 @@ func NewTimedCache(cleanupInterval time.Duration) *TimedCache {
 	return c
 }
 
-// Get retrieves a value from the cache. It returns the value and true if the
-// key exists and has not expired. Otherwise, it returns nil and false.
 func (c *TimedCache) Get(key string) (interface{}, bool) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
@@ -45,7 +42,7 @@ func (c *TimedCache) Get(key string) (interface{}, bool) {
 		return nil, false
 	}
 
-	// Check if the item has expired. A zero time means it never expires.
+	// 零值时间表示永不过期；a zero time means never expires.
 	if !entry.expiresAt.IsZero() && time.Now().After(entry.expiresAt) {
 		return nil, false
 	}
@@ -53,8 +50,6 @@ func (c *TimedCache) Get(key string) (interface{}, bool) {
 	return entry.value, true
 }
 
-// Set adds or updates a key-value pair in the cache with a specified TTL.
-// If ttl is 0 or less, the item will never expire.
 func (c *TimedCache) Set(key string, value interface{}, ttl time.Duration) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
@@ -70,23 +65,22 @@ func (c *TimedCache) Set(key string, value interface{}, ttl time.Duration) {
 	}
 }
 
-// Delete removes a key from the cache.
 func (c *TimedCache) Delete(key string) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	delete(c.cache, key)
 }
 
-// Len returns the number of items currently in the cache.
-// This includes items that may have expired but haven't been cleaned up yet.
+// Len 返回缓存当前条目数（含已过期但未清理的条目）。
+// Len returns the current item count, including expired-but-uncleaned items.
 func (c *TimedCache) Len() int {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 	return len(c.cache)
 }
 
-// Close stops the background cleanup goroutine. It should be called when the
-// cache is no longer needed to prevent goroutine leaks.
+// Close 停止后台清理 goroutine，避免 goroutine 泄漏。
+// Close stops the background cleanup goroutine to avoid leaks.
 func (c *TimedCache) Close() {
 	c.lock.Lock()
 	defer c.lock.Unlock()
@@ -96,7 +90,6 @@ func (c *TimedCache) Close() {
 	}
 }
 
-// cleanupLoop is the background process that periodically removes expired items.
 func (c *TimedCache) cleanupLoop(interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -111,7 +104,6 @@ func (c *TimedCache) cleanupLoop(interval time.Duration) {
 	}
 }
 
-// evictExpired iterates through the cache and removes expired items.
 func (c *TimedCache) evictExpired() {
 	c.lock.Lock()
 	defer c.lock.Unlock()
