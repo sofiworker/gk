@@ -185,7 +185,7 @@ func TestCalculateDelay(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			delay := calculateDelay(tt.attempt, tt.options)
+			delay := NextDelay(tt.attempt, tt.options)
 			// Allow some tolerance for jitter
 			if delay > tt.expectedDelay {
 				// For non-jitter tests, this should be exact

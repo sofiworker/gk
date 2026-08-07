@@ -287,7 +287,7 @@ func Do(ctx context.Context, fn func() error, options ErrorHandlingOptions) *Ret
 		}
 
 		// 计算延迟时间
-		delay := calculateDelay(attempt, options)
+		delay := NextDelay(attempt, options)
 
 		// 调用重试回调
 		if options.OnRetry != nil {
@@ -295,10 +295,7 @@ func Do(ctx context.Context, fn func() error, options ErrorHandlingOptions) *Ret
 		}
 
 		// 等待延迟或上下文取消
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
+		if err := Wait(ctx, delay); err != nil {
 			elapsed := time.Since(startTime)
 			result := &RetryResult{
 				Attempts: attempts,
@@ -310,10 +307,7 @@ func Do(ctx context.Context, fn func() error, options ErrorHandlingOptions) *Ret
 				options.OnFailed(attempts, elapsed, ctx.Err())
 			}
 			return result
-		case <-timer.C:
-			// 继续下一次尝试
 		}
-		timer.Stop()
 	}
 
 	// 最终失败
@@ -338,17 +332,14 @@ func Do(ctx context.Context, fn func() error, options ErrorHandlingOptions) *Ret
 }
 
 func runAttempt(ctx context.Context, fn func() error) error {
-	resultCh := make(chan error, 1)
-	go func() {
-		resultCh <- fn()
-	}()
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case err := <-resultCh:
+	if err := ctx.Err(); err != nil {
 		return err
 	}
+	err := fn()
+	if err == nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
 }
 
 // DoWithDefault 使用默认配置执行带重试的操作
@@ -356,8 +347,9 @@ func DoWithDefault(ctx context.Context, fn func() error) *RetryResult {
 	return Do(ctx, fn, DefaultErrorHandlingOptions)
 }
 
-// calculateDelay 计算延迟时间
-func calculateDelay(attempt int, options ErrorHandlingOptions) time.Duration {
+// NextDelay 根据策略、上限与抖动计算第 attempt 次重试（0 起）的延迟时间。
+// 这是仓库内唯一的退避/抖动实现，能力层（ghttp/gsd 等）必须复用它。
+func NextDelay(attempt int, options ErrorHandlingOptions) time.Duration {
 	var delay time.Duration
 
 	switch options.RetryStrategy {
@@ -389,6 +381,21 @@ func calculateDelay(attempt int, options ErrorHandlingOptions) time.Duration {
 	delay = applyJitter(delay, options)
 
 	return delay
+}
+
+// Wait 等待 d 时长，或在 ctx 提前结束时返回 ctx.Err()。
+func Wait(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // applyJitter 应用抖动

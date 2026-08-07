@@ -15,6 +15,8 @@ import (
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/sofiworker/gk/gretry"
 )
 
 // Client is an HTTP client with a go-resty-style chain API, plus typed
@@ -607,10 +609,16 @@ func (c *Client) send(r *Request, urlStr string, bodyBytes []byte, contentType s
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
 		if attempt > 0 {
-			if err := waitWithContext(ctx, wait); err != nil {
+			if err := gretry.Wait(ctx, wait); err != nil {
 				return nil, err
 			}
-			wait = nextRetryWait(wait, maxWait)
+			wait = gretry.NextDelay(attempt-1, gretry.ErrorHandlingOptions{
+				RetryStrategy:     gretry.RetryStrategyExponential,
+				RetryDelay:        wait,
+				MaxRetryDelay:     maxWait,
+				BackoffMultiplier: 2,
+				JitterType:        gretry.JitterNone,
+			})
 		}
 		var body io.Reader
 		if bodyBytes != nil {
@@ -752,28 +760,6 @@ func shouldRetry(resp *Response, err error, conditions []RetryConditionFunc) boo
 		}
 	}
 	return false
-}
-
-func waitWithContext(ctx context.Context, d time.Duration) error {
-	if d <= 0 {
-		return nil
-	}
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
-}
-
-func nextRetryWait(current, maxWait time.Duration) time.Duration {
-	next := current * 2
-	if maxWait > 0 && next > maxWait {
-		return maxWait
-	}
-	return next
 }
 
 func (c *Client) executeMultipart(r *Request, urlStr string, start time.Time) (*Response, error) {
