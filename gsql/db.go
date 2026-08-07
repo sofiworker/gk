@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/sofiworker/gk/glog"
 )
 
 const (
@@ -113,7 +112,7 @@ type TxOption func(*TxOptions)
 
 func (db *DB) ensureLogger() Logger {
 	if db.logger == nil {
-		db.logger = glog.Default()
+		db.logger = defaultSQLLogger
 	}
 	return db.logger
 }

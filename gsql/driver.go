@@ -3,8 +3,6 @@ package gsql
 import (
 	"database/sql/driver"
 	"time"
-
-	"github.com/sofiworker/gk/glog"
 )
 
 type Option func(c *driverConfig)
@@ -101,12 +99,12 @@ func (t *tracedTx) Rollback() error {
 }
 
 func WrapDriver(drv driver.Driver) driver.Driver {
-	return &tracedDriver{Driver: drv, driverConfig: &driverConfig{logger: glog.Default()}}
+	return &tracedDriver{Driver: drv, driverConfig: &driverConfig{logger: defaultSQLLogger}}
 }
 
 func WrapDriverWithOptions(drv driver.Driver, opts ...Option) driver.Driver {
 	cfg := driverConfig{
-		logger: glog.Default(),
+		logger: defaultSQLLogger,
 	}
 	for _, opt := range opts {
 		opt(&cfg)
