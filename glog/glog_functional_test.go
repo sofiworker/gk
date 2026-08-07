@@ -20,7 +20,6 @@ type recordingSpan struct {
 	sc trace.SpanContext
 }
 
-func (recordingSpan) span()                                               {}
 func (recordingSpan) End(options ...trace.SpanEndOption)                  {}
 func (recordingSpan) AddEvent(name string, options ...trace.EventOption)  {}
 func (recordingSpan) AddLink(link trace.Link)                             {}

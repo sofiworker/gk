@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/sofiworker/gk/ghttp"
@@ -350,23 +349,6 @@ func buildEnvelopeServer() *ghttp.Server {
 		})
 
 	return s
-}
-
-// ============================================================================
-// 辅助函数
-// ============================================================================
-
-func mustMarshal(v interface{}) string {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Sprintf("marshal error: %v", err)
-	}
-	return string(data)
-}
-
-func containsSubstring(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
-		(len(s) > 0 && len(substr) > 0 && strings.Contains(s, substr)))
 }
 
 func main() {

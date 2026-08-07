@@ -18,17 +18,17 @@ func TestFileHeaderOpen(t *testing.T) {
 	writer := multipart.NewWriter(body)
 	part, err := writer.CreateFormFile("file", "test.txt")
 	require.NoError(t, err)
-	part.Write([]byte("hello world"))
+	_, _ = part.Write([]byte("hello world"))
 	writer.Close()
 
 	req := httptest.NewRequest("POST", "/upload", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.ParseMultipartForm(32 << 20)
+	_ = req.ParseMultipartForm(32 << 20)
 
 	fh := &FileHeader{FileHeader: req.MultipartForm.File["file"][0]}
 	f, err := fh.Open()
 	require.NoError(t, err)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	data, err := io.ReadAll(f)
 	require.NoError(t, err)
@@ -39,12 +39,12 @@ func TestFileHeaderBytes(t *testing.T) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	part, _ := writer.CreateFormFile("file", "test.txt")
-	part.Write([]byte("file content"))
+	_, _ = part.Write([]byte("file content"))
 	writer.Close()
 
 	req := httptest.NewRequest("POST", "/upload", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.ParseMultipartForm(32 << 20)
+	_ = req.ParseMultipartForm(32 << 20)
 
 	fh := &FileHeader{FileHeader: req.MultipartForm.File["file"][0]}
 	data, err := fh.Bytes()
@@ -58,12 +58,12 @@ func TestFileHeaderSave(t *testing.T) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	part, _ := writer.CreateFormFile("file", "save.txt")
-	part.Write([]byte("saved content"))
+	_, _ = part.Write([]byte("saved content"))
 	writer.Close()
 
 	req := httptest.NewRequest("POST", "/upload", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.ParseMultipartForm(32 << 20)
+	_ = req.ParseMultipartForm(32 << 20)
 
 	fh := &FileHeader{FileHeader: req.MultipartForm.File["file"][0]}
 	dst := filepath.Join(tmpDir, "subdir", "saved.txt")

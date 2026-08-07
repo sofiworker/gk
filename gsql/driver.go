@@ -61,6 +61,7 @@ func (c *tracedConn) Prepare(query string) (driver.Stmt, error) {
 }
 
 func (c *tracedConn) Begin() (driver.Tx, error) {
+	//nolint:staticcheck // legacy driver fallback; context-aware drivers use BeginTx
 	tx, err := c.Conn.Begin()
 	if err != nil {
 		return nil, err
@@ -73,6 +74,7 @@ func (c *tracedConn) Begin() (driver.Tx, error) {
 
 func (s *tracedStmt) Exec(args []driver.Value) (driver.Result, error) {
 	start := time.Now()
+	//nolint:staticcheck // legacy driver fallback; context-aware drivers use ExecContext
 	result, err := s.Stmt.Exec(args)
 	duration := time.Since(start)
 	s.logger.Infof("EXEC: %s, args: %v, took: %v", s.query, args, duration)
@@ -81,6 +83,7 @@ func (s *tracedStmt) Exec(args []driver.Value) (driver.Result, error) {
 
 func (s *tracedStmt) Query(args []driver.Value) (driver.Rows, error) {
 	start := time.Now()
+	//nolint:staticcheck // legacy driver fallback; context-aware drivers use QueryContext
 	rows, err := s.Stmt.Query(args)
 	duration := time.Since(start)
 	s.logger.Infof("QUERY: %s, args: %v, took: %v", s.query, args, duration)

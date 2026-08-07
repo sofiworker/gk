@@ -75,9 +75,9 @@ func TestResponseWriterMultipleWrites(t *testing.T) {
 	w := httptest.NewRecorder()
 	rw := NewResponseWriter(w)
 
-	rw.Write([]byte("a"))
-	rw.Write([]byte("b"))
-	rw.Write([]byte("c"))
+	_, _ = rw.Write([]byte("a"))
+	_, _ = rw.Write([]byte("b"))
+	_, _ = rw.Write([]byte("c"))
 
 	assert.Equal(t, 3, rw.Size())
 	assert.Equal(t, "abc", w.Body.String())

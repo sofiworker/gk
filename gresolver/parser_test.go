@@ -33,6 +33,7 @@ options ndots:2 timeout:2s attempts:3
 		// case "nameserver": empty! It does nothing in the switch!
 		// case "domain": empty!
 		// case "search": empty!
+		t.Logf("nameservers = %v (parser currently ignores nameserver lines)", conf.Nameservers)
 		// Only "options" is implemented.
 		// So nameservers will be empty (default).
 	}
@@ -56,6 +57,7 @@ options ndots:2 timeout:2s attempts:3
 			// Wait, Validate() checks len(Nameservers) == 0.
 			// But since parser didn't parse them, it is 0.
 			// So it should be DefaultNS.
+			t.Logf("default nameservers = %v (parser currently ignores nameserver lines)", DefaultNS)
 		}
 	}
 }

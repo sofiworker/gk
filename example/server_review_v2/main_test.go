@@ -892,10 +892,3 @@ func TestLoggerInterface(t *testing.T) {
 	t.Logf("大多数 Go 用户使用的是 stdlog 或 slog")
 	t.Logf("glog 包提供了兼容实现，但这是额外的抽象层")
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

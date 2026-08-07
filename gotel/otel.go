@@ -1,16 +1,8 @@
 package gotel
 
-import (
-	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/trace"
-)
-
-type OTELProvider struct {
-	tracer     trace.Tracer
-	meter      metric.Meter
-	propagator propagation.TextMapPropagator
-}
+// OTELProvider is reserved for the OpenTelemetry provider implementation.
+// The concrete tracer/meter/propagator wiring is not implemented yet.
+type OTELProvider struct{}
 
 //func NewOTELProvider(serviceName string) Provider {
 //	tp := sdktrace.NewTracerProvider()

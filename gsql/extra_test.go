@@ -56,6 +56,7 @@ func TestDialects(t *testing.T) {
 		// Test AutoIncrement
 		if d.AutoIncrement() == "" && dName != "postgres" {
 			// Postgres returns empty, others usually shouldn't
+			t.Logf("%s AutoIncrement returned empty (may be expected for this driver)", dName)
 		}
 
 		// Test PrimaryKeyStr

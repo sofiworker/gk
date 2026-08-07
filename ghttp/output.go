@@ -39,5 +39,5 @@ func DefaultEnvelope(w http.ResponseWriter, r *http.Request, statusCode int, res
 	}
 
 	w.WriteHeader(statusCode)
-	codec.Marshal(w, &envelope)
+	_ = codec.Marshal(w, &envelope)
 }

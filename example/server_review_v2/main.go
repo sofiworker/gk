@@ -287,7 +287,9 @@ func containsTag(tags []string, tag string) bool {
 // 认证中间件（模拟）
 // ============================================================================
 
-const contextKeyUserID = "userID"
+type contextKey string
+
+const contextKeyUserID contextKey = "userID"
 
 func authMiddleware() ghttp.Middleware {
 	return func(next http.Handler) http.Handler {
@@ -319,7 +321,7 @@ func requireRole(roles ...string) ghttp.Middleware {
 			if userID == "" {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"code":    40101,
 					"message": "authentication required",
 				})
@@ -328,47 +330,6 @@ func requireRole(roles ...string) ghttp.Middleware {
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-// ============================================================================
-// 自定义 Envelope
-// ============================================================================
-
-func customEnvelope(w http.ResponseWriter, r *http.Request, statusCode int, resp interface{}, err error, contentType string, codec ghttp.Codec) {
-	w.Header().Set("Content-Type", contentType)
-
-	type envelope struct {
-		Code      int         `json:"code"`
-		Message   string      `json:"message"`
-		Data      interface{} `json:"data,omitempty"`
-		Timestamp int64       `json:"timestamp"`
-		RequestID string      `json:"requestId"`
-	}
-
-	response := envelope{
-		Timestamp: time.Now().Unix(),
-		RequestID: r.Header.Get("X-Request-ID"),
-	}
-
-	if err != nil {
-		he := ghttp.AsError(err)
-		if he != nil {
-			statusCode = he.Code
-			response.Code = he.Code
-			response.Message = he.Message
-		} else {
-			statusCode = http.StatusInternalServerError
-			response.Code = 50000
-			response.Message = "internal server error"
-		}
-	} else {
-		response.Code = 0
-		response.Message = "ok"
-		response.Data = resp
-	}
-
-	w.WriteHeader(statusCode)
-	codec.Marshal(w, &response)
 }
 
 // ============================================================================
@@ -552,7 +513,7 @@ func buildServer() *ghttp.Server {
 		ToRaw(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
-			io.WriteString(w, "raw handler response")
+			_, _ = io.WriteString(w, "raw handler response")
 		})
 
 	return s

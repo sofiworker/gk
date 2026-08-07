@@ -17,7 +17,7 @@ type Encoding string
 
 const (
 	JSONEncoding    Encoding = "json"
-	ConsoleEncoding          = "console"
+	ConsoleEncoding Encoding = "console"
 )
 
 // OutputType 输出类型

@@ -96,7 +96,7 @@ func RequestID(opts ...RequestIDOption) Middleware {
 			id := r.Header.Get("X-Request-ID")
 			if id == "" || len(id) > cfg.maxLength {
 				b := make([]byte, 16)
-				rand.Read(b)
+				_, _ = rand.Read(b)
 				id = hex.EncodeToString(b)
 			}
 			w.Header().Set("X-Request-ID", id)

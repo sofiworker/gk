@@ -172,7 +172,7 @@ func TestIntegration_OpenAPIEndpoint(t *testing.T) {
 	defer ts.Close()
 
 	// First request triggers finalizeRoutes
-	http.Get(ts.URL + "/users/1")
+	_, _ = http.Get(ts.URL + "/users/1")
 
 	resp, err := http.Get(ts.URL + "/openapi.json")
 	require.NoError(t, err)
@@ -419,7 +419,7 @@ func TestIntegration_RouteBuilderChainWithOpenAPI(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	// First request triggers finalizeRoutes
-	http.Get(ts.URL + "/api/users/new")
+	_, _ = http.Get(ts.URL + "/api/users/new")
 
 	// Verify OpenAPI spec
 	openAPIResp, err := http.Get(ts.URL + "/openapi.json")
@@ -427,7 +427,7 @@ func TestIntegration_RouteBuilderChainWithOpenAPI(t *testing.T) {
 	defer openAPIResp.Body.Close()
 
 	var spec map[string]interface{}
-	json.NewDecoder(openAPIResp.Body).Decode(&spec)
+	_ = json.NewDecoder(openAPIResp.Body).Decode(&spec)
 
 	paths, ok := spec["paths"].(map[string]interface{})
 	require.True(t, ok, "paths should exist in spec")
@@ -486,10 +486,10 @@ func TestIntegration_CustomEnvelope(t *testing.T) {
 		w.Header().Set("Content-Type", contentType)
 		if err != nil {
 			w.WriteHeader(statusCode)
-			codec.Marshal(w, &myEnvelope{OK: false})
+			_ = codec.Marshal(w, &myEnvelope{OK: false})
 		} else {
 			w.WriteHeader(statusCode)
-			codec.Marshal(w, &myEnvelope{OK: true, Data: resp})
+			_ = codec.Marshal(w, &myEnvelope{OK: true, Data: resp})
 		}
 	}), WithProduces(MIMEJSON))
 
@@ -512,7 +512,7 @@ func TestIntegration_CustomEnvelope(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var env myEnvelope
-	json.NewDecoder(resp.Body).Decode(&env)
+	_ = json.NewDecoder(resp.Body).Decode(&env)
 	assert.True(t, env.OK)
 	assert.Equal(t, "ok", env.Data.(map[string]interface{})["pong"])
 }

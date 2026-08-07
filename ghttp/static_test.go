@@ -11,7 +11,7 @@ import (
 func TestStaticServesFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "hello.txt")
-	os.WriteFile(testFile, []byte("Hello, World!"), 0644)
+	_ = os.WriteFile(testFile, []byte("Hello, World!"), 0644)
 
 	app := New(WithProduces(MIMEJSON))
 	Route[struct{}, struct{}](app).GET("/static").ToStatic(tmpDir)
@@ -31,7 +31,7 @@ func TestStaticServesFile(t *testing.T) {
 func TestStaticFileSingle(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "favicon.ico")
-	os.WriteFile(testFile, []byte("icon-data"), 0644)
+	_ = os.WriteFile(testFile, []byte("icon-data"), 0644)
 
 	app := New(WithProduces(MIMEJSON))
 	Route[struct{}, struct{}](app).GET("/favicon.ico").ToStaticFile(testFile)

@@ -21,7 +21,7 @@ func TestEnvelopeDefault_Success(t *testing.T) {
 	}
 
 	var body map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &body)
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
 	if body["code"].(float64) != 0 {
 		t.Fatalf("expected code=0, got %v", body["code"])
 	}
@@ -43,7 +43,7 @@ func TestEnvelopeDefault_Error(t *testing.T) {
 	}
 
 	var body map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &body)
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
 	code := body["code"].(float64)
 	if int(code) != http.StatusNotFound {
 		t.Fatalf("expected code=404, got %v", code)

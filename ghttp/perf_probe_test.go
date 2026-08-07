@@ -259,7 +259,7 @@ func BenchmarkProbe_FullChainRawHandler(b *testing.B) {
 	s := New(WithProduces(MIMEJSON))
 	Route[struct{}, struct{}](s).GET("/users/{id}").ToRaw(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"id":"42"}`))
+		_, _ = w.Write([]byte(`{"id":"42"}`))
 	})
 	warm := httptest.NewRecorder()
 	s.ServeHTTP(warm, probeRequest())

@@ -11,7 +11,7 @@ import (
 func TestRenderHTML(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmplPath := filepath.Join(tmpDir, "index.html")
-	os.WriteFile(tmplPath, []byte(`<h1>{{.Title}}</h1>`), 0644)
+	_ = os.WriteFile(tmplPath, []byte(`<h1>{{.Title}}</h1>`), 0644)
 
 	renderer := NewRenderer(tmpDir, ".html", nil, false)
 
@@ -27,7 +27,7 @@ func TestRenderHTML(t *testing.T) {
 func TestRenderWithFuncMap(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmplPath := filepath.Join(tmpDir, "greet.html")
-	os.WriteFile(tmplPath, []byte(`{{ "alice" | upper }}`), 0644)
+	_ = os.WriteFile(tmplPath, []byte(`{{ "alice" | upper }}`), 0644)
 
 	funcMap := template.FuncMap{
 		"upper": func(s string) string { return s },

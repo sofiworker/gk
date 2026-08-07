@@ -23,7 +23,7 @@ func (m *mockResolver) Scheme() string {
 
 func TestRegisterAndGetResolver(t *testing.T) {
 	r := &mockResolver{}
-	resolverFactory.Register(r.Scheme(), r)
+	_ = resolverFactory.Register(r.Scheme(), r)
 
 	resolverFactory.mu.RLock()
 	defer resolverFactory.mu.RUnlock()

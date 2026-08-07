@@ -45,9 +45,6 @@ func ParseResolveFile(file string) (*DnsConfig, error) {
 			continue
 		}
 		fields := strings.Fields(line)
-		if len(fields) < 0 {
-			continue
-		}
 
 		directive := fields[0]
 		args := fields[1:]

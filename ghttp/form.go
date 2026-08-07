@@ -8,33 +8,6 @@ import (
 
 const defaultMaxMemory = 32 << 20 // 32 MB
 
-func parseMultipartForm(r *http.Request, target interface{}) error {
-	if err := r.ParseMultipartForm(defaultMaxMemory); err != nil {
-		return err
-	}
-
-	v := reflect.ValueOf(target)
-	if v.Kind() == reflect.Ptr {
-		v = v.Elem()
-	}
-	return fillMultipartBodyFields(v, r)
-}
-
-func fillMultipartBodyFields(parent reflect.Value, r *http.Request) error {
-	if parent.Kind() != reflect.Struct {
-		return nil
-	}
-
-	for i := 0; i < parent.NumField(); i++ {
-		field := parent.Type().Field(i)
-		if field.Name != "Body" {
-			continue
-		}
-		return fillMultipartBody(parent.Field(i), r)
-	}
-	return nil
-}
-
 func fillMultipartBody(bodyVal reflect.Value, r *http.Request) error {
 	if bodyVal.Kind() != reflect.Struct {
 		return nil

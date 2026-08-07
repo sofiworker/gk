@@ -54,7 +54,8 @@ func TestMigratorPassesContextToMigration(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectCommit()
 
-	ctxKey := struct{}{}
+	type migrateCtxKey struct{}
+	ctxKey := migrateCtxKey{}
 	ctx := context.WithValue(context.Background(), ctxKey, "value")
 	var received context.Context
 

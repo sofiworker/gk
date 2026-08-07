@@ -48,7 +48,7 @@ func (m *MemoryCache) GetWithContext(ctx context.Context, key string) ([]byte, e
 	m.mu.RUnlock()
 
 	if !ok || m.isExpired(item) {
-		m.DeleteWithContext(ctx, key)
+		_ = m.DeleteWithContext(ctx, key)
 		return nil, ErrCacheMiss
 	}
 	return cloneBytes(item.value), nil

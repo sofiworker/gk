@@ -218,6 +218,7 @@ func TestPKCS7(t *testing.T) {
 		// "return data[:(length - unpadding)]" -> data[:16].
 		// It doesn't check if padding bytes are all equal to padding value in the implementation shown?
 		// "padtext[i] = byte(padding)"
+		t.Logf("zero block decrypted without error (padding not validated)")
 		// "unpadding := int(data[length-1])"
 		// "if unpadding > length { return nil ... }"
 		// It does NOT verify the other padding bytes in the provided snippet!

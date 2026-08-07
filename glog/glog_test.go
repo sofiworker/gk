@@ -3,7 +3,6 @@ package glog_test
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,7 +62,7 @@ func countNonEmptyLines(content string) int {
 // It automatically registers a cleanup function to remove the directory after the test.
 func createTempLogFile(t *testing.T) (string, string) {
 	t.Helper()
-	tempDir, err := ioutil.TempDir("", "glog-test-*")
+	tempDir, err := os.MkdirTemp("", "glog-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -132,10 +131,10 @@ func TestConfigure(t *testing.T) {
 		}
 
 		glog.Debugf("Debug message: %s", "ok")
-		glog.Sync()
+		_ = glog.Sync()
 		time.Sleep(100 * time.Millisecond)
 
-		content, _ := ioutil.ReadFile(logFilePath)
+		content, _ := os.ReadFile(logFilePath)
 		if !strings.Contains(string(content), "DEBUG") || !strings.Contains(string(content), "Debug message: ok") {
 			t.Errorf("Expected debug console log, got: %s", string(content))
 		}
@@ -152,10 +151,10 @@ func TestConfigure(t *testing.T) {
 		}
 
 		glog.Info("Log with initial fields")
-		glog.Sync()
+		_ = glog.Sync()
 		time.Sleep(100 * time.Millisecond)
 
-		content, _ := ioutil.ReadFile(logFilePath)
+		content, _ := os.ReadFile(logFilePath)
 		logData := parseLastJSONLog(t, string(content))
 		if logData["service"] != "test-app" {
 			t.Errorf("Initial field 'service' not present: %v", logData)
@@ -173,10 +172,10 @@ func TestConfigure(t *testing.T) {
 		}
 
 		glog.Info("Info without caller")
-		glog.Sync()
+		_ = glog.Sync()
 		time.Sleep(100 * time.Millisecond)
 
-		content, _ := ioutil.ReadFile(logFilePath)
+		content, _ := os.ReadFile(logFilePath)
 		logData := parseLastJSONLog(t, string(content))
 		if _, ok := logData["caller"]; ok {
 			t.Errorf("Caller field should not be present")
@@ -195,10 +194,10 @@ func TestConfigure(t *testing.T) {
 		}
 
 		glog.Warn("Custom key test")
-		glog.Sync()
+		_ = glog.Sync()
 		time.Sleep(100 * time.Millisecond)
 
-		content, _ := ioutil.ReadFile(logFilePath)
+		content, _ := os.ReadFile(logFilePath)
 		logData := parseLastJSONLog(t, string(content))
 		if _, ok := logData["message"]; !ok {
 			t.Errorf("Expected message key 'message', but it was not found")
@@ -224,9 +223,9 @@ func TestLoggingMethods(t *testing.T) {
 
 	t.Run("StructuredLog", func(t *testing.T) {
 		glog.Info("User logged in", "user_id", 123, "ip", "192.168.1.1")
-		glog.Sync()
+		_ = glog.Sync()
 		time.Sleep(100 * time.Millisecond)
-		content, _ := ioutil.ReadFile(logFilePath)
+		content, _ := os.ReadFile(logFilePath)
 		logData := parseLastJSONLog(t, string(content))
 		msg, ok := parseMessageField(logData)
 		if !ok || msg != "User logged in" || logData["user_id"] != float64(123) {
@@ -236,9 +235,9 @@ func TestLoggingMethods(t *testing.T) {
 
 	t.Run("FormattedLog", func(t *testing.T) {
 		glog.Warnf("Failed to connect to %s, attempt %d", "db", 3)
-		glog.Sync()
+		_ = glog.Sync()
 		time.Sleep(100 * time.Millisecond)
-		content, _ := ioutil.ReadFile(logFilePath)
+		content, _ := os.ReadFile(logFilePath)
 		logData := parseLastJSONLog(t, string(content))
 		msg, ok := parseMessageField(logData)
 		if !ok || msg != "Failed to connect to db, attempt 3" {
@@ -249,9 +248,9 @@ func TestLoggingMethods(t *testing.T) {
 	t.Run("WithLogger", func(t *testing.T) {
 		subLogger := glog.With("request_id", "abc-123")
 		subLogger.Info("Request started", "method", "GET")
-		glog.Sync()
+		_ = glog.Sync()
 		time.Sleep(100 * time.Millisecond)
-		content, _ := ioutil.ReadFile(logFilePath)
+		content, _ := os.ReadFile(logFilePath)
 		logData := parseLastJSONLog(t, string(content))
 		if logData["request_id"] != "abc-123" || logData["method"] != "GET" {
 			t.Errorf("WithLogger failed: %v", logData)
@@ -273,9 +272,9 @@ func TestErrorHandling(t *testing.T) {
 
 	t.Run("InvalidKeyValuePairs", func(t *testing.T) {
 		glog.Warn("Invalid args", "key1", "value1", "key2") // Odd number
-		glog.Sync()
+		_ = glog.Sync()
 		time.Sleep(100 * time.Millisecond)
-		content, _ := ioutil.ReadFile(logFilePath)
+		content, _ := os.ReadFile(logFilePath)
 		logData := parseLastJSONLog(t, string(content))
 
 		if errVal, ok := logData["error"]; !ok || !strings.Contains(fmt.Sprint(errVal), "invalid number of arguments") {
@@ -285,9 +284,9 @@ func TestErrorHandling(t *testing.T) {
 
 	t.Run("KeyNotString", func(t *testing.T) {
 		glog.Error("Invalid key type", 123, "value") // Key is not a string
-		glog.Sync()
+		_ = glog.Sync()
 		time.Sleep(100 * time.Millisecond)
-		content, _ := ioutil.ReadFile(logFilePath)
+		content, _ := os.ReadFile(logFilePath)
 		logData := parseLastJSONLog(t, string(content))
 
 		if errVal, ok := logData["error"]; !ok || !strings.Contains(fmt.Sprint(errVal), "log field key must be a string") {
@@ -308,18 +307,18 @@ func TestSetLevel(t *testing.T) {
 	}
 
 	glog.Debug("This debug message should not appear")
-	glog.Sync()
+	_ = glog.Sync()
 	time.Sleep(100 * time.Millisecond)
-	content, _ := ioutil.ReadFile(logFilePath)
+	content, _ := os.ReadFile(logFilePath)
 	if string(content) != "" {
 		t.Fatalf("Log file should be empty, but got: %s", content)
 	}
 
 	glog.SetLevel(glog.DebugLevel)
 	glog.Debug("This debug message should appear now")
-	glog.Sync()
+	_ = glog.Sync()
 	time.Sleep(100 * time.Millisecond)
-	content, _ = ioutil.ReadFile(logFilePath)
+	content, _ = os.ReadFile(logFilePath)
 	if !strings.Contains(string(content), "This debug message should appear now") {
 		t.Errorf("Debug message not found after level change: %s", content)
 	}
@@ -339,7 +338,7 @@ func TestSetLevelFiltering(t *testing.T) {
 	}
 
 	glog.Debug("debug should be dropped")
-	glog.Sync()
+	_ = glog.Sync()
 	time.Sleep(100 * time.Millisecond)
 	content := readLogContent(t, logFilePath)
 	if strings.TrimSpace(content) != "" {
@@ -348,7 +347,7 @@ func TestSetLevelFiltering(t *testing.T) {
 
 	glog.SetLevel(glog.DebugLevel)
 	glog.Debug("debug should be kept")
-	glog.Sync()
+	_ = glog.Sync()
 	time.Sleep(100 * time.Millisecond)
 	content = readLogContent(t, logFilePath)
 	logData := parseLastJSONLog(t, content)
@@ -359,7 +358,7 @@ func TestSetLevelFiltering(t *testing.T) {
 
 	glog.SetLevel(glog.ErrorLevel)
 	glog.Info("info should be dropped")
-	glog.Sync()
+	_ = glog.Sync()
 	time.Sleep(100 * time.Millisecond)
 	content = readLogContent(t, logFilePath)
 	if countNonEmptyLines(content) != 1 {
@@ -414,10 +413,10 @@ func TestConcurrency(t *testing.T) {
 	for err := range errCh {
 		t.Fatalf("Failed to configure: %v", err)
 	}
-	glog.Sync()
+	_ = glog.Sync()
 	time.Sleep(200 * time.Millisecond)
 
-	content, err := ioutil.ReadFile(logFilePath)
+	content, err := os.ReadFile(logFilePath)
 	if err != nil {
 		t.Fatalf("Failed to read log file: %v", err)
 	}

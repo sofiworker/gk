@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -25,7 +26,6 @@ type Client struct {
 	pathParams  map[string]string
 	authToken   string
 	authScheme  string
-	timeout     time.Duration
 	debug       bool
 	codecMgr    *CodecManager
 }
@@ -401,7 +401,9 @@ func (c *Client) execute(r *Request) (*Response, error) {
 	resp.Body = body
 
 	if r.Result != nil && resp.IsSuccess() {
-		resp.BindJSON(r.Result)
+		if err := resp.BindJSON(r.Result); err != nil {
+			return nil, fmt.Errorf("bind response body to %T: %w", r.Result, err)
+		}
 	}
 
 	return resp, nil

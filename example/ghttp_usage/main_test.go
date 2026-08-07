@@ -1042,7 +1042,7 @@ func TestStatusCodeFromResponse(t *testing.T) {
 	if resp.StatusCode == http.StatusOK {
 		t.Logf("【发现问题】声明了 Responds(201) 但实际返回 200，因为响应结构体没有 Status 字段也未实现 StatusCoder")
 	} else if resp.StatusCode == http.StatusCreated {
-		// 正确行为
+		t.Logf("创建成功，返回 201")
 	}
 }
 

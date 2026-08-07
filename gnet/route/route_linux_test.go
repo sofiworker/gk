@@ -10,10 +10,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-type stubRoute struct {
-	netlink.Route
-}
-
 func TestConvertRoutes(t *testing.T) {
 	dst := parseCIDR("10.0.0.0/24")
 	gw := net.ParseIP("10.0.0.1")

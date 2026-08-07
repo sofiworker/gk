@@ -208,31 +208,28 @@ func (b *UDPBridge) sessionCleaner() {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			b.mu.Lock()
-			if b.closed {
-				b.mu.Unlock()
-				return
-			}
-
-			now := time.Now()
-			expiredSessions := make([]string, 0)
-
-			for key, session := range b.sessions {
-				if now.Sub(session.lastActive) > b.sessionTTL {
-					expiredSessions = append(expiredSessions, key)
-					close(session.closeChan)
-				}
-			}
-
-			for _, key := range expiredSessions {
-				delete(b.sessions, key)
-				b.logger.Printf("Cleaned expired session: %s", key)
-			}
+	for range ticker.C {
+		b.mu.Lock()
+		if b.closed {
 			b.mu.Unlock()
+			return
 		}
+
+		now := time.Now()
+		expiredSessions := make([]string, 0)
+
+		for key, session := range b.sessions {
+			if now.Sub(session.lastActive) > b.sessionTTL {
+				expiredSessions = append(expiredSessions, key)
+				close(session.closeChan)
+			}
+		}
+
+		for _, key := range expiredSessions {
+			delete(b.sessions, key)
+			b.logger.Printf("Cleaned expired session: %s", key)
+		}
+		b.mu.Unlock()
 	}
 }
 

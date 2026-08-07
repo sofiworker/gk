@@ -18,7 +18,7 @@ func TestParseMultipartFormWithFile(t *testing.T) {
 
 	_ = writer.WriteField("name", "Alice")
 	part, _ := writer.CreateFormFile("avatar", "avatar.png")
-	part.Write([]byte("fake-image-data"))
+	_, _ = part.Write([]byte("fake-image-data"))
 	writer.Close()
 
 	req := httptest.NewRequest("POST", "/upload", body)
@@ -45,10 +45,10 @@ func TestParseMultipartFormMultipleFiles(t *testing.T) {
 	writer := multipart.NewWriter(body)
 
 	part1, _ := writer.CreateFormFile("files", "a.txt")
-	part1.Write([]byte("aaa"))
+	_, _ = part1.Write([]byte("aaa"))
 	part2, _ := writer.CreateFormFile("files", "b.txt")
-	part2.Write([]byte("bbb"))
-	writer.Close()
+	_, _ = part2.Write([]byte("bbb"))
+	_ = writer.Close()
 
 	req := httptest.NewRequest("POST", "/upload", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
@@ -71,8 +71,8 @@ func TestParseMultipartFormValues(t *testing.T) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
-	writer.WriteField("name", "Bob")
-	writer.WriteField("age", "30")
+	_ = writer.WriteField("name", "Bob")
+	_ = writer.WriteField("age", "30")
 	writer.Close()
 
 	req := httptest.NewRequest("POST", "/submit", body)
