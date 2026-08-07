@@ -390,7 +390,7 @@ s.Use(ghttp.RBACMiddleware(authz,
 中间件行为约定：
 - `RequestID` 只回显长度不超过 `DefaultMaxRequestIDLength`（128）的客户端 `X-Request-ID`，超长值会被新生成的 ID 替换；可用 `RequestID(ghttp.WithRequestIDMaxLength(n))` 调整上限。
 - `CORS` 只对真正的预检请求（`OPTIONS` + `Origin` + `Access-Control-Request-Method`）自行返回 204 并短路；普通 `OPTIONS` 请求会继续进入路由，显式注册的 `OPTIONS` handler 正常执行。
-- `Timeout` 超时返回 504 并取消请求 context；超时后 handler 对响应写入会被丢弃，handler 应通过 `ctx.Done()` 协作退出（Go 无法强制终止不协作的 goroutine）。
+- `Timeout` 超时返回 504 并取消请求 context；超时后 handler 对响应写入会被丢弃，handler 应通过 `ctx.Done()` 协作退出（Go 无法强制终止不协作的 goroutine）。`Timeout` 的 writer 支持 `Hijack`/`Flush`，WebSocket 升级与 SSE 流式可以放在 `Timeout` 中间件之后。
 
 ### WebSocket
 
@@ -405,7 +405,25 @@ ghttp.Route[struct{}, struct{}](s).GET("/ws/{room}").ToWebSocket(func(ctx contex
 })
 ```
 
-WebSocket 默认执行同源校验：同源或缺 `Origin` 放行，跨源返回 403。可用 `WithWebSocketOriginChecker(fn)` 替换默认策略。
+WebSocket 默认执行同源校验：同源或缺 `Origin` 放行，跨源返回 403。可用 `WithWebSocketOriginChecker(fn)` 替换默认策略；路由级可用 `.WebSocketCheckOrigin(fn)` 覆盖（须在 `ToWebSocket` 之前调用）。
+
+`WebSocketConn` 提供：
+
+- `ReadJSON` / `WriteJSON`（JSON 消息）、`ReadMessage` / `WriteMessage`（raw 文本/二进制帧，`TextMessage` / `BinaryMessage`）；
+- `ReadJSONContext(ctx, v)` / `WriteJSONContext(ctx, v)`：context 取消时返回 `ctx.Err()`，并解除底层阻塞读写（取消后连接应视为已关闭）；
+- `Subprotocol()`：握手协商出的子协议；`SetReadDeadline` / `SetWriteDeadline`：读写截止时间。
+
+服务端 WebSocket 选项（默认关闭，显式开启）：
+
+```go
+s := ghttp.New(
+    ghttp.WithServerWebSocketSubprotocols([]string{"chat", "json"}), // 握手子协议
+    ghttp.WithServerWebSocketReadBufferSize(4096),
+    ghttp.WithServerWebSocketWriteBufferSize(4096),
+    ghttp.WithServerWebSocketPingPeriod(30*time.Second), // keepalive ping
+    ghttp.WithServerWebSocketPongWait(60*time.Second),   // pong 等待上限
+)
+```
 
 ### SSE
 
@@ -418,7 +436,7 @@ ghttp.Route[struct{}, struct{}](s).GET("/events").ToSSE(func(ctx context.Context
     return nil
 })
 
-// SSEWriter 还提供 WriteEventWithID / WriteComment / Retry；
+// SSEWriter 还提供 WriteJSON / WriteJSONWithID / WriteEventWithID / WriteComment / Retry；
 // data 含换行时会按规范拆成多行 data: 字段。
 
 stream, err := client.SSE("/events", ghttp.SSEConfig{

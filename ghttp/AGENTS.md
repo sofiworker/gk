@@ -64,6 +64,14 @@
 - Group 中间件在创建子组时快照（gin 语义）；父组在子组创建后新增的中间件不传播到已创建的子组。produces/consumes 同为创建时快照。
 - SSE handler 返回的 error 必须记录（logger），不得丢弃。
 
+### WebSocket / SSE 库约束
+
+- `Timeout` 中间件的 writer 必须支持 `Hijack`/`Flush`（及 `Unwrap`），否则 WebSocket 升级与 SSE 流式在超时中间件下会失败；任何 writer 包装层不得吞掉这组接口。
+- WebSocket 升级失败与 handler error 必须记录（logger），不得静默丢弃；升级失败时不额外写响应（gorilla 已处理）。
+- keepalive（`WithServerWebSocketPingPeriod`/`WithServerWebSocketPongWait`）默认关闭，显式开启；`WebSocketConn.ReadJSONContext/WriteJSONContext` 取消后连接视为已关闭。
+- 路由级 `.WebSocketCheckOrigin(fn)` 覆盖 server 级 origin 策略，须在 `ToWebSocket` 之前调用。
+- SSE `WriteJSONWithID` 用于 Last-Event-ID 续传；SSE/WS 均要求 handler 通过 `ctx.Done()` 协作退出。
+
 ## 验证与门禁
 
 - 行为默认值变更必须同步更新测试、README 与迁移说明，并在计划中标注破坏性。

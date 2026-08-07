@@ -2051,6 +2051,32 @@ git commit -m "perf(ghttp): reduce full-chain allocations with single response w
 - `Server.Use(mws...) *Server`，与 `Consumes/Group` 等链式 API 一致。
 - 文件：`ghttp/server.go`；测试：`TestServerUseChainable`。
 
+## 批次 6：SSE/WS 真实库能力（P1，2026-08-07 追加，方向：不再写 demo，直接库化）
+
+### Task 6.1: Timeout writer 支持 Hijack/Flush/Unwrap
+
+- `timeoutResponseWriter` 增加 `Hijack`/`Flush`/`Unwrap`，流式（SSE）与升级（WS）在 `Timeout` 下可用；`WriteTo` 在 streaming/hijack 后不再重复写。
+- 文件：`ghttp/middleware.go`；测试：`TestWebSocketServerUnderTimeoutMiddlewareUpgrades`、`TestSSEStreamingUnderTimeoutMiddleware`。
+
+### Task 6.2: WebSocketConn 库级 API
+
+- raw 消息：`ReadMessage`/`WriteMessage`（`TextMessage`/`BinaryMessage`）；
+- context 感知：`ReadJSONContext`/`WriteJSONContext`（取消后解除阻塞并返回 `ctx.Err()`）；
+- 连接元数据与截止时间：`Subprotocol`/`SetReadDeadline`/`SetWriteDeadline`。
+- 文件：`ghttp/websocket.go`；测试：`TestWebSocketServerRawMessages`、`TestWebSocketServerReadJSONContextCanceled` 等。
+
+### Task 6.3: 服务端 WebSocket 配置与路由级 Origin
+
+- 新增 `WithServerWebSocketSubprotocols`/`WithServerWebSocketReadBufferSize`/`WithServerWebSocketWriteBufferSize`/`WithServerWebSocketPingPeriod`/`WithServerWebSocketPongWait`（keepalive 默认关闭）；
+- 路由级 `.WebSocketCheckOrigin(fn)`（两个 builder 版本均有），覆盖 server 级 `WithWebSocketOriginChecker`；
+- 升级失败与 handler error 记录 logger，不再静默。
+- 文件：`ghttp/config.go`、`ghttp/builder_core.go`、`ghttp/builder_pre127.go`、`ghttp/builder_go127.go`；测试：`TestWebSocketServerNegotiatedSubprotocol`、`TestWebSocketServerRouteOriginOverride`、`TestWebSocketServerKeepAlivePing`、`TestServerWebSocketOptionsConfigure`。
+
+### Task 6.4: SSE 库级补全
+
+- `SSEWriter.WriteJSONWithID(event, id, data)`：显式 `id:` 行，支持 Last-Event-ID 续传。
+- 文件：`ghttp/sse.go`；测试：`TestSSEWriterWriteJSONWithID`。
+
 ## 已确认决策（2026-08-06 review 确认）
 
 1. 406 默认行为：**已被 `docs/superpowers/specs/2026-08-06-ghttp-negotiation-form-problem-design.md` 取代**——默认 406，`WithLenientContentNegotiation()` 显式宽松；`WithStrictContentNegotiation()` 保留为兼容别名。
@@ -2062,3 +2088,4 @@ git commit -m "perf(ghttp): reduce full-chain allocations with single response w
 7. 双版本共存：**`//go:build go1.27` 版本约束自动选择，不要求使用者显式传 tag**；1.27 版 Server/Group 本身即根组，`Server.GET(path).Doc(...).To[Req,Resp](handler)` 直接注册，**Server/Group 上不提供 `Route()` 方法，也没有小写快捷注册**，`ANY`/`CUSTOM` 走 `s.ANY(path)`/`s.CUSTOM(method,path)` 直接链式起点；包级 `Route[Req,Resp]` 仅保留为 deprecated 兼容空壳（2026-08-07 确认，2026-08-07 修订：移除 `Route()` 方法与全部小写快捷注册，保留包级空壳）。
 8. builder 级 Group：**两个版本的 `RouteBuilder` 均提供 `.Group(prefix, mws...)`**，gin 的 `r.Group` 语义；须在设置 method/path 之前调用，已设置的路由级选项不转移（2026-08-07 确认）。
 9. 批次 5 语义（2026-08-07 确认）：CORS 只短路真预检；Group 中间件创建时快照；RequestID 默认 128 上限；Timeout 超时取消 context 并丢弃迟到写入；路径提取单次 + 错误走路由级管线；SSE error 落日志；`Server.Use` 链式。
+10. SSE/WS 库化（2026-08-07 确认）：不再写 demo；Timeout writer 支持 Hijack/Flush；WS 增加 raw/context 感知/子协议/keepalive/路由级 Origin；keepalive 默认关闭；SSE 增加 `WriteJSONWithID`。
