@@ -17,7 +17,7 @@ type RouteBuilder struct {
 	core *routeBuilderCore
 }
 
-// Route is the deprecated pre-1.27 compatibility entry point. Its type
+// Deprecated: Route is the pre-1.27 compatibility entry point. Its type
 // arguments are accepted for source compatibility but ignored; it returns
 // the same root-group builder that s.GET(path) and friends start, so old
 // code keeps compiling without an extra layer. New code should call the

@@ -174,9 +174,10 @@ func WithOpenAPISecurity(requirements ...map[string][]string) ServerOption {
 	}
 }
 
-// WithStrictContentNegotiation is kept for compatibility. Since the default
-// behavior already returns 406 when no Produces candidate is acceptable, this
-// option is a no-op.
+// Deprecated: WithStrictContentNegotiation is a no-op kept for source
+// compatibility. The default behavior already returns 406 when no Produces
+// candidate is acceptable; use WithLenientContentNegotiation to opt into the
+// lenient fallback.
 func WithStrictContentNegotiation() ServerOption {
 	return func(c *Config) {
 		c.lenientContentNegotiation = false
@@ -191,9 +192,10 @@ func WithLenientContentNegotiation() ServerOption {
 	}
 }
 
-// WithStrictContentType is kept for compatibility. Since the default behavior
-// already returns 415 for unknown request Content-Types, this option is a
-// no-op.
+// Deprecated: WithStrictContentType is a no-op kept for source compatibility.
+// The default behavior already returns 415 for unknown or missing request
+// Content-Types when Consumes is configured; use WithLenientContentType to
+// opt into lenient parsing.
 func WithStrictContentType() ServerOption {
 	return func(c *Config) {
 		c.lenientContentType = false
