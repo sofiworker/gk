@@ -9,6 +9,7 @@ import (
 
 var (
 	ErrCacheMiss = errors.New("gcache: cache miss")
+	ErrNilLoader = errors.New("gcache: loader is nil")
 )
 
 // KeyValueCacheWithContext defines the interface for key-value cache operations with context.
@@ -17,6 +18,8 @@ type KeyValueCacheWithContext interface {
 	SetWithContext(ctx context.Context, key string, value []byte, expiration time.Duration) error
 	DeleteWithContext(ctx context.Context, key string) error
 	ExistsWithContext(ctx context.Context, key string) (bool, error)
+	// GetOrSetWithContext 返回缓存值；未命中时调用 loader 加载并写入。
+	GetOrSetWithContext(ctx context.Context, key string, loader func(context.Context) ([]byte, error), expiration time.Duration) ([]byte, error)
 }
 
 // KeyValueCache defines the interface for key-value cache operations.
@@ -25,6 +28,8 @@ type KeyValueCache interface {
 	Set(key string, value []byte, expiration time.Duration) error
 	Delete(key string) error
 	Exists(key string) (bool, error)
+	// GetOrSet 返回缓存值；未命中时调用 loader 加载并写入。
+	GetOrSet(key string, loader func() ([]byte, error), expiration time.Duration) ([]byte, error)
 }
 
 // ExpirableCacheWithContext defines the interface for cache expiration operations with context.

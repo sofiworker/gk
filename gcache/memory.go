@@ -76,6 +76,29 @@ func (m *MemoryCache) Set(key string, value []byte, expiration time.Duration) er
 	return m.SetWithContext(context.Background(), key, value, expiration)
 }
 
+func (m *MemoryCache) GetOrSetWithContext(ctx context.Context, key string, loader func(context.Context) ([]byte, error), expiration time.Duration) ([]byte, error) {
+	if v, err := m.GetWithContext(ctx, key); err == nil {
+		return v, nil
+	}
+	if loader == nil {
+		return nil, ErrNilLoader
+	}
+	v, err := loader(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.SetWithContext(ctx, key, v, expiration); err != nil {
+		return nil, err
+	}
+	return v, nil
+}
+
+func (m *MemoryCache) GetOrSet(key string, loader func() ([]byte, error), expiration time.Duration) ([]byte, error) {
+	return m.GetOrSetWithContext(context.Background(), key, func(context.Context) ([]byte, error) {
+		return loader()
+	}, expiration)
+}
+
 func (m *MemoryCache) DeleteWithContext(_ context.Context, key string) error {
 	m.mu.Lock()
 	delete(m.items, key)

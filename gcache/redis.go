@@ -61,6 +61,29 @@ func (r *RedisCache) Set(key string, value []byte, expiration time.Duration) err
 	return r.SetWithContext(context.Background(), key, value, expiration)
 }
 
+func (r *RedisCache) GetOrSetWithContext(ctx context.Context, key string, loader func(context.Context) ([]byte, error), expiration time.Duration) ([]byte, error) {
+	if v, err := r.GetWithContext(ctx, key); err == nil {
+		return v, nil
+	}
+	if loader == nil {
+		return nil, ErrNilLoader
+	}
+	v, err := loader(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.SetWithContext(ctx, key, v, expiration); err != nil {
+		return nil, err
+	}
+	return v, nil
+}
+
+func (r *RedisCache) GetOrSet(key string, loader func() ([]byte, error), expiration time.Duration) ([]byte, error) {
+	return r.GetOrSetWithContext(context.Background(), key, func(context.Context) ([]byte, error) {
+		return loader()
+	}, expiration)
+}
+
 func (r *RedisCache) DeleteWithContext(ctx context.Context, key string) error {
 	return r.client.Del(ctx, key).Err()
 }

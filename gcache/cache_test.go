@@ -89,6 +89,34 @@ func runCacheTestSuite(t *testing.T, cache Cache) {
 		}
 	})
 
+	t.Run("GetOrSet", func(t *testing.T) {
+		key := "getorset:" + t.Name()
+		loads := 0
+		loader := func(context.Context) ([]byte, error) {
+			loads++
+			return []byte("loaded"), nil
+		}
+
+		v, err := cacheWithContext.GetOrSetWithContext(context.Background(), key, loader, time.Minute)
+		if err != nil || string(v) != "loaded" || loads != 1 {
+			t.Fatalf("first GetOrSet = %q, %v (loads=%d)", v, err, loads)
+		}
+		v, err = cacheWithContext.GetOrSetWithContext(context.Background(), key, loader, time.Minute)
+		if err != nil || string(v) != "loaded" || loads != 1 {
+			t.Fatalf("second GetOrSet = %q, %v (loads=%d), want cached", v, err, loads)
+		}
+
+		_ = cache.Delete(key)
+		if _, err := cacheWithContext.GetOrSetWithContext(context.Background(), key, func(context.Context) ([]byte, error) {
+			return nil, errors.New("load failed")
+		}, time.Minute); err == nil {
+			t.Fatal("loader error should propagate")
+		}
+		if _, err := cacheWithContext.GetOrSetWithContext(context.Background(), "nil-loader", nil, time.Minute); !errors.Is(err, ErrNilLoader) {
+			t.Fatalf("nil loader error = %v, want ErrNilLoader", err)
+		}
+	})
+
 	t.Run("KeyValue", func(t *testing.T) {
 		// Set
 		if err := cache.Set("key1", []byte("value1"), 10*time.Second); err != nil {

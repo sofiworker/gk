@@ -70,6 +70,29 @@ func (v *ValkeyCache) Set(key string, value []byte, expiration time.Duration) er
 	return v.SetWithContext(context.Background(), key, value, expiration)
 }
 
+func (v *ValkeyCache) GetOrSetWithContext(ctx context.Context, key string, loader func(context.Context) ([]byte, error), expiration time.Duration) ([]byte, error) {
+	if val, err := v.GetWithContext(ctx, key); err == nil {
+		return val, nil
+	}
+	if loader == nil {
+		return nil, ErrNilLoader
+	}
+	val, err := loader(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := v.SetWithContext(ctx, key, val, expiration); err != nil {
+		return nil, err
+	}
+	return val, nil
+}
+
+func (v *ValkeyCache) GetOrSet(key string, loader func() ([]byte, error), expiration time.Duration) ([]byte, error) {
+	return v.GetOrSetWithContext(context.Background(), key, func(context.Context) ([]byte, error) {
+		return loader()
+	}, expiration)
+}
+
 // DeleteWithContext deletes data from the cache with a context.
 func (v *ValkeyCache) DeleteWithContext(ctx context.Context, key string) error {
 	return v.client.Do(ctx, v.client.B().Del().Key(key).Build()).Error()

@@ -12,6 +12,7 @@
     *   `LFUCache`: 本地 LFU (Least Frequently Used) 缓存，支持线程安全和非线程安全版本。
     *   `TimedCache`: 本地基于超时淘汰的缓存，支持后台自动清理。
 *   **统一接口**：为分布式缓存提供了 `Cache` 和 `CacheWithContext` 接口，方便切换不同的实现。
+*   **GetOrSet**：`GetOrSet`/`GetOrSetWithContext` 以 loader 模式在未命中时自动加载并写入。
 *   **灵活配置**：通过 `Option` 模式进行配置。
 *   **错误处理**：统一的 `ErrCacheMiss` 错误表示缓存未命中。
 

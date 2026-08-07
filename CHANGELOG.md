@@ -23,6 +23,7 @@
 - gcrypt：新增 AES-GCM（`AESGCMEncrypt/Decrypt`）、Ed25519（`GenerateEd25519Key`/`SignWithEd25519`/`VerifyWithEd25519`）、`RandomBytes`。
 - gcompress：新增 zlib/flate 压缩（`Zlib*`/`Flate*`）。
 - glog：新增 `DebugfContext/InfofContext/WarnfContext/ErrorfContext`。
+- gcache：新增 `GetOrSet`/`GetOrSetWithContext`（loader 模式，未命中自动加载并写入），Memory/Redis/Valkey 均实现。
 
 ### Changed
 
