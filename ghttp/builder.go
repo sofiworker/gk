@@ -55,6 +55,7 @@ type RouteBuilder[Req, Resp any] struct {
 	finalized       bool
 	responseStatus  int
 	responseHeaders []responseHeader
+	errorWriter     ErrorWriter
 }
 
 // compiledInput is the registration-time compiled constructor for a route's
@@ -266,6 +267,23 @@ func (b *RouteBuilder[Req, Resp]) Status(code int) *RouteBuilder[Req, Resp] {
 func (b *RouteBuilder[Req, Resp]) ResponseHeader(name, value string) *RouteBuilder[Req, Resp] {
 	b.ensureMutable()
 	b.responseHeaders = append(b.responseHeaders, responseHeader{name: name, value: value})
+	return b
+}
+
+// ErrorWriter installs a route-level error writer. The writer returns true
+// when it handled the response; false falls through to the server writer or
+// the built-in error writer.
+func (b *RouteBuilder[Req, Resp]) ErrorWriter(writer ErrorWriter) *RouteBuilder[Req, Resp] {
+	b.ensureMutable()
+	b.errorWriter = writer
+	return b
+}
+
+// ProblemDetails makes this route use RFC 9457 application/problem+json
+// error responses, overriding the server-wide error model.
+func (b *RouteBuilder[Req, Resp]) ProblemDetails() *RouteBuilder[Req, Resp] {
+	b.ensureMutable()
+	b.errorWriter = problemErrorWriter(b.target.owner())
 	return b
 }
 
@@ -884,14 +902,24 @@ func isHTTPMethodToken(method string) bool {
 }
 
 func (b *RouteBuilder[Req, Resp]) writeError(w http.ResponseWriter, r *http.Request, defaultCode int, err error) {
-	if b.target.owner().dispatchError(w, r, defaultCode, err) {
+	owner := b.target.owner()
+	if owner.dispatchError(w, r, defaultCode, err) {
 		return
 	}
-	writeErrorWithCodec(w, r, b.target.owner(), defaultCode, err, b.produces, b.codecs)
+	if b.errorWriter != nil && b.errorWriter(w, r, statusCodeFromError(defaultCode, err), err) {
+		return
+	}
+	if owner.config.errorWriter != nil && owner.config.errorWriter(w, r, statusCodeFromError(defaultCode, err), err) {
+		return
+	}
+	writeErrorWithCodec(w, r, owner, defaultCode, err, b.produces, b.codecs)
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, s *Server, defaultCode int, err error) {
 	if s.dispatchError(w, r, defaultCode, err) {
+		return
+	}
+	if s != nil && s.config.errorWriter != nil && s.config.errorWriter(w, r, statusCodeFromError(defaultCode, err), err) {
 		return
 	}
 	writeErrorWithCodec(w, r, s, defaultCode, err, nil, nil)

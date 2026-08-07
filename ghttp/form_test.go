@@ -2,7 +2,9 @@ package ghttp
 
 import (
 	"bytes"
+	"context"
 	"mime/multipart"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -106,6 +108,28 @@ func TestParseURLEncodedFormValues(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Carol", input.Body.Name)
 	assert.Equal(t, 28, input.Body.Age)
+}
+
+func TestURLEncodedFormWithoutTagsReturns400(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	type input struct {
+		Params
+		Body struct {
+			Name string `json:"name"`
+		}
+	}
+	Route[input, struct{}](app).POST("/users").To(func(context.Context, input) (struct{}, error) {
+		return struct{}{}, nil
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/users", bytes.NewBufferString("name=alice"))
+	req.Header.Set("Content-Type", MIMEPOSTForm)
+	app.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", w.Code, w.Body.String())
+	}
 }
 
 func TestParseMultipartFormEmptyBody(t *testing.T) {

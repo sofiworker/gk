@@ -40,6 +40,7 @@
 - 字段通过 `form:"name"` tag 声明；无 tag 或 `form:"-"` 跳过；
 - 支持标量类型：string、int 系、uint 系、float 系、bool、指针（复用 `setValueFromString`）；
 - 重复 key 取第一个值；
+- 目标 struct 有可绑定字段但完全没有 `form` tag 时返回明确错误（400），不静默空值；
 - 保持现有 `url.Values` / `map[string]string` / `string` / `[]byte` 目标不变；
 - 不引入自动推断（字段名映射是隐式魔法），必须显式 `form` tag。
 
@@ -56,13 +57,24 @@
 - 与 envelope 的关系：错误场景 problem+json 优先于 envelope（envelope 只用于成功 body 包装），避免两套错误表示并存。
 - 与 `WithErrorHandler` 的关系：显式 error handler 优先级最高，problem+json 只作用于框架默认错误写入路径。
 
-## 4. 非目标
+## 4. 路由级错误模型与 ErrorWriter 组合
+
+- 新增 `ErrorWriter`：`func(w http.ResponseWriter, r *http.Request, status int, err error) bool`，返回 true 表示已处理，false 表示交给下一个 writer/框架默认。
+- 新增 `ChainErrorWriters(writers ...ErrorWriter) ErrorWriter`：按序执行，首个返回 true 的 writer 终止链。
+- 解析顺序（从高到低）：
+  1. 显式 `WithErrorHandler`（既有逃生口）；
+  2. 路由级 `.ErrorWriter(fn)` / `.ProblemDetails()`；
+  3. server 级 `WithErrorWriter(writer)`；
+  4. 内置默认（`{code,message}` 或 server 级 `WithProblemDetails()`）。
+- 路由级 `.ProblemDetails()` 只影响该路由，不改变 server 全局错误模型。
+
+## 5. 非目标
 
 - 性能预算（WS9 继续项）暂不做；
 - RBAC 默认实现/限流/审计/指标（能力层）暂不做；
 - client 侧不做。
 
-## 5. 测试与文档
+## 6. 测试与文档
 
 - 每个行为变化配真实 HTTP 请求测试（httptest）；
 - README 增加“默认值速查表”；

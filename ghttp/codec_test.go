@@ -111,6 +111,19 @@ func TestFormCodecUnmarshalStruct(t *testing.T) {
 	}
 }
 
+func TestFormCodecUnmarshalStructWithoutTags(t *testing.T) {
+	codec := &FormCodec{}
+	type profile struct {
+		Name string `json:"name"`
+		Age  int
+	}
+	var p profile
+	err := codec.Unmarshal(strings.NewReader("name=alice"), &p)
+	if err == nil || !strings.Contains(err.Error(), "no form tags") {
+		t.Fatalf("err = %v, want no-form-tags error", err)
+	}
+}
+
 func TestPlainCodecUnmarshalRejectsUnsupportedTarget(t *testing.T) {
 	codec := &PlainCodec{}
 	var target struct {

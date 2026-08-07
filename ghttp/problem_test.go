@@ -2,6 +2,7 @@ package ghttp
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -82,5 +83,78 @@ func TestProblemDetailsWinsOverEnvelope(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), `"code":404`) {
 		t.Fatalf("envelope leaked into error body: %s", w.Body.String())
+	}
+}
+
+func TestRouteLevelProblemDetails(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	Route[Params, struct{}](app).GET("/problem").ProblemDetails().To(func(context.Context, Params) (struct{}, error) {
+		return struct{}{}, Err(http.StatusNotFound, "user not found")
+	})
+	Route[Params, struct{}](app).GET("/plain").To(func(context.Context, Params) (struct{}, error) {
+		return struct{}{}, Err(http.StatusNotFound, "user not found")
+	})
+
+	problemRec := httptest.NewRecorder()
+	app.ServeHTTP(problemRec, httptest.NewRequest(http.MethodGet, "/problem", nil))
+	if got := problemRec.Header().Get("Content-Type"); got != "application/problem+json" {
+		t.Fatalf("problem content type = %q", got)
+	}
+
+	plainRec := httptest.NewRecorder()
+	app.ServeHTTP(plainRec, httptest.NewRequest(http.MethodGet, "/plain", nil))
+	if got := plainRec.Header().Get("Content-Type"); got != MIMEJSON {
+		t.Fatalf("plain content type = %q, want %q", got, MIMEJSON)
+	}
+	if !strings.Contains(plainRec.Body.String(), `"message"`) {
+		t.Fatalf("plain body = %s, want default error body", plainRec.Body.String())
+	}
+}
+
+func TestChainErrorWriters(t *testing.T) {
+	var logged string
+	app := New(WithProduces(MIMEJSON), WithErrorWriter(ChainErrorWriters(
+		func(w http.ResponseWriter, r *http.Request, status int, err error) bool {
+			logged = err.Error()
+			return false
+		},
+		func(w http.ResponseWriter, r *http.Request, status int, err error) bool {
+			w.Header().Set("Content-Type", MIMEJSON)
+			w.WriteHeader(status)
+			_, _ = fmt.Fprintf(w, `{"custom":%q}`, err.Error())
+			return true
+		},
+	)))
+	Route[Params, struct{}](app).GET("/boom").To(func(context.Context, Params) (struct{}, error) {
+		return struct{}{}, Err(http.StatusBadRequest, "boom")
+	})
+
+	w := httptest.NewRecorder()
+	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/boom", nil))
+
+	if logged != "boom" {
+		t.Fatalf("logged = %q, want boom", logged)
+	}
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"custom":"boom"`) {
+		t.Fatalf("status/body = %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRouteErrorWriterCustom(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	Route[Params, struct{}](app).GET("/boom").ErrorWriter(func(w http.ResponseWriter, r *http.Request, status int, err error) bool {
+		w.Header().Set("X-Custom-Error", "1")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte("custom-error"))
+		return true
+	}).To(func(context.Context, Params) (struct{}, error) {
+		return struct{}{}, Err(http.StatusBadRequest, "boom")
+	})
+
+	w := httptest.NewRecorder()
+	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/boom", nil))
+
+	if w.Code != http.StatusBadRequest || w.Header().Get("X-Custom-Error") != "1" || w.Body.String() != "custom-error" {
+		t.Fatalf("status/header/body = %d %q %q", w.Code, w.Header().Get("X-Custom-Error"), w.Body.String())
 	}
 }

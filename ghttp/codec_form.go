@@ -68,15 +68,21 @@ func (c *FormCodec) Unmarshal(r io.Reader, v interface{}) error {
 
 func fillFormStruct(values url.Values, target reflect.Value) error {
 	t := target.Type()
+	hasTag := false
+	hasBindable := false
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
 		if !f.IsExported() {
 			continue
 		}
+		if isFormBindableField(f.Type) {
+			hasBindable = true
+		}
 		name, ok := formFieldName(f)
 		if !ok {
 			continue
 		}
+		hasTag = true
 		value := values.Get(name)
 		if value == "" {
 			value = f.Tag.Get("default")
@@ -88,7 +94,25 @@ func fillFormStruct(values url.Values, target reflect.Value) error {
 			return fmt.Errorf("bind form %q to %s: %w", name, f.Name, err)
 		}
 	}
+	if hasBindable && !hasTag {
+		return fmt.Errorf("form codec: struct %s has bindable fields but no form tags", t.Name())
+	}
 	return nil
+}
+
+func isFormBindableField(t reflect.Type) bool {
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	switch t.Kind() {
+	case reflect.String, reflect.Bool,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64:
+		return true
+	default:
+		return false
+	}
 }
 
 func formFieldName(f reflect.StructField) (string, bool) {

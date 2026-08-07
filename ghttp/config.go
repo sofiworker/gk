@@ -20,6 +20,7 @@ type Config struct {
 	logger                    Logger
 	envelope                  EnvelopeFunc
 	errorHandler              ErrorHandler
+	errorWriter               ErrorWriter
 	bodyDecoder               BodyDecodeFunc
 	produces                  []string
 	consumes                  []string
@@ -95,6 +96,16 @@ func WithEnvelope(fn EnvelopeFunc) ServerOption {
 func WithErrorHandler(handler ErrorHandler) ServerOption {
 	return func(c *Config) {
 		c.errorHandler = handler
+	}
+}
+
+// WithErrorWriter installs a composable error writer for server-wide errors
+// (404/405/panic and routes without their own writer). The writer returns
+// true when it handled the response; false falls through to the built-in
+// error writer.
+func WithErrorWriter(writer ErrorWriter) ServerOption {
+	return func(c *Config) {
+		c.errorWriter = writer
 	}
 }
 

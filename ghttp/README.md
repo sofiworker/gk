@@ -185,7 +185,7 @@ ghttp.Route[CreateUserInput, UserOutput](s).
 
 `Consumes` 只约束带 `Body` 的自动解析路由。请求 `Content-Type` 为空时仍按默认 JSON 解析；显式传入不匹配的媒体类型会返回 `415 Unsupported Media Type`。
 
-`application/x-www-form-urlencoded` 表单支持显式 `form:"name"` tag 绑定到 `Body` 结构体字段（标量类型；重复 key 取第一个值）。
+`application/x-www-form-urlencoded` 表单支持显式 `form:"name"` tag 绑定到 `Body` 结构体字段（标量类型；重复 key 取第一个值）。目标 struct 有可绑定字段但完全没有 `form` tag 时返回 `400 Bad Request`，避免静默空值。
 
 ### 默认值速查
 
@@ -196,7 +196,7 @@ ghttp.Route[CreateUserInput, UserOutput](s).
 | 显式但未注册的请求 `Content-Type` | `415 Unsupported Media Type`（huma/go-restful 风格） | `WithLenientContentType()` 按 JSON 解析 |
 | 缺失请求 `Content-Type` | 按 JSON 解析（gin 风格协议便利） | — |
 | 已注册 codec 无法解码目标类型 | `400 Bad Request`（codec 报错，不静默吞掉） | — |
-| 错误响应体 | `{code,message}` | `WithProblemDetails()` 使用 RFC 9457 `application/problem+json` |
+| 错误响应体 | `{code,message}` | `WithProblemDetails()` / 路由级 `.ProblemDetails()` 使用 RFC 9457 `application/problem+json`；`WithErrorWriter` / 路由级 `.ErrorWriter` 完全自定义 |
 
 `WithStrictContentNegotiation()` / `WithStrictContentType()` 保留为兼容别名（当前默认已是严格行为，调用无额外效果）。
 
@@ -291,6 +291,19 @@ func (o LoginOutput) Cookies() []*http.Cookie {
 `EnvelopeFunc` 签名为 `func(w http.ResponseWriter, r *http.Request, statusCode int, resp interface{}, err error, contentType string, codec Codec)`；`contentType`/`codec` 是路由协商结果，envelope 只允许包装 body，不得改写 HTTP 状态码。错误响应默认只返回 HTTP 状态文本，`WithExposeErrorDetails()` 开启后才返回内部错误信息（显式 `HTTPError` 消息始终返回）。
 
 `WithProblemDetails()` 开启后，错误响应改用 RFC 9457 `application/problem+json`（`type/title/status/detail/instance`），错误场景优先于 envelope；显式 `WithErrorHandler` 优先级最高。
+
+错误模型可按路由选择：`.ProblemDetails()` 只影响该路由；`.ErrorWriter(fn)` 安装路由级 writer。`ErrorWriter` 的契约是“返回 true 表示已处理，返回 false 则落到下一个 writer/框架默认”，因此可用 `ChainErrorWriters(w1, w2, ...)` 组合（例如先记录日志再写响应）：
+
+```go
+ghttp.Route[Req, Resp](s).GET("/users/{id}").
+    ProblemDetails().
+    To(handler)
+
+s := ghttp.New(ghttp.WithErrorWriter(ghttp.ChainErrorWriters(
+    logErrorWriter,            // 返回 false，继续
+    problemWriter,             // 返回 true，结束
+)))
+```
 
 类型化响应可显式声明状态码与响应头：响应对象实现 `StatusCode() int` 与/或 `WriteResponseHeaders(http.Header)`，或在 builder 上用 `.Status(code)`/`.ResponseHeader(name, value)` 声明固定值。204/304/1xx 自动不写 body；动态状态（`StatusCode()`）无法静态推断，OpenAPI 以 builder `Status` 为准。
 
