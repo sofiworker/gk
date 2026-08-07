@@ -28,14 +28,127 @@ func newRouteBuilder(target routeTarget) *RouteBuilder {
 	return &RouteBuilder{core: newRouteBuilderCore(target)}
 }
 
-// Route starts a new route chain on the server.
+// Route starts a new route chain on the server. It is the explicit entry for
+// ANY/CUSTOM or for callers that prefer a method-less start; for standard
+// verbs the server itself is a root group, so s.GET(path) works directly.
 func (s *Server) Route() *RouteBuilder {
 	return newRouteBuilder(s)
 }
 
-// Route starts a new route chain on the group.
+// Route starts a new route chain on the group. For standard verbs the group
+// itself registers routes directly, so g.GET(path) works without Route().
 func (g *Group) Route() *RouteBuilder {
 	return newRouteBuilder(g)
+}
+
+// GET starts a GET route chain on the server, like gin's root group.
+func (s *Server) GET(path string) *RouteBuilder {
+	return s.Route().GET(path)
+}
+
+// POST starts a POST route chain on the server.
+func (s *Server) POST(path string) *RouteBuilder {
+	return s.Route().POST(path)
+}
+
+// PUT starts a PUT route chain on the server.
+func (s *Server) PUT(path string) *RouteBuilder {
+	return s.Route().PUT(path)
+}
+
+// DELETE starts a DELETE route chain on the server.
+func (s *Server) DELETE(path string) *RouteBuilder {
+	return s.Route().DELETE(path)
+}
+
+// PATCH starts a PATCH route chain on the server.
+func (s *Server) PATCH(path string) *RouteBuilder {
+	return s.Route().PATCH(path)
+}
+
+// HEAD starts a HEAD route chain on the server.
+func (s *Server) HEAD(path string) *RouteBuilder {
+	return s.Route().HEAD(path)
+}
+
+// OPTIONS starts an OPTIONS route chain on the server.
+func (s *Server) OPTIONS(path string) *RouteBuilder {
+	return s.Route().OPTIONS(path)
+}
+
+// CONNECT starts a CONNECT route chain on the server.
+func (s *Server) CONNECT(path string) *RouteBuilder {
+	return s.Route().CONNECT(path)
+}
+
+// TRACE starts a TRACE route chain on the server.
+func (s *Server) TRACE(path string) *RouteBuilder {
+	return s.Route().TRACE(path)
+}
+
+// ANY starts a route chain for every standard HTTP method on the server.
+func (s *Server) ANY(path string) *RouteBuilder {
+	return s.Route().ANY(path)
+}
+
+// CUSTOM starts a route chain with a custom HTTP method on the server.
+func (s *Server) CUSTOM(method, path string) *RouteBuilder {
+	return s.Route().CUSTOM(method, path)
+}
+
+// GET starts a GET route chain on the group.
+func (g *Group) GET(path string) *RouteBuilder {
+	return g.Route().GET(path)
+}
+
+// POST starts a POST route chain on the group.
+func (g *Group) POST(path string) *RouteBuilder {
+	return g.Route().POST(path)
+}
+
+// PUT starts a PUT route chain on the group.
+func (g *Group) PUT(path string) *RouteBuilder {
+	return g.Route().PUT(path)
+}
+
+// DELETE starts a DELETE route chain on the group.
+func (g *Group) DELETE(path string) *RouteBuilder {
+	return g.Route().DELETE(path)
+}
+
+// PATCH starts a PATCH route chain on the group.
+func (g *Group) PATCH(path string) *RouteBuilder {
+	return g.Route().PATCH(path)
+}
+
+// HEAD starts a HEAD route chain on the group.
+func (g *Group) HEAD(path string) *RouteBuilder {
+	return g.Route().HEAD(path)
+}
+
+// OPTIONS starts an OPTIONS route chain on the group.
+func (g *Group) OPTIONS(path string) *RouteBuilder {
+	return g.Route().OPTIONS(path)
+}
+
+// CONNECT starts a CONNECT route chain on the group.
+func (g *Group) CONNECT(path string) *RouteBuilder {
+	return g.Route().CONNECT(path)
+}
+
+// TRACE starts a TRACE route chain on the group.
+func (g *Group) TRACE(path string) *RouteBuilder {
+	return g.Route().TRACE(path)
+}
+
+// ANY starts a route chain for every standard HTTP method on the group.
+func (g *Group) ANY(path string) *RouteBuilder {
+	return g.Route().ANY(path)
+}
+
+// CUSTOM starts a route chain with a custom HTTP method on the group.
+func (g *Group) CUSTOM(method, path string) *RouteBuilder {
+	return g.Route().CUSTOM(method, path)
 }
 
 func (b *RouteBuilder) POST(path string) *RouteBuilder {

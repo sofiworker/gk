@@ -166,3 +166,64 @@ func TestGo127LegacyRouteSpellingStillWorks(t *testing.T) {
 		t.Fatalf("legacy spelling status = %d body = %q", w.Code, w.Body.String())
 	}
 }
+
+func TestGo127ServerDirectVerbChain(t *testing.T) {
+	app := New(WithOpenAPI("go127", "1.0.0"), WithProduces(MIMEJSON))
+	app.GET("/users/{id}").
+		Doc(Summary("get user"), OperationID("getUser")).
+		To(func(ctx context.Context, in *go127Params) (*go127Resp, error) {
+			return &go127Resp{ID: in.ID}, nil
+		})
+
+	w := httptest.NewRecorder()
+	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/users/u1", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"id":"u1"`) {
+		t.Fatalf("direct GET chain status = %d body = %q", w.Code, w.Body.String())
+	}
+
+	doc, err := app.OpenAPI()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(doc), `"operationId":"getUser"`) {
+		t.Fatalf("openapi missing operationId getUser: %s", string(doc))
+	}
+}
+
+func TestGo127GroupDirectVerbChain(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	api := app.Group("/api")
+	api.GET("/users/{id}").To(func(ctx context.Context, in *go127Params) (*go127Resp, error) {
+		return &go127Resp{ID: in.ID}, nil
+	})
+	api.POST("/users").Status(http.StatusCreated).To(func(ctx context.Context, in *go127Params) (*go127Resp, error) {
+		return &go127Resp{ID: in.ID}, nil
+	})
+
+	w := httptest.NewRecorder()
+	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/users/u1", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"id":"u1"`) {
+		t.Fatalf("group GET chain status = %d body = %q", w.Code, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	app.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/users", nil))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("group POST chain status = %d, want 201", w.Code)
+	}
+}
+
+func TestGo127ServerAnyChain(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	app.ANY("/ping").ToNoInput(func(ctx context.Context) (*go127Resp, error) {
+		return &go127Resp{ID: "pong"}, nil
+	})
+
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut} {
+		w := httptest.NewRecorder()
+		app.ServeHTTP(w, httptest.NewRequest(method, "/ping", nil))
+		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"id":"pong"`) {
+			t.Fatalf("%s /ping status = %d body = %q", method, w.Code, w.Body.String())
+		}
+	}
+}
