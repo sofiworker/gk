@@ -6,7 +6,7 @@
 
 ## 特性
 
-- **泛型优先 API** — `Route[Req,Resp]` 链式构建器，编译期类型安全
+- **泛型优先 API** — `Route[Req,Resp]` 链式构建器（Go 1.27 起自动切换到 `Server.Route().To[Req,Resp]` 泛型方法形态），编译期类型安全
 - **显式输入读取** — `Params` 读取 path/query/header/cookie，`Body` 字段解析请求体
 - **内容协商** — `Accept` 驱动响应 Codec，`Consumes` 约束请求 `Content-Type`
 - **灵活输出** — 支持响应体结构体和自定义 Envelope 包装（code/msg/data 模式）
@@ -108,7 +108,7 @@ _, err = io.Copy(dst, streamResp.RawBody())
 
 | 函数 | 说明 |
 |------|------|
-| `Route[Req,Resp](target)` | 链式构建器起始，`target` 可以是 `*Server` 或 `*Group` |
+| `Route[Req,Resp](target)` | 链式构建器起始，`target` 可以是 `*Server` 或 `*Group`；Go 1.27 起该函数仅作兼容 shim，类型参数被忽略 |
 | `.GET(path)` | 注册 GET 路由 |
 | `.POST(path)` | 注册 POST 路由 |
 | `.PUT(path)` | 注册 PUT 路由 |
@@ -132,7 +132,41 @@ _, err = io.Copy(dst, streamResp.RawBody())
 | `.Consumes(contentTypes...)` | 声明可自动解析的请求 Content-Type，可在 server/group/route 上声明 |
 | `.MaxBodyBytes(n)` | 覆盖当前路由自动解析请求体的大小上限；`n <= 0` 表示不限制 |
 | `.Produces(contentTypes...)` | 自动响应编码的 Content-Type，可在 server/group/route 上声明 |
-| To(handler) | 注册类型化处理函数，配置错误在终结调用处立即 panic |
+
+### 终结方法
+
+| 方法 | 说明 |
+|------|------|
+| `.To(handler)` | 注册类型化处理函数，配置错误在终结调用处立即 panic |
+| `.ToNoInput(handler)` | 注册无请求输入的类型化处理函数（不解析 body、不校验 Content-Type） |
+| `.ToNoOutput(handler)` | 注册只返回 error 的处理函数，成功默认 204，可用 `.Status(code)` 覆盖 |
+| `.ToHTTP(handler)` / `.ToRaw(handler)` | 原始 `http.Handler` / `RawHandler` 逃生口 |
+| `.ToHTTPFunc(handler)` | 解析输入后由 handler 自己写响应的逃生口 |
+| `.ToRedirect(code, location)` / `.ToRedirectFunc(...)` | 重定向 |
+| `.ToSSE` / `.ToWebSocket` / `.ToStatic*` / `.ToHTML` | 专用终结器 |
+
+> 无输入/无输出都是显式终结器，不使用 `struct{}` 魔法：`.ToNoOutput` 成功默认 204，错误照常走统一错误管线；`.ToNoInput` 完全跳过请求解析。
+
+### Go 1.27 泛型方法版本
+
+模块内同时保留两套 API，编译时按工具链版本**自动选择**（类似 Go 标准库的 `//go:build` 版本约束），使用者不需要传任何 build tag：
+
+- Go < 1.27：`ghttp.Route[Req, Resp](target).GET(path).To(handler)`，类型参数在包级函数上（Go 1.27 前方法不支持类型参数）；
+- Go ≥ 1.27：`server.Route().GET(path).To[Req, Resp](handler)`，类型参数在终结方法上并由 handler 自动推断；同时提供 `server.Get/Post/Put/Patch/Delete/Head/Options(path, handler)` 快捷注册。
+
+```go
+// Go 1.27+ 写法
+s.Route().GET("/hello/{name}").To(func(ctx context.Context, req *GreetInput) (*GreetOutput, error) {
+    return &GreetOutput{Message: "Hello, " + req.Path("name")}, nil
+})
+
+// 快捷注册
+s.Get("/users/{id}", func(ctx context.Context, req *GetUserReq) (*GetUserResp, error) {
+    return &GetUserResp{ID: req.ID}, nil
+})
+```
+
+两套 API 共享同一内部实现（`routeBuilderCore`），行为完全一致。注意：Go 1.27 专用文件包含泛型方法语法，`go fmt`/`gofmt` 需使用 Go 1.27+ 工具链（旧工具链的 gofmt 无法解析该文件）。
 
 ### 路由参数
 

@@ -97,16 +97,23 @@
 ghttp.Route[Req, Resp](s).GET("/users/{id}").To(handler)
 ```
 
-- 目标形态（Go 1.27 泛型方法可用后）：
+- **已落地双版本共存（2026-08-07）**：`//go:build go1.27` / `//go:build !go1.27` 自动选择，使用者无需传 build tag。
+  - `ghttp/builder_core.go`：共享 `routeBuilderCore` 与全部注册/解析/错误/协商实现；
+  - `ghttp/builder_pre127.go`：Go < 1.27 的泛型 `RouteBuilder[Req, Resp]`；
+  - `ghttp/builder_go127.go`：Go ≥ 1.27 的非泛型链 + 泛型终结方法 + 快捷注册。
+
+- 目标形态（Go 1.27 泛型方法，已实现）：
 
 ```go
-s.Route().GET("/users/{id}").To[Req, Resp](handler)
+s.Route().GET("/users/{id}").To(func(ctx context.Context, req *GetReq) (*GetResp, error) { ... })
+s.Route().GET("/health").ToNoInput(func(ctx context.Context) (*HealthResp, error) { ... })
+s.Route().DELETE("/users/{id}").ToNoOutput(func(ctx context.Context, req *DeleteReq) error { ... })
+s.Get("/users/{id}", handler) // 快捷注册，类型由 handler 推断
 ```
 
-- 中间步骤：
-  1. 内部先让 `RouteBuilder` 的“非泛型链 + 泛型终结”可行（`To[Req,Resp]` 作为泛型方法）；
-  2. 包级 `Route[Req,Resp]` 保留为兼容包装；
-  3. Server/Group 不泛型化。
+- 无输入/无输出使用显式终结器，不使用 `struct{}` 魔法；`Route[Req, struct{}]` 中的 `struct{}` 仅是过渡期占位。
+- 包级 `Route[Req,Resp]` 在 1.27 构建中保留为源兼容 shim（忽略类型参数）；Server/Group 不泛型化。
+- 两套 API 必须共享同一内部实现，且两套工具链（go1.26 与 go1.27 预览版）下测试/vet 全绿。
 
 ## 4. 验证策略
 
@@ -128,4 +135,4 @@ s.Route().GET("/users/{id}").To[Req, Resp](handler)
 2. 默认 Content-Type 策略：宽松（当前，未知类型按 JSON）还是严格（未知类型 415，huma/go-restful 风格）；
 3. 服务器级 validator 默认关闭的破坏性接受度；
 4. 错误响应是否引入 RFC 9457 problem+json（或保持 `{code,message}` 并显式扩展）；
-5. Go 1.27 方法链的具体命名形态（`s.Route().GET(...).To[Req,Resp](...)` 或等价）。
+5. ~~Go 1.27 方法链的具体命名形态~~ **已定（2026-08-07）**：`s.Route().GET(...).To(handler)`（类型推断）+ `ToNoInput`/`ToNoOutput`/`ToHTTPFunc`/`ToRedirectFunc` 泛型终结器 + `Server/Group.Get/Post/...` 快捷注册。

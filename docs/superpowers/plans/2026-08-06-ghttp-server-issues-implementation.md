@@ -1974,6 +1974,33 @@ git commit -m "perf(ghttp): reduce full-chain allocations with single response w
 - 性能任务必须保留 `/tmp/ghttp-bench-*.txt` 对比；未达到预算时不得声称完成。
 - 破坏性变更（EnvelopeFunc 签名、validator 默认值）需在 README 与迁移说明中标注。
 
+## 批次 4：Go 1.27 双版本共存与显式终结器（P1，2026-08-07 追加）
+
+### Task 4.1: builder 共享内核拆分
+
+**Files:**
+- Add: `ghttp/builder_core.go`（`routeBuilderCore` + 全部共享注册/解析/错误/协商逻辑 + 泛型注册函数）
+- Rewrite: `ghttp/builder.go` → `ghttp/builder_pre127.go`（`//go:build !go1.27`，泛型 `RouteBuilder[Req,Resp]` 薄壳）
+- Add: `ghttp/builder_go127.go`（`//go:build go1.27`，非泛型 `RouteBuilder` + 泛型终结方法 + `Server/Group.Route()` + `Server/Group.Get/Post/...` 快捷注册）
+
+**决策：**
+- 采用 `//go:build go1.27` / `//go:build !go1.27` 版本约束自动选择，与 Go 标准库共存方式一致；使用者无需传 build tag。
+- 1.27 构建中 `Route[Req,Resp](target)` 保留为源兼容 shim，忽略类型参数，终端方法由 handler 推断类型——因此现有测试两套工具链下原样通过。
+- 共享 `routeBuilderCore` 存所有非类型化链状态；validator 以 `any` 存放，泛型注册函数 `coerceRouteValidator[Req]` 在终端统一收口（1.27 构建的 `Validate` 检查延后到终端，属预期差异）。
+
+### Task 4.2: ToNoInput / ToNoOutput 显式终结器
+
+- `ToNoInput(handler func(context.Context) (Resp, error))`：不解析 body、不校验 Content-Type，响应走统一类型化管线。
+- `ToNoOutput(handler func(context.Context, Req) error)`：成功默认 204（`.Status(code)` 可覆盖），错误走统一管线，OpenAPI 响应无 content。
+- 两套工具链共享测试：`ghttp/builder_terminals_test.go`。
+- 1.27 专用测试：`ghttp/builder_go127_test.go`（链式推断、快捷注册、Group、legacy 拼写兼容）。
+
+### Task 4.3: 双工具链验证
+
+- Go 1.26.2（本地）：`go test ./ghttp/`、`go vet ./ghttp/`。
+- Go 1.27 RC2（`/root/go-preview/sdk/go`）：`GOROOT=/root/go-preview/sdk/go GOTOOLCHAIN=local go test ./ghttp/`、`go vet ./ghttp/`。
+- 注意：`builder_go127.go` 含泛型方法语法，旧 gofmt 无法解析；格式化必须用 Go 1.27+ 工具链的 gofmt（README/AGENTS.md 已注明）。
+
 ## 已确认决策（2026-08-06 review 确认）
 
 1. 406 默认行为：**已被 `docs/superpowers/specs/2026-08-06-ghttp-negotiation-form-problem-design.md` 取代**——默认 406，`WithLenientContentNegotiation()` 显式宽松；`WithStrictContentNegotiation()` 保留为兼容别名。
@@ -1981,3 +2008,5 @@ git commit -m "perf(ghttp): reduce full-chain allocations with single response w
 3. server 级 validator：**默认关闭**，需 `WithValidator` 显式启用，按 Task 2.2 实施（标注破坏性）。
 4. 类型化状态码：**接口（`StatusCoder`/`ResponseHeaderWriter`）+ builder 固定值（`.Status()`/`.ResponseHeader()`）**，不引入 tag 反射，按 Task 3.1 实施。
 5. WebSocket 默认策略：**同源放行、缺 Origin 放行、跨源 403**，用户未提出异议，按 Task 5.2 实施。
+6. 无输入/无输出：**显式终结器 `ToNoInput`/`ToNoOutput`**，禁止 `struct{}` 魔法与零值自动 204（2026-08-07 确认，方案 A）。
+7. 双版本共存：**`//go:build go1.27` 版本约束自动选择，不要求使用者显式传 tag**；1.27 版为 `Server.Route().To[Req,Resp](handler)` + 快捷注册，`Route[Req,Resp]` 降级为兼容 shim（2026-08-07 确认）。

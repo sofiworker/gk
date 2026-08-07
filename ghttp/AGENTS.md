@@ -39,9 +39,20 @@
 
 ### Go 1.27 泛型方法迁移
 
-- 当前 `ghttp.Route[Req, Resp](target).METHOD(path).To(handler)` 是过渡形态，因 Go 尚不支持泛型方法。
-- Go 1.27 泛型方法可用后，演进为方法链（如 `target.Route().METHOD(path).To[Req, Resp](handler)`），不再经包级函数绕层。
-- 内部模型（routeDefinition / routeRegistry / RouteBuilder 链 / 注册事务）不得绑定“类型参数在包级函数”这一细节；不得把泛型参数固化进 Server/Group 类型；相关计划须标注迁移意图。
+- 当前 `ghttp.Route[Req, Resp](target).METHOD(path).To(handler)` 是过渡形态，因 Go 1.27 前方法不支持类型参数。
+- Go 1.27 泛型方法可用后，演进为方法链 `target.Route().METHOD(path).To[Req, Resp](handler)`（类型由 handler 推断），不再经包级函数绕层。
+- **双版本共存（build tag 自动选择）**：本包同时保留两套 API，靠 `//go:build go1.27` / `//go:build !go1.27` 按工具链版本自动选择（类似 Go 标准库），使用者无需显式传 tag：
+  - `builder_pre127.go`：泛型 `RouteBuilder[Req, Resp]` + 包级 `Route[Req,Resp](target)`，Go 1.27 前编译；
+  - `builder_go127.go`：非泛型 `RouteBuilder` + 泛型终结方法（`To[Req,Resp]`、`ToNoInput[Resp]`、`ToNoOutput[Req]`、`ToHTTPFunc[Req]`、`ToRedirectFunc[Req]`）+ `Server.Route()`/`Group.Route()` + `Server/Group.Get/Post/...` 快捷注册，Go 1.27+ 编译；
+  - 1.27 构建中 `Route[Req,Resp](target)` 保留为源兼容 shim（忽略类型参数），现有测试两套工具链下都必须通过。
+- 两套 API 共享 `routeBuilderCore`（`builder_core.go`）与所有注册/语义/OpenAPI 内部模型；任何实现不得把泛型参数固化进 Server/Group 类型；相关计划须标注迁移意图。
+- 验证与格式化：Go 1.27 专用文件含泛型方法语法，**必须用 Go 1.27+ 工具链的 gofmt/gofmt 格式化**（旧 gofmt 无法解析）；两套工具链均需 `go test ./ghttp/` 与 `go vet ./ghttp/` 通过。
+
+### 无输入 / 无输出终结器
+
+- 无输入路由使用显式 `.ToNoInput(handler)`：不解析 body、不校验 Content-Type、不校验请求参数，handler 签名 `func(context.Context) (Resp, error)`。
+- 无输出路由使用显式 `.ToNoOutput(handler)`：handler 签名 `func(context.Context, Req) error`，成功默认 204（`.Status(code)` 可覆盖），错误走统一错误管线；OpenAPI 响应无 content。
+- 禁止用 `struct{}` 或“零值自动 204”等魔法代替显式终结器；`Route[Req, struct{}]` 中残余的 `struct{}` 只是 Go 1.27 前过渡形态的类型占位。
 
 ## 验证与门禁
 
