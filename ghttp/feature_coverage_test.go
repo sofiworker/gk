@@ -665,9 +665,9 @@ func TestFeatureCoverage_SetupErrors(t *testing.T) {
 	t.Run("timeout", func(t *testing.T) {
 		app := New(WithProduces(MIMEJSON))
 		app.Use(Timeout(50 * time.Millisecond))
-		Route[Params, struct{}](app).GET("/slow").To(func(context.Context, Params) (struct{}, error) {
+		Route[Params, struct{}](app).GET("/slow").ToNoOutput(func(context.Context, Params) error {
 			time.Sleep(300 * time.Millisecond)
-			return struct{}{}, nil
+			return nil
 		})
 		w := httptest.NewRecorder()
 		app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/slow", nil))
