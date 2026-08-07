@@ -1,57 +1,56 @@
-# GSQL - Go SQL Utilities
+# GSQL - Go SQL 工具
 
-A powerful SQL utility package for Go applications featuring:
+面向 Go 应用的 SQL 工具包：
 
-- Database abstraction layer built on top of `sqlx`
-- Query builder with fluent API
-- Support for multiple SQL dialects
-- Nested transaction support
-- Migration tools
-- SQL scanning utilities
+- 基于 `sqlx` 的数据库抽象层
+- 流畅 API 的查询构建器（Builder）
+- 多 SQL 方言支持
+- 嵌套事务支持
+- 迁移工具
+- SQL 扫描工具
 
-## Features
+## 特性
 
-### Nested Transactions
+### 嵌套事务
 
-The gsql package supports nested transactions, allowing you to create transactions within transactions.
-When a nested transaction is created, it shares the same underlying database transaction as its parent,
-but provides a clean API for handling complex business logic.
+`gsql` 支持嵌套事务：嵌套事务与父事务共享同一个底层数据库事务，但提供干净的
+API 用于组织复杂业务逻辑。
 
-Example usage:
+示例：
 
 ```go
 err := db.Tx(func(tx *Tx) error {
-    // First level transaction
-    _, err := tx.ExecContext(context.Background(), "INSERT INTO users (name) VALUES (?)", "Alice")
-    if err != nil {
-        return err
-    }
-    
-    // Nested transaction
-    err = tx.NestedTx(func(nestedTx *Tx) error {
-        // Second level transaction (shares the same underlying sql.Tx)
-        _, err := nestedTx.ExecContext(context.Background(), "INSERT INTO orders (user_id, amount) VALUES (?, ?)", 1, 100)
-        if err != nil {
-            return err // This would cause the nested transaction to fail but not commit
-        }
-        
-        // Another nested transaction
-        err = nestedTx.NestedTx(func(nestedTx2 *Tx) error {
-            // Third level transaction
-            _, err := nestedTx2.ExecContext(context.Background(), "INSERT INTO order_items (order_id, product) VALUES (?, ?)", 1, "Product A")
-            return err
-        })
-        
-        return err
-    })
-    
-    if err != nil {
-        return err // This would rollback the first level transaction
-    }
-    
-    return nil // This would commit the transaction
+	// 第一层事务
+	_, err := tx.ExecContext(context.Background(), "INSERT INTO users (name) VALUES (?)", "Alice")
+	if err != nil {
+		return err
+	}
+
+	// 嵌套事务
+	err = tx.NestedTx(func(nestedTx *Tx) error {
+		// 第二层事务（共享底层 sql.Tx）
+		_, err := nestedTx.ExecContext(context.Background(), "INSERT INTO orders (user_id, amount) VALUES (?, ?)", 1, 100)
+		if err != nil {
+			return err // 嵌套事务失败但不提交
+		}
+
+		// 再嵌套一层
+		err = nestedTx.NestedTx(func(nestedTx2 *Tx) error {
+			// 第三层事务
+			_, err := nestedTx2.ExecContext(context.Background(), "INSERT INTO order_items (order_id, product) VALUES (?, ?)", 1, "Product A")
+			return err
+		})
+
+		return err
+	})
+
+	if err != nil {
+		return err // 回滚第一层事务
+	}
+
+	return nil // 提交事务
 })
 ```
 
-Only the top-level transaction can commit or rollback the database transaction. Nested transactions
-simply propagate errors upward, allowing for fine-grained error handling within complex business logic.
+只有顶层事务可以提交或回滚数据库事务；嵌套事务只向上传播错误，便于在复杂业务
+逻辑中做细粒度错误处理。

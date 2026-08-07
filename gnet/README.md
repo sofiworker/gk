@@ -1,6 +1,6 @@
 # gnet
 
-Network utilities, packet decoding (Layers), and capture wrappers.
+网络工具：报文解码（layers）、抓包与转发等。
 
 ## 子包一览
 

@@ -1,4 +1,4 @@
-# gk: Go Generic Kit
+# gk：Go 通用工具包
 
 > **⚠️ 开发中 · 禁止直接用于生产开发**
 >
@@ -11,34 +11,33 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/sofiworker/gk.svg)](https://pkg.go.dev/github.com/sofiworker/gk)
 [![Go Report Card](https://goreportcard.com/badge/github.com/sofiworker/gk)](https://goreportcard.com/report/github.com/sofiworker/gk)
 
-A comprehensive collection of Go libraries for building robust applications.
+面向构建健壮应用的 Go 库集合，各包相互独立、可积木式拼接。
 
-## Modules
+## 模块
 
-- [gcache](gcache/README.md) - Caching (Memory, Redis, Valkey)
-- [gcompress](gcompress/README.md) - Compression
-- [gconfig](gconfig/README.md) - Configuration
-- [gcrypt](gcrypt/README.md) - Cryptography
-- [gerr](gerr/README.md) - Errors
-- [ghttp](ghttp/README.md) - HTTP Client & Server
-- [glog](glog/README.md) - Logging
-- [gnet](gnet/README.md) - Networking & Packet Analysis
-- [gotel](gotel/README.md) - OpenTelemetry
-- [gresolver](gresolver/README.md) - DNS Resolver
-- [gretry](gretry/README.md) - Retry Logic
-- [grx](grx/README.md) - Reflection extensions
-- [gsd](gsd/README.md) - Service Discovery & Load Balancing
-- [gsql](gsql/README.md) - SQL Utilities
+- [gcache](gcache/README.md) - 缓存（内存、Redis、Valkey）
+- [gcompress](gcompress/README.md) - 压缩
+- [gconfig](gconfig/README.md) - 配置
+- [gcrypt](gcrypt/README.md) - 加密
+- [gerr](gerr/README.md) - 错误
+- [ghttp](ghttp/README.md) - HTTP 客户端与服务端
+- [glog](glog/README.md) - 日志
+- [gnet](gnet/README.md) - 网络与报文分析
+- [gotel](gotel/README.md) - OpenTelemetry 抽象
+- [gresolver](gresolver/README.md) - DNS 解析
+- [gretry](gretry/README.md) - 重试逻辑
+- [grx](grx/README.md) - 反射扩展
+- [gsd](gsd/README.md) - 服务发现与负载均衡
+- [gsql](gsql/README.md) - SQL 工具
 
-## Installation
+## 安装
 
 ```bash
 go get github.com/sofiworker/gk
 ```
 
-## Go Version
+## Go 版本
 
-gk requires Go 1.25.0 or later.
+gk 要求 Go 1.25.0 及以上。
 
-Before v1.0.0, the minimum supported Go version is locked to Go 1.25.0.
-All Go 1.25 patch releases are expected to compile and test the module.
+v1.0.0 之前，最低支持的 Go 版本锁定为 Go 1.25.0；所有 Go 1.25 补丁版本都应能编译并测试本模块。

@@ -7,6 +7,14 @@ Always respond in Chinese-simplified
 - 未经维护者明确授权，不得向远程推送、打 tag、发布或部署。
 - 模块依赖遵循三层分层原则：基础契约层（gerr/gretry/grx 等）可被上层引用；能力层（ghttp/glog/gsd 等）之间禁止互相 import；拼接走接口 + 适配层。详见 `docs/superpowers/specs/2026-08-07-gk-module-dependency-policy.md`。
 
+# 文档与注释语言规范
+
+- 用户可见文档（README、设计文档、导出符号的 godoc 注释、代码注释）统一使用**简体中文**。
+- 用户可见的**错误消息字符串保持英文**（Go 生态惯例），导出错误变量名保持英文。
+- **标识符、函数/方法名、测试函数名保持英文**（Go 语法要求），测试内的中文注释使用中文。
+- 中英混排只允许两种情况：专有名词（OpenAPI、WebSocket、etcd 等）与必要术语括号注（如 “显式优于隐式 (explicit over implicit)”）。
+- 新增/修改代码时遵守本规范；历史代码注释的中文化按批次清理，不得在功能改动中顺带大范围改注释。
+
 # Repository Guidelines
 
 ## Code Style (Go)

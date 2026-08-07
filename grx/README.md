@@ -1,8 +1,8 @@
 # grx
 
-Reflection utilities and extensions.
+反射工具与扩展。
 
-## Usage
+## 用法
 
 ```go
 import "github.com/sofiworker/gk/grx"
