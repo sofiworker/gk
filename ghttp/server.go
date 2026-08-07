@@ -20,12 +20,14 @@ type requestState struct {
 	responseState *responseWriteState
 }
 
+// Server 是核心 HTTP 服务器。
 // Server is the core HTTP server.
+// 实现 http.Handler，因此可以：
 // It implements http.Handler, so it can be:
-//   - used standalone via Run()
-//   - embedded in any http.ServeMux as a sub-handler
-//   - tested via httptest
-//   - wrapped by any func(http.Handler) http.Handler middleware
+//   - 通过 Run() 独立使用；used standalone via Run().
+//   - 作为子 handler 嵌入任意 http.ServeMux；embedded in any http.ServeMux.
+//   - 通过 httptest 测试；tested via httptest.
+//   - 被任意 func(http.Handler) http.Handler 中间件包装；wrapped by any middleware.
 type Server struct {
 	registry *routeRegistry
 	config   *Config
@@ -49,6 +51,7 @@ type Server struct {
 	freezeErr    error
 }
 
+// New 使用给定选项创建 Server。
 // New creates a new Server with the given options.
 func New(opts ...ServerOption) *Server {
 	c := &Config{
@@ -87,6 +90,7 @@ func New(opts ...ServerOption) *Server {
 	return s
 }
 
+// ServeHTTP 实现 http.Handler。
 // ServeHTTP implements http.Handler.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	responseState, w := newResponseWriteState(w, r.Method == http.MethodHead)
@@ -138,6 +142,7 @@ func (s *Server) buildServerHandler() http.Handler {
 	return s
 }
 
+// Run 在指定地址（或配置地址）启动 HTTP 服务器。
 // Run starts the HTTP server on the given address (or config address).
 func (s *Server) Run(addr ...string) error {
 	addrStr := s.config.address
@@ -153,6 +158,7 @@ func (s *Server) Run(addr ...string) error {
 	return s.serveListener(httpServer, ln, httpServer.Serve)
 }
 
+// Serve 在已有 listener 上启动 HTTP 服务器。
 // Serve starts the HTTP server on an existing listener.
 func (s *Server) Serve(ln net.Listener) error {
 	if ln == nil {
@@ -162,6 +168,7 @@ func (s *Server) Serve(ln net.Listener) error {
 	return s.serveListener(httpServer, ln, httpServer.Serve)
 }
 
+// ListenAndServeTLS 在指定地址启动 HTTPS 服务器。
 // ListenAndServeTLS starts the HTTPS server on the given address.
 func (s *Server) ListenAndServeTLS(addr, certFile, keyFile string) error {
 	if addr == "" {
@@ -177,6 +184,7 @@ func (s *Server) ListenAndServeTLS(addr, certFile, keyFile string) error {
 	})
 }
 
+// ServeTLS 在已有 listener 上启动 HTTPS 服务器。
 // ServeTLS starts the HTTPS server on an existing listener.
 func (s *Server) ServeTLS(ln net.Listener, certFile, keyFile string) error {
 	if ln == nil {
@@ -229,6 +237,7 @@ func (s *Server) serveListener(httpServer *http.Server, ln net.Listener, serve f
 	return nil
 }
 
+// Shutdown 优雅关闭服务器。
 // Shutdown gracefully shuts down the server.
 func (s *Server) Shutdown(ctx context.Context) error {
 	if ctx == nil {
@@ -243,6 +252,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return nil
 }
 
+// Close 立即关闭服务器，不等待活动请求。
 // Close immediately closes the server without waiting for active requests.
 func (s *Server) Close() error {
 	s.mu.Lock()
@@ -254,6 +264,7 @@ func (s *Server) Close() error {
 	return nil
 }
 
+// Addr 返回活动 listener 地址（:0 时含实际端口）。
 // Addr returns the active listener address, including the actual port for :0.
 func (s *Server) Addr() net.Addr {
 	s.mu.Lock()
@@ -261,6 +272,7 @@ func (s *Server) Addr() net.Addr {
 	return s.listenerAddr
 }
 
+// Use 向服务器追加中间件并返回服务器以支持链式调用。
 // Use adds middleware to the server and returns the server for chaining.
 func (s *Server) Use(mws ...Middleware) *Server {
 	s.mu.Lock()
@@ -270,7 +282,8 @@ func (s *Server) Use(mws ...Middleware) *Server {
 	return s
 }
 
-// Consumes declares the default request Content-Types for automatic body decoding.
+// Consumes 声明自动解码的默认请求 Content-Type。
+// Consumes declares default request Content-Types for body decoding.
 func (s *Server) Consumes(contentTypes ...string) *Server {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -386,8 +399,10 @@ func (s *Server) owner() *Server {
 	return s
 }
 
+// MatchedParams 返回请求的路径参数与惰性请求视图。
 // MatchedParams returns the request's path params plus the lazy request view.
-// It is safe to call from any middleware or handler on the request path.
+// 可在请求链上的任意中间件或 handler 中安全调用。
+// it is safe to call from any middleware or handler on the request path.
 func (s *Server) MatchedParams(r *http.Request) Params {
 	if r == nil {
 		return Params{}
@@ -429,6 +444,7 @@ func (s *Server) finalizeRoutes() {
 	s.compiled.Store(state)
 }
 
+// Group 创建带前缀与可选中间件的路由组。
 // Group creates a route group with a prefix and optional middlewares.
 func (s *Server) Group(prefix string, mws ...Middleware) *Group {
 	s.mu.Lock()
@@ -481,8 +497,10 @@ func extractorTerminal(route *compiledRoute) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		params, ok := r.Context().Value(matchedParamsContextKey{}).(pathParamList)
 		if !ok {
-			// Defensive fallback for middlewares that replace the request
-			// context; the normal path extracts exactly once in ServeHTTP.
+			// 防御性回退：中间件替换请求 context 时使用；
+			// Defensive fallback when middlewares replace the request context.
+			// 正常路径在 ServeHTTP 中只提取一次。
+			// the normal path extracts exactly once in ServeHTTP.
 			requestPath, err := parseRequestPath(r.URL.EscapedPath(), route.definition.pattern.strict)
 			if err != nil {
 				writeRouteError(w, r, serverFromRequest(r), route.definition.errorWriter, route.definition.produces, http.StatusBadRequest, err)

@@ -9,11 +9,12 @@
 - ghttp 小文件（每文件 1-4 条注释）：codec*/cookie/logger/params_test/render/schema/output/slog/upload/util/vfs/writer/feature_coverage/openapi_compiler 等。
 - ghttp 中等文件：error/group/error_writer/gerr/input/authz/sse/validate/handler。
 - ghttp 大文件：codec_manager/doc/websocket。
+- ghttp 大文件：server/middleware。
 
 ## 待办（按批次）
 
 - [x] gcache 测试、gcompress 测试
-- [ ] ghttp 大文件（server/middleware/builder_core/builder_go127/builder_pre127/client/config/params/route_* 等）
+- [ ] ghttp 大文件（builder_core/builder_go127/builder_pre127/client/config/params/route_* 等）
 - [ ] gnet（26 个文件）
 - [ ] README 双语化（当前为中文为主）
 
