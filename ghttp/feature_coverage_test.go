@@ -328,6 +328,7 @@ func TestFeatureCoverage_MatchedParamsRequestIDCORS(t *testing.T) {
 	preflight := httptest.NewRecorder()
 	preReq := httptest.NewRequest(http.MethodOptions, "/users/9", nil)
 	preReq.Header.Set("Origin", "https://example.com")
+	preReq.Header.Set("Access-Control-Request-Method", http.MethodGet)
 	app.ServeHTTP(preflight, preReq)
 	if preflight.Code != http.StatusNoContent || preflight.Header().Get("Access-Control-Allow-Origin") != "*" {
 		t.Fatalf("preflight = %d %q", preflight.Code, preflight.Header().Get("Access-Control-Allow-Origin"))

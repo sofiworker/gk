@@ -18,6 +18,28 @@ type Middleware func(http.Handler) http.Handler
 
 type requestIDContextKey struct{}
 
+// DefaultMaxRequestIDLength is the maximum accepted length of an incoming
+// X-Request-ID header. Longer values are ignored and replaced by a fresh ID.
+const DefaultMaxRequestIDLength = 128
+
+type requestIDConfig struct {
+	maxLength int
+}
+
+// RequestIDOption configures the RequestID middleware.
+type RequestIDOption func(*requestIDConfig)
+
+// WithRequestIDMaxLength caps the accepted length of an incoming
+// X-Request-ID header. Values longer than the cap are replaced by a fresh ID.
+// Non-positive values keep the default.
+func WithRequestIDMaxLength(n int) RequestIDOption {
+	return func(cfg *requestIDConfig) {
+		if n > 0 {
+			cfg.maxLength = n
+		}
+	}
+}
+
 // GetRequestID returns the request ID installed by RequestID middleware.
 func GetRequestID(ctx context.Context) string {
 	if ctx == nil {
@@ -57,12 +79,20 @@ func wrap(handler http.Handler, mws ...Middleware) http.Handler {
 	return handler
 }
 
-// RequestID adds a unique X-Request-ID header to every response.
-func RequestID() Middleware {
+// RequestID adds a unique X-Request-ID header to every response. An incoming
+// X-Request-ID is echoed only when it is not empty and does not exceed
+// DefaultMaxRequestIDLength (configurable with WithRequestIDMaxLength).
+func RequestID(opts ...RequestIDOption) Middleware {
+	cfg := requestIDConfig{maxLength: DefaultMaxRequestIDLength}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id := r.Header.Get("X-Request-ID")
-			if id == "" {
+			if id == "" || len(id) > cfg.maxLength {
 				b := make([]byte, 16)
 				rand.Read(b)
 				id = hex.EncodeToString(b)
@@ -115,7 +145,7 @@ func CORS(cfg CORSConfig) Middleware {
 				}
 			}
 
-			if r.Method == http.MethodOptions {
+			if r.Method == http.MethodOptions && origin != "" && r.Header.Get("Access-Control-Request-Method") != "" {
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
@@ -267,6 +297,7 @@ func Timeout(d time.Duration) Middleware {
 			case rec := <-panicCh:
 				panic(rec)
 			case <-ctx.Done():
+				rec.stop()
 				rec.state.clearBuffered()
 				if server := serverFromRequest(r); server != nil {
 					writeError(w, r, server, http.StatusGatewayTimeout, Err(http.StatusGatewayTimeout, http.StatusText(http.StatusGatewayTimeout)))
@@ -279,12 +310,13 @@ func Timeout(d time.Duration) Middleware {
 }
 
 type timeoutResponseWriter struct {
-	mu     sync.Mutex
-	header http.Header
-	body   bytes.Buffer
-	status int
-	wrote  bool
-	state  *responseWriteState
+	mu      sync.Mutex
+	stopped bool
+	header  http.Header
+	body    bytes.Buffer
+	status  int
+	wrote   bool
+	state   *responseWriteState
 }
 
 func newTimeoutResponseWriter(state *responseWriteState) *timeoutResponseWriter {
@@ -298,6 +330,9 @@ func (w *timeoutResponseWriter) Header() http.Header {
 func (w *timeoutResponseWriter) Write(data []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.stopped {
+		return 0, http.ErrHandlerTimeout
+	}
 	if !w.wrote {
 		w.status = http.StatusOK
 		w.wrote = true
@@ -309,12 +344,24 @@ func (w *timeoutResponseWriter) Write(data []byte) (int, error) {
 func (w *timeoutResponseWriter) WriteHeader(status int) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.stopped {
+		return
+	}
 	if w.wrote {
 		return
 	}
 	w.status = status
 	w.wrote = true
 	w.state.markBuffered()
+}
+
+// stop makes the writer discard all further writes from a handler goroutine
+// that outlives the timeout, so late writes cannot race with or corrupt the
+// response that was already sent.
+func (w *timeoutResponseWriter) stop() {
+	w.mu.Lock()
+	w.stopped = true
+	w.mu.Unlock()
 }
 
 func (w *timeoutResponseWriter) WriteTo(dst http.ResponseWriter) {

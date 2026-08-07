@@ -219,6 +219,67 @@ func TestBuiltinMiddlewareRequestIDInjectsContext(t *testing.T) {
 	}
 }
 
+func TestBuiltinMiddlewareRequestIDRejectsOversizedIncomingValue(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	app.Use(RequestID())
+
+	Route[struct{}, struct{}](app).GET("/test").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+		return struct{}{}, nil
+	})
+
+	long := strings.Repeat("x", 8192)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/test", nil)
+	r.Header.Set("X-Request-ID", long)
+	app.ServeHTTP(w, r)
+
+	got := w.Header().Get("X-Request-ID")
+	if got == long {
+		t.Fatal("oversized incoming request id was echoed")
+	}
+	if len(got) > DefaultMaxRequestIDLength {
+		t.Fatalf("response request id length = %d, want <= %d", len(got), DefaultMaxRequestIDLength)
+	}
+}
+
+func TestBuiltinMiddlewareRequestIDMaxLengthOption(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	app.Use(RequestID(WithRequestIDMaxLength(8)))
+
+	Route[struct{}, struct{}](app).GET("/test").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+		return struct{}{}, nil
+	})
+
+	for _, tc := range []struct {
+		name string
+		id   string
+		want string
+	}{
+		{name: "short echoed", id: "12345678", want: "12345678"},
+		{name: "long replaced", id: "123456789", want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodGet, "/test", nil)
+			r.Header.Set("X-Request-ID", tc.id)
+			app.ServeHTTP(w, r)
+			got := w.Header().Get("X-Request-ID")
+			if tc.want == "" {
+				if got == tc.id {
+					t.Fatalf("request id %q was echoed, want replacement", tc.id)
+				}
+				if len(got) != 32 {
+					t.Fatalf("replacement length = %d, want 32", len(got))
+				}
+				return
+			}
+			if got != tc.want {
+				t.Fatalf("request id = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestBuiltinMiddlewareCORSUsesConfiguredHeaders(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	app.Use(CORS(CORSConfig{
@@ -251,6 +312,63 @@ func TestBuiltinMiddlewareCORSUsesConfiguredHeaders(t *testing.T) {
 	}
 	if got := w.Header().Get("Vary"); got != "Origin" {
 		t.Fatalf("Vary = %q, want Origin", got)
+	}
+}
+
+func TestBuiltinMiddlewareCORSPassesThroughNonPreflightOptions(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	app.Use(CORS(CORSConfig{
+		AllowOrigins: []string{"https://example.test"},
+		AllowMethods: []string{http.MethodGet},
+	}))
+
+	handlerCalled := 0
+	Route[struct{}, struct{}](app).OPTIONS("/custom").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+		handlerCalled++
+		return struct{}{}, nil
+	})
+	Route[struct{}, struct{}](app).GET("/custom").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+		handlerCalled++
+		return struct{}{}, nil
+	})
+
+	tests := []struct {
+		name         string
+		origin       string
+		request      string
+		preflight    bool
+		wantHandler  bool
+		wantStatus   int
+		wantCORSHead bool
+	}{
+		{name: "options without origin", request: http.MethodOptions, wantHandler: true, wantStatus: http.StatusOK},
+		{name: "options with origin but no preflight", origin: "https://example.test", request: http.MethodOptions, wantHandler: true, wantStatus: http.StatusOK, wantCORSHead: true},
+		{name: "preflight", origin: "https://example.test", request: http.MethodOptions, preflight: true, wantHandler: false, wantStatus: http.StatusNoContent, wantCORSHead: true},
+		{name: "get with origin", origin: "https://example.test", request: http.MethodGet, wantHandler: true, wantStatus: http.StatusOK, wantCORSHead: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			handlerCalled = 0
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(tc.request, "/custom", nil)
+			if tc.origin != "" {
+				r.Header.Set("Origin", tc.origin)
+			}
+			if tc.preflight {
+				r.Header.Set("Access-Control-Request-Method", http.MethodGet)
+			}
+			app.ServeHTTP(w, r)
+			if (handlerCalled > 0) != tc.wantHandler {
+				t.Fatalf("handler called = %v, want %v", handlerCalled > 0, tc.wantHandler)
+			}
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d", w.Code, tc.wantStatus)
+			}
+			got := w.Header().Get("Access-Control-Allow-Origin")
+			if (got != "") != tc.wantCORSHead {
+				t.Fatalf("cors origin header = %q, want present=%v", got, tc.wantCORSHead)
+			}
+		})
 	}
 }
 
@@ -373,6 +491,58 @@ func TestBuiltinMiddlewareTimeoutWritesGatewayTimeout(t *testing.T) {
 	}
 }
 
+func TestBuiltinMiddlewareTimeoutStopsLateWrites(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	app.Use(Timeout(10 * time.Millisecond))
+
+	done := make(chan struct{})
+	Route[struct{}, struct{}](app).GET("/slow").ToHTTPFunc(func(w http.ResponseWriter, r *http.Request, _ struct{}) error {
+		defer close(done)
+		time.Sleep(300 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("late body"))
+		return nil
+	})
+
+	w := httptest.NewRecorder()
+	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/slow", nil))
+	if w.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusGatewayTimeout)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("handler goroutine did not finish")
+	}
+	if strings.Contains(w.Body.String(), "late body") {
+		t.Fatalf("late handler write leaked into response: %s", w.Body.String())
+	}
+}
+
+func TestBuiltinMiddlewareTimeoutCancelsContext(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	app.Use(Timeout(10 * time.Millisecond))
+
+	canceled := make(chan struct{})
+	Route[struct{}, struct{}](app).GET("/slow").ToHTTPFunc(func(w http.ResponseWriter, r *http.Request, _ struct{}) error {
+		<-r.Context().Done()
+		close(canceled)
+		return nil
+	})
+
+	w := httptest.NewRecorder()
+	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/slow", nil))
+	if w.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusGatewayTimeout)
+	}
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("request context was not canceled after timeout")
+	}
+}
+
 func TestBuiltinMiddlewareRecovererCatchesPanicInsideTimeout(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	app.Use(Recoverer())
@@ -412,6 +582,64 @@ func TestGroupUseAfterRouteRegistrationApplies(t *testing.T) {
 
 	if got := w.Header().Get("X-Group"); got != "applied" {
 		t.Fatalf("X-Group = %q, want applied", got)
+	}
+}
+
+func TestGroupMiddlewareSnapshotAtCreation(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	parent := app.Group("/api")
+	child := parent.Group("/v1")
+	parent.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Parent-Late", "applied")
+			next.ServeHTTP(w, r)
+		})
+	})
+
+	Route[struct{}, struct{}](child).GET("/test").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+		return struct{}{}, nil
+	})
+
+	w := httptest.NewRecorder()
+	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/test", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if got := w.Header().Get("X-Parent-Late"); got != "" {
+		t.Fatalf("X-Parent-Late = %q, want empty for middleware added after child creation", got)
+	}
+}
+
+func TestGroupMiddlewareSnapshotIncludesParentBeforeCreation(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	parent := app.Group("/api")
+	parent.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Parent-Early", "applied")
+			next.ServeHTTP(w, r)
+		})
+	})
+	child := parent.Group("/v1")
+
+	Route[struct{}, struct{}](child).GET("/test").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+		return struct{}{}, nil
+	})
+
+	w := httptest.NewRecorder()
+	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/test", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if got := w.Header().Get("X-Parent-Early"); got != "applied" {
+		t.Fatalf("X-Parent-Early = %q, want applied", got)
+	}
+}
+
+func TestServerUseChainable(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	mw := func(next http.Handler) http.Handler { return next }
+	if got := app.Use(mw); got != app {
+		t.Fatal("Server.Use must return the server for chaining")
 	}
 }
 

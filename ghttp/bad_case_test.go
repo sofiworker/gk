@@ -160,6 +160,7 @@ func TestRouteBuilderBadCasesCORSPreflightShortCircuitsOptionsRoute(t *testing.T
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodOptions, "/options", nil)
 	req.Header.Set("Origin", "https://example.test")
+	req.Header.Set("Access-Control-Request-Method", http.MethodGet)
 	app.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNoContent {
