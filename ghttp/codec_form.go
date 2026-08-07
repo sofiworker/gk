@@ -8,6 +8,7 @@ import (
 	"strings"
 )
 
+// FormCodec 处理 application/x-www-form-urlencoded 表单。
 // FormCodec handles application/x-www-form-urlencoded.
 type FormCodec struct{}
 

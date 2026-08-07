@@ -31,20 +31,18 @@ func TestZipUtil(t *testing.T) {
 		t.Fatalf("Compress failed: %v", err)
 	}
 
-	// ListFiles
 	files, err := z.ListFiles(zipFile)
 	if err != nil {
 		t.Fatalf("ListFiles failed: %v", err)
 	}
-	// Note: behavior of list might vary on separator, but should contain at least file1.txt
+	// 列表分隔符可能因平台而异，但至少应包含 file1.txt；
+	// separators may vary by platform, but file1.txt must be present.
 	found1 := false
 	found2 := false
 	for _, f := range files {
 		if f == "file1.txt" || f == "src/file1.txt" {
 			found1 = true
-		} // Compress walks from srcDir, so paths are relative to srcDir?
-		// RelPath in Compress: filepath.Rel(source, path).
-		// If source is /tmp/src, and path is /tmp/src/file1.txt, rel is file1.txt.
+		} // Compress 从 srcDir 遍历，路径相对 srcDir；paths are relative to srcDir.
 		if f == "file1.txt" {
 			found1 = true
 		}
@@ -54,7 +52,7 @@ func TestZipUtil(t *testing.T) {
 	}
 	if !found1 || !found2 {
 		t.Logf("Files found: %v", files)
-		// It might be possible that implementation details vary.
+		// 实现细节可能不同，这里只做基本校验；implementation details may vary, only basic checks here.
 	}
 
 	if err := z.Decompress(zipFile, outDir); err != nil {
@@ -77,7 +75,7 @@ func TestZipUtil(t *testing.T) {
 		t.Errorf("expected content2, got %s", c2)
 	}
 
-	// Test boundary: bad zip
+	// 边界：损坏的 zip；Boundary: corrupted zip.
 	if err := z.Decompress(filepath.Join(tmpDir, "missing.zip"), outDir); err == nil {
 		t.Error("expected error for missing zip")
 	}

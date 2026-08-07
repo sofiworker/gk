@@ -5,6 +5,7 @@ import (
 	"io"
 )
 
+// JSONCodec 使用标准库 encoding/json。
 // JSONCodec uses encoding/json (standard library).
 type JSONCodec struct{}
 

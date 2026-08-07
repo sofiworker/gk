@@ -6,6 +6,7 @@ import (
 	"strings"
 )
 
+// generateSchema 从 Go 类型生成 JSON Schema。
 // generateSchema generates a JSON Schema from a Go type.
 func generateSchema(t reflect.Type) map[string]interface{} {
 	if t.Kind() == reflect.Ptr {

@@ -9,11 +9,13 @@ import (
 	"sync"
 )
 
+// Renderer 是模板渲染接口。
 // Renderer is the template rendering interface.
 type Renderer interface {
 	Render(name string, data interface{}, w io.Writer) error
 }
 
+// GoRenderer 使用 Go 的 html/template（gin 风格）。
 // GoRenderer uses Go's html/template, gin-style.
 type GoRenderer struct {
 	dir     string
@@ -24,6 +26,7 @@ type GoRenderer struct {
 	cache   map[string]*template.Template
 }
 
+// NewRenderer 创建 GoRenderer。
 // NewRenderer creates a new GoRenderer.
 func NewRenderer(dir, ext string, funcMap template.FuncMap, reload bool) *GoRenderer {
 	if ext == "" {
@@ -49,6 +52,7 @@ func (r *GoRenderer) Render(name string, data interface{}, w io.Writer) error {
 	return t.Execute(w, data)
 }
 
+// HTML 保留为便捷包装。
 // HTML is kept as a convenience wrapper.
 func (r *GoRenderer) HTML(name string, data interface{}, w io.Writer) error {
 	return r.Render(name, data, w)

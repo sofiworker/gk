@@ -30,7 +30,6 @@ func TestGzipUtil(t *testing.T) {
 		t.Fatalf("expected %s, got %s", data, decompressed)
 	}
 
-	// Test String versions
 	str := "hello world"
 	cStr, err := gz.CompressString(str)
 	if err != nil {
@@ -70,12 +69,12 @@ func TestGzipUtil(t *testing.T) {
 		t.Fatal("file content mismatch")
 	}
 
-	// Boundary: Invalid data
+	// 边界：非法数据；Boundary: invalid data.
 	if _, err := gz.Decompress([]byte("invalid")); err == nil {
 		t.Error("expected error decompressing invalid data")
 	}
 
-	// Boundary: IsGzipped
+	// 边界：IsGzipped 判断；Boundary: IsGzipped detection.
 	if gz.IsGzipped([]byte("a")) {
 		t.Error("IsGzipped true for short data")
 	}

@@ -180,7 +180,7 @@ func TestParamsViewIsLazyAndCached(t *testing.T) {
 	if got := params.Query("page"); got != "1" {
 		t.Fatalf("Query(page) = %q, want 1", got)
 	}
-	// The first access parses and caches; later URL mutation is not observed.
+	// 首次访问解析并缓存，后续 URL 变更不可见；first access parses and caches.
 	req.URL.RawQuery = "page=999"
 	if got := params.Query("page"); got != "1" {
 		t.Fatalf("Query(page) after RawQuery mutation = %q, want cached 1", got)
@@ -202,13 +202,13 @@ func TestParamsViewIsLazyAndCached(t *testing.T) {
 		t.Fatalf("ClientIP after RemoteAddr mutation = %q, want cached", got)
 	}
 
-	// Headers read through to the live request (view semantics).
+	// header 直接透读实时请求（视图语义）；headers read through to the live request.
 	req.Header.Set("Authorization", "token-2")
 	if got := params.Header("Authorization"); got != "token-2" {
 		t.Fatalf("Header = %q, want live token-2", got)
 	}
 
-	// Copies of the view share the lazily built caches.
+	// 视图副本共享惰性构建的缓存；copies share lazily built caches.
 	copied := params
 	if got := copied.Query("sort"); got != "asc" {
 		t.Fatalf("copied Query(sort) = %q, want asc", got)
@@ -228,7 +228,7 @@ func TestParamsDetachSnapshotsAndDropsRequest(t *testing.T) {
 		t.Fatalf("Detach must drop the request reference")
 	}
 
-	// Mutating the request after Detach must not affect the snapshot.
+	// Detach 后修改请求不得影响快照；mutating after Detach must not affect the snapshot.
 	req.Header.Set("Authorization", "token-2")
 	req.URL.RawQuery = "page=999"
 	req.Header.Set("Cookie", "session_id=changed")

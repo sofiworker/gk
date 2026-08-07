@@ -234,7 +234,7 @@ func benchmarkCompiledChainCount(state *compiledState) int {
 	if state == nil || state.mux == nil {
 		return 0
 	}
-	// A frozen state owns one compiled route chain plus three outcome chains.
+	// 冻结状态拥有一套编译路由链与三套结果链；a frozen state owns compiled route and outcome chains.
 	return len(state.mux.routes) + 3
 }
 

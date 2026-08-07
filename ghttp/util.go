@@ -5,6 +5,7 @@ import (
 	"strings"
 )
 
+// JoinPaths 拼接两个 URL 路径段。
 // JoinPaths joins two URL path segments.
 func JoinPaths(absolutePath, relativePath string) string {
 	if relativePath == "" {

@@ -5,6 +5,7 @@ import (
 	"io"
 )
 
+// PlainCodec 处理 text/plain 内容。
 // PlainCodec handles text/plain content.
 type PlainCodec struct{}
 

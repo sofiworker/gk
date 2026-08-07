@@ -16,8 +16,8 @@ import (
 	"time"
 )
 
-// Feature coverage smoke tests: one representative scenario per feature
-// area, all served through real HTTP requests.
+// 特性覆盖冒烟测试：每个特性一个代表性场景，全部通过真实 HTTP 请求验证。
+// Feature coverage smoke tests: one scenario per feature, served over real HTTP.
 
 func TestFeatureCoverage_RoutingAndHTTPMethods(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))

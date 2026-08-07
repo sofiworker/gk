@@ -37,7 +37,6 @@ func TestAutoCompress(t *testing.T) {
 		t.Errorf("AutoDecompress tgz failed: %v", err)
 	}
 
-	// Test Tgz .tgz extension
 	tgzFile2 := filepath.Join(tmpDir, "test.tgz")
 	if err := cm.AutoCompress(srcDir, tgzFile2); err != nil {
 		t.Errorf("AutoCompress .tgz failed: %v", err)
@@ -47,15 +46,15 @@ func TestAutoCompress(t *testing.T) {
 		t.Error("expected error for rar")
 	}
 
-	// Test pure .gz (unsupported by AutoCompress logic for files unless wrapped in logic I didn't see fully?
-	// The code says: case ".gz", ".tgz": check if .tar.gz or .tgz. else error.
+	// 纯 .gz 文件不在 AutoCompress 支持范围内（.gz/.tgz 分支仅接受 .tar.gz/.tgz）；
+	// plain .gz is unsupported; the .gz/.tgz branch only accepts .tar.gz/.tgz.
 	if err := cm.AutoCompress(srcDir, "test.gz"); err == nil {
 		t.Error("expected error for pure gz in AutoCompress")
 	}
 }
 
 func TestConvenienceFunctions(t *testing.T) {
-	// Just check they don't panic
+	// 仅确保不 panic；just ensure they do not panic.
 	tmpDir := t.TempDir()
 	srcDir := filepath.Join(tmpDir, "src")
 	_ = os.Mkdir(srcDir, 0755)

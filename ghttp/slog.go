@@ -5,8 +5,8 @@ import (
 	"log/slog"
 )
 
-// SlogLogger adapts a standard library *slog.Logger to the ghttp Logger
-// interface.
+// SlogLogger 将标准库 *slog.Logger 适配为 ghttp Logger 接口。
+// SlogLogger adapts a standard library *slog.Logger to the ghttp Logger interface.
 type SlogLogger struct {
 	logger *slog.Logger
 }

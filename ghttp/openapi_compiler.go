@@ -8,8 +8,8 @@ import (
 	"strings"
 )
 
-// OpenAPI returns a best-effort OpenAPI 3.1 document for the route definitions
-// visible when the method is called. It never freezes the Server.
+// OpenAPI 返回调用时可见路由定义的尽力而为 OpenAPI 3.1 文档，不会冻结 Server。
+// OpenAPI returns a best-effort OpenAPI 3.1 document; it never freezes the Server.
 func (s *Server) OpenAPI() ([]byte, error) {
 	if !s.config.openAPIEnabled {
 		return nil, ErrOpenAPIDisabled

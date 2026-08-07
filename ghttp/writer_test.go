@@ -28,7 +28,7 @@ func TestResponseWriterWriteHeader(t *testing.T) {
 	assert.Equal(t, 201, rw.Status())
 	assert.True(t, rw.Written())
 
-	// Second call should be no-op
+	// 第二次调用应为空操作；second call should be a no-op.
 	rw.WriteHeader(500)
 	assert.Equal(t, 201, rw.Status())
 }

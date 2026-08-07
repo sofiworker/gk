@@ -29,21 +29,21 @@ func TestLFUCache(t *testing.T) {
 
 	t.Run("Eviction", func(t *testing.T) {
 		cache := NewLFUCache(2)
-		cache.Set("key1", "value1") // freq 1
-		cache.Set("key2", "value2") // freq 1
+		cache.Set("key1", "value1") // 频率 1；freq 1.
+		cache.Set("key2", "value2") // 频率 1；freq 1.
 
-		// Access key1 to increase its frequency
-		cache.Get("key1") // key1 freq 2, key2 freq 1
+		// 访问 key1 以提升频率；access key1 to increase its frequency.
+		cache.Get("key1") // key1 频率 2，key2 频率 1；key1 freq 2, key2 freq 1.
 
-		cache.Set("key3", "value3") // Should evict key2
+		cache.Set("key3", "value3") // 应淘汰 key2；should evict key2.
 
-		// key2 should be evicted as it's the least frequently used
+		// key2 频率最低，应被淘汰；key2 is least frequently used and should be evicted.
 		_, ok := cache.Get("key2")
 		if ok {
 			t.Error("expected 'key2' to be evicted")
 		}
 
-		// key1 and key3 should still be present
+		// key1 与 key3 应仍存在；key1 and key3 should remain.
 		_, ok = cache.Get("key1")
 		if !ok {
 			t.Error("expected 'key1' to be present")
@@ -58,11 +58,11 @@ func TestLFUCache(t *testing.T) {
 		cache := NewLFUCache(2)
 		cache.Set("key1", "value1")
 		cache.Set("key2", "value2")
-		// Both have frequency 1, key1 was added first (LRU in this freq)
+		// 两者频率均为 1，key1 先加入（该频率内按 LRU）；both have freq 1, key1 added first.
 
-		cache.Set("key3", "value3") // Should evict key1
+		cache.Set("key3", "value3") // 应淘汰 key1；should evict key1.
 
-		// key1 should be evicted
+		// key1 应被淘汰；key1 should be evicted.
 		_, ok := cache.Get("key1")
 		if ok {
 			t.Error("expected 'key1' to be evicted")
@@ -97,11 +97,11 @@ func TestLFUCache(t *testing.T) {
 		if cache.Len() != 2 {
 			t.Errorf("expected length 2, got %d", cache.Len())
 		}
-		cache.Set("key1", "new_value") // Update
+		cache.Set("key1", "new_value") // 更新；update.
 		if cache.Len() != 2 {
 			t.Errorf("expected length 2 after update, got %d", cache.Len())
 		}
-		cache.Set("key3", "value3") // Evict
+		cache.Set("key3", "value3") // 淘汰；evict.
 		if cache.Len() != 2 {
 			t.Errorf("expected length 2 after eviction, got %d", cache.Len())
 		}
@@ -114,7 +114,7 @@ func TestThreadSafeLFUCache(t *testing.T) {
 		var wg sync.WaitGroup
 		numGoroutines := 50
 
-		// Concurrent writes
+		// 并发写入；concurrent writes.
 		for i := 0; i < numGoroutines; i++ {
 			wg.Add(1)
 			go func(i int) {
@@ -130,14 +130,14 @@ func TestThreadSafeLFUCache(t *testing.T) {
 			t.Errorf("expected cache length %d, got %d", numGoroutines, cache.Len())
 		}
 
-		// Concurrent reads and updates
+		// 并发读取与更新；concurrent reads and updates.
 		for i := 0; i < numGoroutines; i++ {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
 				key := fmt.Sprintf("key%d", i)
 				expectedValue := fmt.Sprintf("value%d", i)
-				val, ok := cache.Get(key) // This Get will increment the frequency
+				val, ok := cache.Get(key) // 该 Get 会提升频率；this Get increments the frequency.
 				if !ok || val != expectedValue {
 					t.Errorf("failed to get correct value for %s", key)
 				}
@@ -152,7 +152,8 @@ func TestThreadSafeLFUCache(t *testing.T) {
 		var wg sync.WaitGroup
 		numItems := 20
 
-		// All will have freq 1, so it will evict based on LRU within the freq 1 list
+		// 全部频率为 1，将按频率 1 链表内的 LRU 顺序淘汰；
+		// all have freq 1, so eviction follows LRU within the freq-1 list.
 		for i := 0; i < numItems; i++ {
 			wg.Add(1)
 			go func(i int) {

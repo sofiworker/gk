@@ -14,7 +14,8 @@ type safeFS struct {
 	root string
 }
 
-// NewSafeFS creates an http.FileSystem that confines all opens beneath root.
+// NewSafeFS 创建将打开路径限制在 root 之下的 http.FileSystem。
+// NewSafeFS creates an http.FileSystem confined beneath root.
 func NewSafeFS(root string) (http.FileSystem, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, ErrStaticRootRequired

@@ -5,13 +5,13 @@
 ## 已完成
 
 - 库文件：gresolver/parser.go、gsql（scan/migrate_source/dialect）、gcache（memory/timed/lru/lfu/valkey）。
-- 测试：gretry、grx、gconfig、gresolver、gcrypt、gsd、glog、gsql（extra/builder）、gcache（cache/timed，标签已删，部分说明仍待补双语）。
+- 测试：gretry、grx、gconfig、gresolver、gcrypt、gsd、glog、gsql（extra/builder）、gcache（全部）、gcompress（全部）。
+- ghttp 小文件（每文件 1-4 条注释）：codec*/cookie/logger/params_test/render/schema/output/slog/upload/util/vfs/writer/feature_coverage/openapi_compiler 等。
 
 ## 待办（按批次）
 
-- [ ] gcache/lru_test.go、gcache/lfu_test.go：说明性注释双语化
-- [ ] gcompress/*_test.go：边界/说明注释双语化
-- [ ] ghttp（61 个文件）
+- [x] gcache 测试、gcompress 测试
+- [ ] ghttp 大文件（builder_core/builder_go127/client/middleware/server/config/input/params/route_*/openapi_compiler/sse/websocket 等）
 - [ ] gnet（26 个文件）
 - [ ] README 双语化（当前为中文为主）
 

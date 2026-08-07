@@ -150,7 +150,8 @@ func (w *responseWriteState) Push(target string, options *http.PushOptions) erro
 	return http.ErrNotSupported
 }
 
-// ResponseWriter wraps http.ResponseWriter with additional convenience methods.
+// ResponseWriter 包装 http.ResponseWriter 并提供便捷方法。
+// ResponseWriter wraps http.ResponseWriter with convenience methods.
 type ResponseWriter struct {
 	http.ResponseWriter
 	statusCode int
@@ -198,7 +199,8 @@ func (w *ResponseWriter) WriteString(s string) (int, error) {
 	return w.Write([]byte(s))
 }
 
-// Unwrap returns the underlying response writer for http.ResponseController.
+// Unwrap 返回底层 writer 供 http.ResponseController 使用。
+// Unwrap returns the underlying writer for http.ResponseController.
 func (w *ResponseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }

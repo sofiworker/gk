@@ -37,7 +37,7 @@ func TestTarGzUtil(t *testing.T) {
 		t.Errorf("expected content1, got %s", c1)
 	}
 
-	// Boundary: not a gzip
+	// 边界：非 gzip 数据；Boundary: not gzip data.
 	badFile := filepath.Join(tmpDir, "bad.tar.gz")
 	_ = os.WriteFile(badFile, []byte("not gzip"), 0644)
 	if err := tg.Decompress(badFile, outDir); err == nil {

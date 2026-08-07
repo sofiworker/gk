@@ -5,6 +5,7 @@ import (
 	"io"
 )
 
+// XMLCodec 使用标准库 encoding/xml。
 // XMLCodec uses encoding/xml (standard library).
 type XMLCodec struct{}
 
