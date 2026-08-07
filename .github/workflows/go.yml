@@ -98,6 +98,9 @@ jobs:
           version: v1.64.8
           args: run ./...
 
+      - name: Dependency policy
+        run: bash scripts/check-deps.sh
+
   race:
     name: race detector
     runs-on: ubuntu-latest
