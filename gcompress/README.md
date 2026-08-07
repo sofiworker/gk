@@ -1,6 +1,6 @@
 # gcompress
 
-Compression utilities for Gzip, Zip, Tar, and Tgz.
+Compression utilities for Gzip, Zlib, Flate, Zip, Tar, and Tgz.
 
 ## Usage
 

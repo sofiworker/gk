@@ -1,6 +1,7 @@
 # gcrypt
 
-Cryptographic utilities for AES, DES, RSA, and Hashing.
+Cryptographic utilities for AES (CBC/GCM), DES/3DES, RSA (encrypt/sign/OAEP),
+Ed25519 (sign/verify), hashing, HMAC, and password hashing.
 
 ## Usage
 
