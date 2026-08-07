@@ -6,26 +6,29 @@ import (
 	"strconv"
 )
 
-// Params is a per-request view of path, query, header, cookie, and client IP
-// inputs. It reads from the underlying request lazily: query values, cookies,
-// and the client IP are parsed on first access and cached, headers are read
-// through directly. Construction is allocation-light regardless of how many
-// inputs the handler actually reads.
+// Params 是 path/query/header/cookie/client IP 的按请求视图。
+// Params is a per-request view of path, query, header, cookie and client IP.
+// 惰性读取底层请求：query/cookie/client IP 首次访问时解析并缓存。
+// it reads lazily: query, cookies and client IP parse on first access.
+// header 直接透读；无论 handler 读取多少输入，构造都近乎零分配。
+// headers read through; construction is allocation-light regardless of usage.
 //
-// A Params view is valid for the lifetime of the handler invocation and must
-// be used from a single goroutine. To retain the values beyond the handler
-// return or share them across goroutines, call Detach first to obtain an
-// immutable snapshot that no longer references the request.
+// Params 视图仅在 handler 调用期间有效，且必须单 goroutine 使用。
+// a Params view is valid for the handler lifetime and single-goroutine only.
+// 需要在 handler 返回后保留或跨 goroutine 共享时，先调用 Detach。
+// call Detach to retain values beyond the handler or share across goroutines.
 //
-// The zero value is an empty, read-safe Params.
+// 零值是空的、只读安全的 Params。
+// the zero value is an empty, read-safe Params.
 type Params struct {
 	path  pathParamList
 	state *paramsState
 }
 
-// paramsState carries the request reference and the lazily materialized
-// caches shared by all copies of one Params view. A detached state owns deep
-// copies of every input and holds no request.
+// paramsState 持有请求引用与惰性缓存，供同一 Params 视图的副本共享。
+// paramsState carries the request ref and lazily built caches.
+// Detach 后的状态持有所有输入的深拷贝，不再引用请求。
+// a detached state owns deep copies and holds no request.
 type paramsState struct {
 	req      *http.Request
 	header   http.Header
@@ -39,9 +42,10 @@ type paramsState struct {
 	clientIPSet   bool
 }
 
-// newParams builds an immutable snapshot from explicit values (detached
-// semantics): inputs are deep-copied and later mutation of the arguments does
-// not affect the returned Params.
+// newParams 从显式值构建不可变快照（Detach 语义）。
+// newParams builds an immutable snapshot from explicit values.
+// 输入深拷贝，后续修改参数不影响返回的 Params。
+// inputs are deep-copied; later mutation does not affect the result.
 func newParams(path map[string]string, query url.Values, header http.Header, cookies []*http.Cookie, clientIP string) Params {
 	var pathParams pathParamList
 	for key, value := range path {
@@ -115,8 +119,10 @@ func cloneCookies(src []*http.Cookie) []*http.Cookie {
 	return dst
 }
 
-// queryValues parses the request query on first access and caches the result
-// in the shared state, so repeated reads pay the parse only once.
+// queryValues 首次访问时解析请求 query 并缓存。
+// queryValues parses the query on first access and caches it.
+// 重复读取只付一次解析成本。
+// repeated reads parse only once.
 func (p Params) queryValues() url.Values {
 	s := p.state
 	if s == nil {
@@ -131,8 +137,8 @@ func (p Params) queryValues() url.Values {
 	return s.query
 }
 
-// cookieList parses the request cookies on first access and caches the result
-// in the shared state.
+// cookieList 首次访问时解析请求 cookie 并缓存。
+// cookieList parses cookies on first access and caches them.
 func (p Params) cookieList() []*http.Cookie {
 	s := p.state
 	if s == nil {
@@ -147,10 +153,12 @@ func (p Params) cookieList() []*http.Cookie {
 	return s.cookies
 }
 
-// Detach returns an immutable snapshot of the params that no longer
-// references the underlying request. The snapshot is safe to retain after the
-// handler returns and to share across goroutines. The cost is the deep copy
-// that lazy views avoid, paid only by callers that need it.
+// Detach 返回不再引用底层请求的不可变快照。
+// Detach returns an immutable snapshot that no longer references the request.
+// 快照可在 handler 返回后保留并跨 goroutine 共享。
+// the snapshot is safe to retain and share across goroutines.
+// 代价是惰性视图避免的深拷贝，仅由需要它的调用方支付。
+// the cost is the deep copy lazy views avoid.
 func (p Params) Detach() Params {
 	s := p.state
 	if s == nil {
@@ -170,12 +178,14 @@ func (p Params) Detach() Params {
 	}
 }
 
+// Path 返回路径参数值。
 // Path returns a path parameter value.
 func (p Params) Path(key string) string {
 	return p.path.Get(key)
 }
 
-// DefaultPath returns a path parameter value or defaultValue when it is empty.
+// DefaultPath 返回路径参数值，为空时返回 defaultValue。
+// DefaultPath returns the value or defaultValue when empty.
 func (p Params) DefaultPath(key, defaultValue string) string {
 	value := p.Path(key)
 	if value == "" {
@@ -184,12 +194,14 @@ func (p Params) DefaultPath(key, defaultValue string) string {
 	return value
 }
 
-// PathInt returns a path parameter parsed as int.
+// PathInt 将路径参数解析为 int。
+// PathInt parses a path parameter as int.
 func (p Params) PathInt(key string) (int, error) {
 	return strconv.Atoi(p.Path(key))
 }
 
-// PathIntDefault returns a path parameter parsed as int or defaultValue when it is empty or invalid.
+// PathIntDefault 将路径参数解析为 int，为空或非法时返回 defaultValue。
+// PathIntDefault parses as int or returns defaultValue when empty/invalid.
 func (p Params) PathIntDefault(key string, defaultValue int) int {
 	value := p.Path(key)
 	if value == "" {
@@ -202,12 +214,14 @@ func (p Params) PathIntDefault(key string, defaultValue int) int {
 	return n
 }
 
-// PathBool returns a path parameter parsed as bool.
+// PathBool 将路径参数解析为 bool。
+// PathBool parses a path parameter as bool.
 func (p Params) PathBool(key string) (bool, error) {
 	return strconv.ParseBool(p.Path(key))
 }
 
-// PathBoolDefault returns a path parameter parsed as bool or defaultValue when it is empty or invalid.
+// PathBoolDefault 将路径参数解析为 bool，为空或非法时返回 defaultValue。
+// PathBoolDefault parses as bool or returns defaultValue when empty/invalid.
 func (p Params) PathBoolDefault(key string, defaultValue bool) bool {
 	value := p.Path(key)
 	if value == "" {
@@ -220,6 +234,7 @@ func (p Params) PathBoolDefault(key string, defaultValue bool) bool {
 	return b
 }
 
+// Query 返回第一个 query 参数值。
 // Query returns the first query parameter value.
 func (p Params) Query(key string) string {
 	values := p.queryValues()
@@ -229,7 +244,8 @@ func (p Params) Query(key string) string {
 	return values.Get(key)
 }
 
-// DefaultQuery returns the first query parameter value or defaultValue when it is empty.
+// DefaultQuery 返回第一个 query 参数值，为空时返回 defaultValue。
+// DefaultQuery returns the first value or defaultValue when empty.
 func (p Params) DefaultQuery(key, defaultValue string) string {
 	value := p.Query(key)
 	if value == "" {
@@ -238,12 +254,14 @@ func (p Params) DefaultQuery(key, defaultValue string) string {
 	return value
 }
 
-// QueryInt returns the first query parameter parsed as int.
+// QueryInt 将第一个 query 参数解析为 int。
+// QueryInt parses the first query parameter as int.
 func (p Params) QueryInt(key string) (int, error) {
 	return strconv.Atoi(p.Query(key))
 }
 
-// QueryIntDefault returns the first query parameter parsed as int or defaultValue when it is empty or invalid.
+// QueryIntDefault 将第一个 query 参数解析为 int，为空或非法时返回 defaultValue。
+// QueryIntDefault parses as int or returns defaultValue when empty/invalid.
 func (p Params) QueryIntDefault(key string, defaultValue int) int {
 	value := p.Query(key)
 	if value == "" {
@@ -256,12 +274,14 @@ func (p Params) QueryIntDefault(key string, defaultValue int) int {
 	return n
 }
 
-// QueryBool returns the first query parameter parsed as bool.
+// QueryBool 将第一个 query 参数解析为 bool。
+// QueryBool parses the first query parameter as bool.
 func (p Params) QueryBool(key string) (bool, error) {
 	return strconv.ParseBool(p.Query(key))
 }
 
-// QueryBoolDefault returns the first query parameter parsed as bool or defaultValue when it is empty or invalid.
+// QueryBoolDefault 将第一个 query 参数解析为 bool，为空或非法时返回 defaultValue。
+// QueryBoolDefault parses as bool or returns defaultValue when empty/invalid.
 func (p Params) QueryBoolDefault(key string, defaultValue bool) bool {
 	value := p.Query(key)
 	if value == "" {
@@ -274,12 +294,14 @@ func (p Params) QueryBoolDefault(key string, defaultValue bool) bool {
 	return b
 }
 
+// QueryList 返回全部 query 参数值。
 // QueryList returns all query parameter values.
 func (p Params) QueryList(key string) []string {
 	values := p.queryValues()[key]
 	return append([]string(nil), values...)
 }
 
+// Header 返回第一个 header 值。
 // Header returns the first header value.
 func (p Params) Header(key string) string {
 	s := p.state
@@ -289,7 +311,8 @@ func (p Params) Header(key string) string {
 	return s.header.Get(key)
 }
 
-// DefaultHeader returns the first header value or defaultValue when it is empty.
+// DefaultHeader 返回第一个 header 值，为空时返回 defaultValue。
+// DefaultHeader returns the first value or defaultValue when empty.
 func (p Params) DefaultHeader(key, defaultValue string) string {
 	value := p.Header(key)
 	if value == "" {
@@ -298,6 +321,7 @@ func (p Params) DefaultHeader(key, defaultValue string) string {
 	return value
 }
 
+// HeaderList 返回全部 header 值。
 // HeaderList returns all header values.
 func (p Params) HeaderList(key string) []string {
 	s := p.state
@@ -308,6 +332,7 @@ func (p Params) HeaderList(key string) []string {
 	return append([]string(nil), values...)
 }
 
+// Cookie 返回请求 cookie 值。
 // Cookie returns a request cookie value.
 func (p Params) Cookie(key string) string {
 	for _, cookie := range p.cookieList() {
@@ -318,7 +343,8 @@ func (p Params) Cookie(key string) string {
 	return ""
 }
 
-// DefaultCookie returns a request cookie value or defaultValue when it is empty.
+// DefaultCookie 返回请求 cookie 值，为空时返回 defaultValue。
+// DefaultCookie returns the cookie value or defaultValue when empty.
 func (p Params) DefaultCookie(key, defaultValue string) string {
 	value := p.Cookie(key)
 	if value == "" {
@@ -327,13 +353,14 @@ func (p Params) DefaultCookie(key, defaultValue string) string {
 	return value
 }
 
-// Cookies returns request cookies. The returned slice is a copy and may be
-// mutated freely by the caller.
+// Cookies 返回请求 cookies；返回的切片是副本，可自由修改。
+// Cookies returns a copy of request cookies; the slice may be mutated freely.
 func (p Params) Cookies() []*http.Cookie {
 	return cloneCookies(p.cookieList())
 }
 
-// ClientIP returns the client IP, resolved on first access and cached.
+// ClientIP 返回客户端 IP，首次访问时解析并缓存。
+// ClientIP returns the client IP, resolved and cached on first access.
 func (p Params) ClientIP() string {
 	s := p.state
 	if s == nil {

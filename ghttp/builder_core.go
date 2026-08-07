@@ -33,11 +33,12 @@ var (
 	}
 )
 
-// compiledInput is the registration-time compiled constructor for a route's
-// input type: newTarget allocates the parse/validate target and finish turns
-// the filled target into the handler argument. Compiling this once per route
-// removes the per-request reflect.New plus the reflect.Value.Interface()
-// whole-struct copy that the typed path used to pay.
+// compiledInput 是路由输入类型在注册期编译的构造器。
+// compiledInput is the registration-time compiled input constructor.
+// newTarget 分配解析/校验目标，finish 将填充后的目标转为 handler 参数。
+// newTarget allocates the target; finish turns it into the handler argument.
+// 每个路由只编译一次，消除了类型化路径逐请求的 reflect.New 与整结构拷贝。
+// compiling once removes per-request reflect.New and whole-struct copies.
 type compiledInput[Req any] struct {
 	directParams bool
 	newTarget    func() any
@@ -80,10 +81,10 @@ type responseHeader struct {
 	value string
 }
 
-// routeBuilderCore holds the registration state shared by the pre-1.27
-// generic RouteBuilder and the Go 1.27 generic-method RouteBuilder. The two
-// public builder types only differ in where the Req/Resp type parameters
-// live; everything else lives here so both builds share one implementation.
+// routeBuilderCore 保存 pre-1.27 与 Go 1.27 两套 builder 共享的注册状态。
+// routeBuilderCore holds state shared by both builder versions.
+// 两个公开 builder 只在 Req/Resp 类型参数位置不同。
+// the two public builders differ only in where type parameters live.
 type routeBuilderCore struct {
 	target          routeTarget
 	path            string
@@ -95,8 +96,8 @@ type routeBuilderCore struct {
 	maxBodyBytesSet bool
 	produces        []string
 	middlewares     []Middleware
-	codecs          []responseCodec // resolved from produces at registration
-	validator       any             // routeValidateFunc[Req] after coercion
+	codecs          []responseCodec // 注册时从 produces 解析；resolved from produces at registration.
+	validator       any             // 收敛后的 routeValidateFunc[Req]；after coercion.
 	validationError error
 	setupErr        error
 	skipValidation  bool
@@ -186,9 +187,10 @@ func (c *routeBuilderCore) use(mws ...Middleware) {
 	c.middlewares = append(c.middlewares, mws...)
 }
 
-// group branches into a new route group rooted at the builder target, in the
-// spirit of gin's r.Group. It must be called before a method/path is set; any
-// route-level options already configured on the builder are not transferred.
+// group 以 builder target 为根创建新路由组（gin 的 r.Group 语义）。
+// group branches into a new route group rooted at the builder target.
+// 必须在设置 method/path 之前调用；已设置的路由级选项不转移。
+// it must be called before a method/path is set; route options are not transferred.
 func (c *routeBuilderCore) group(prefix string, mws ...Middleware) *Group {
 	c.ensureMethodUnset()
 	switch target := c.target.(type) {
@@ -304,9 +306,10 @@ func (c *routeBuilderCore) directParamsGlobalValidator() Validator {
 	return server.validator
 }
 
-// registerHandler builds routeDefinitions for every selected method and hands
-// them to the server registry. reqType/respType feed OpenAPI inference; nil
-// means the terminal does not expose a typed request/response schema.
+// registerHandler 为每个选中方法构建 routeDefinition 并交给注册中心。
+// registerHandler builds routeDefinitions and hands them to the registry.
+// reqType/respType 供 OpenAPI 推断；nil 表示该终结器不暴露类型化 schema。
+// reqType/respType feed OpenAPI; nil means no typed schema.
 func (c *routeBuilderCore) registerHandler(handler http.Handler, needsExtractor bool, terminal routeTerminalKind, responseStatus int, reqType, respType reflect.Type) {
 	if err := c.validateMethods(); err != nil {
 		c.panicSetupError(err)
@@ -386,10 +389,10 @@ func (c *routeBuilderCore) writeError(w http.ResponseWriter, r *http.Request, de
 	writeRouteError(w, r, c.target.owner(), c.errorWriter, c.produces, defaultCode, err)
 }
 
-// writeRouteError dispatches an error through the route-level error writer,
-// then the server writer, then the built-in codec writer. It is shared by the
-// typed pipeline and the path extraction terminal so route writers apply to
-// every error on the request path.
+// writeRouteError 依次分发到路由级错误 writer、服务器 writer 与内置 writer。
+// writeRouteError dispatches through route, server and built-in writers.
+// 类型化管线与路径提取终结器共用，确保路由 writer 覆盖请求路径上的所有错误。
+// shared by the typed pipeline and extraction terminal.
 func writeRouteError(w http.ResponseWriter, r *http.Request, owner *Server, writer ErrorWriter, produces []string, defaultCode int, err error) {
 	if owner == nil {
 		writeErrorWithCodec(w, r, nil, defaultCode, err, produces, nil)
@@ -444,10 +447,10 @@ func (c *routeBuilderCore) writeTypedResponse(w http.ResponseWriter, r *http.Req
 	_ = codec.Marshal(w, resp)
 }
 
-// coerceRouteValidator normalizes the untyped validator stored on the core
-// into the route's concrete Req type. The pre-1.27 builder knows Req at
-// Validate() time; the Go 1.27 builder learns it at the terminal method and
-// coerces here. Unsupported shapes surface as ErrRouteValidatorUnsupported.
+// coerceRouteValidator 将 core 上的未类型化 validator 收敛为具体 Req 类型。
+// coerceRouteValidator normalizes the untyped validator to the route's Req.
+// pre-1.27 在 Validate() 时已知 Req；1.27 在终结方法处收敛。
+// pre-1.27 knows Req at Validate(); 1.27 coerces at the terminal.
 func coerceRouteValidator[Req any](stored any) (routeValidateFunc[Req], error) {
 	switch validator := stored.(type) {
 	case nil:
@@ -471,8 +474,8 @@ func coerceRouteValidator[Req any](stored any) (routeValidateFunc[Req], error) {
 	}
 }
 
-// registerTypedHandler registers the typed in+out terminal shared by both
-// builder versions.
+// registerTypedHandler 注册两套 builder 共用的“有输入有输出”终结器。
+// registerTypedHandler registers the typed in+out terminal shared by both builders.
 func registerTypedHandler[Req, Resp any](core *routeBuilderCore, input compiledInput[Req], handler HandlerFunc[Req, Resp]) {
 	core.beginTerminal()
 	if handler == nil {
@@ -510,9 +513,10 @@ func registerTypedHandler[Req, Resp any](core *routeBuilderCore, input compiledI
 	core.registerHandler(h, true, routeTerminalTyped, core.responseStatus, reflect.TypeFor[Req](), reflect.TypeFor[Resp]())
 }
 
-// registerNoInputHandler registers a handler that takes no request input.
-// It never parses a body and never validates request content type; request
-// params remain available to middleware through MatchedParams.
+// registerNoInputHandler 注册无请求输入的 handler。
+// registerNoInputHandler registers a handler with no request input.
+// 不解析 body、不校验 Content-Type；参数仍可通过 MatchedParams 获取。
+// it never parses a body or validates Content-Type; params stay via MatchedParams.
 func registerNoInputHandler[Resp any](core *routeBuilderCore, handler NoInputHandler[Resp]) {
 	core.beginTerminal()
 	if handler == nil {
@@ -529,8 +533,10 @@ func registerNoInputHandler[Resp any](core *routeBuilderCore, handler NoInputHan
 	core.registerHandler(h, true, routeTerminalTyped, core.responseStatus, reflect.TypeOf(struct{}{}), reflect.TypeFor[Resp]())
 }
 
+// registerNoOutputHandler 注册只返回 error 的 handler。
 // registerNoOutputHandler registers a handler that returns only an error.
-// Success is 204 by default and can be overridden with Status.
+// 成功默认 204，可用 Status 覆盖。
+// success defaults to 204 and can be overridden with Status.
 func registerNoOutputHandler[Req any](core *routeBuilderCore, input compiledInput[Req], handler NoOutputHandler[Req]) {
 	core.beginTerminal()
 	if handler == nil {

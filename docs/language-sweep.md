@@ -10,11 +10,12 @@
 - ghttp 中等文件：error/group/error_writer/gerr/input/authz/sse/validate/handler。
 - ghttp 大文件：codec_manager/doc/websocket。
 - ghttp 大文件：server/middleware。
+- ghttp 大文件：builder_core/config/params。
 
 ## 待办（按批次）
 
 - [x] gcache 测试、gcompress 测试
-- [ ] ghttp 大文件（builder_core/builder_go127/builder_pre127/client/config/params/route_* 等）
+- [ ] ghttp 大文件（builder_go127/builder_pre127/client/route_* 等）
 - [ ] gnet（26 个文件）
 - [ ] README 双语化（当前为中文为主）
 
