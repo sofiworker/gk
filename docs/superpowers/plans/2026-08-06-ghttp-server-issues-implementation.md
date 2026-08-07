@@ -1981,7 +1981,7 @@ git commit -m "perf(ghttp): reduce full-chain allocations with single response w
 **Files:**
 - Add: `ghttp/builder_core.go`（`routeBuilderCore` + 全部共享注册/解析/错误/协商逻辑 + 泛型注册函数）
 - Rewrite: `ghttp/builder.go` → `ghttp/builder_pre127.go`（`//go:build !go1.27`，泛型 `RouteBuilder[Req,Resp]` 薄壳）
-- Add: `ghttp/builder_go127.go`（`//go:build go1.27`，非泛型 `RouteBuilder` + 泛型终结方法 + `Server/Group.Route()` + `Server/Group.Get/Post/...` 快捷注册）
+- Add: `ghttp/builder_go127.go`（`//go:build go1.27`，非泛型 `RouteBuilder` + 泛型终结方法 + `Server/Group.GET/POST/...` 直接链式起点，无 `Route()` 方法、无小写快捷注册）
 
 **决策：**
 - 采用 `//go:build go1.27` / `//go:build !go1.27` 版本约束自动选择，与 Go 标准库共存方式一致；使用者无需传 build tag。
@@ -1993,7 +1993,7 @@ git commit -m "perf(ghttp): reduce full-chain allocations with single response w
 - `ToNoInput(handler func(context.Context) (Resp, error))`：不解析 body、不校验 Content-Type，响应走统一类型化管线。
 - `ToNoOutput(handler func(context.Context, Req) error)`：成功默认 204（`.Status(code)` 可覆盖），错误走统一管线，OpenAPI 响应无 content。
 - 两套工具链共享测试：`ghttp/builder_terminals_test.go`。
-- 1.27 专用测试：`ghttp/builder_go127_test.go`（链式推断、快捷注册、Group、legacy 拼写兼容）。
+- 1.27 专用测试：`ghttp/builder_go127_test.go`（链式推断、动词链、Group、legacy 拼写兼容）。
 
 ### Task 4.3: 双工具链验证
 
@@ -2009,5 +2009,5 @@ git commit -m "perf(ghttp): reduce full-chain allocations with single response w
 4. 类型化状态码：**接口（`StatusCoder`/`ResponseHeaderWriter`）+ builder 固定值（`.Status()`/`.ResponseHeader()`）**，不引入 tag 反射，按 Task 3.1 实施。
 5. WebSocket 默认策略：**同源放行、缺 Origin 放行、跨源 403**，用户未提出异议，按 Task 5.2 实施。
 6. 无输入/无输出：**显式终结器 `ToNoInput`/`ToNoOutput`**，禁止 `struct{}` 魔法与零值自动 204（2026-08-07 确认，方案 A）。
-7. 双版本共存：**`//go:build go1.27` 版本约束自动选择，不要求使用者显式传 tag**；1.27 版 Server/Group 本身即根组，`Server.GET(path).To[Req,Resp](handler)` 直接注册，**Server/Group 上不提供 `Route()` 方法**，`ANY`/`CUSTOM` 走 `s.ANY(path)`/`s.CUSTOM(method,path)` 直接链式起点，另有小写 `Get/Post/...` 立即注册快捷方式；包级 `Route[Req,Resp]` 仅保留为 deprecated 兼容空壳（2026-08-07 确认，2026-08-07 修订：移除 `Route()` 方法，保留包级空壳）。
+7. 双版本共存：**`//go:build go1.27` 版本约束自动选择，不要求使用者显式传 tag**；1.27 版 Server/Group 本身即根组，`Server.GET(path).Doc(...).To[Req,Resp](handler)` 直接注册，**Server/Group 上不提供 `Route()` 方法，也没有小写快捷注册**，`ANY`/`CUSTOM` 走 `s.ANY(path)`/`s.CUSTOM(method,path)` 直接链式起点；包级 `Route[Req,Resp]` 仅保留为 deprecated 兼容空壳（2026-08-07 确认，2026-08-07 修订：移除 `Route()` 方法与全部小写快捷注册，保留包级空壳）。
 8. builder 级 Group：**两个版本的 `RouteBuilder` 均提供 `.Group(prefix, mws...)`**，gin 的 `r.Group` 语义；须在设置 method/path 之前调用，已设置的路由级选项不转移（2026-08-07 确认）。

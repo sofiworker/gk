@@ -153,7 +153,7 @@ _, err = io.Copy(dst, streamResp.RawBody())
 模块内同时保留两套 API，编译时按工具链版本**自动选择**（类似 Go 标准库的 `//go:build` 版本约束），使用者不需要传任何 build tag：
 
 - Go < 1.27：`ghttp.Route[Req, Resp](target).GET(path).To(handler)`，类型参数在包级函数上（Go 1.27 前方法不支持类型参数）；
-- Go ≥ 1.27：`server.GET(path).Doc(...).To[Req, Resp](handler)`，类型参数在终结方法上并由 handler 自动推断；Server/Group 本身即“根组”（gin 风格），路由动词直接挂在上面，**没有 `.Route()` 方法**；`ANY`/`CUSTOM` 也有直接链式起点（`s.ANY(path)` / `s.CUSTOM(method, path)`）；小写 `server.Get/Post/...` 为立即注册的快捷方式；包级 `Route[Req,Resp](target)` 仅保留为 deprecated 兼容 shim（空壳，直接返回同一个根组 builder），供 1.27 前代码无痛迁移。
+- Go ≥ 1.27：`server.GET(path).Doc(...).To[Req, Resp](handler)`，类型参数在终结方法上并由 handler 自动推断；Server/Group 本身即“根组”（gin 风格），路由动词直接挂在上面，**没有 `.Route()` 方法**，也没有小写快捷注册，注册统一走 `动词(path).Doc(...).To(handler)`；`ANY`/`CUSTOM` 同样是直接链式起点（`s.ANY(path)` / `s.CUSTOM(method, path)`）；包级 `Route[Req,Resp](target)` 仅保留为 deprecated 兼容 shim（空壳，直接返回同一个根组 builder），供 1.27 前代码无痛迁移。
 
 ```go
 // Go 1.27+ 写法
@@ -162,17 +162,12 @@ s.GET("/hello/{name}").Doc(ghttp.Summary("问候")).
     return &GreetOutput{Message: "Hello, " + req.Path("name")}, nil
 })
 
-// 快捷注册
-s.Get("/users/{id}", func(ctx context.Context, req *GetUserReq) (*GetUserResp, error) {
-    return &GetUserResp{ID: req.ID}, nil
-})
-
 // 分组与 Server 一致
 api := s.Group("/api")
 api.GET("/users/{id}").To(func(ctx context.Context, req *GetUserReq) (*GetUserResp, error) {
     return &GetUserResp{ID: req.ID}, nil
 })
-api.Post("/users", func(ctx context.Context, req *CreateUserReq) (*CreateUserResp, error) {
+api.POST("/users").Status(http.StatusCreated).To(func(ctx context.Context, req *CreateUserReq) (*CreateUserResp, error) {
     return &CreateUserResp{ID: "u-1"}, nil
 })
 
