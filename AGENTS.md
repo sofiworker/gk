@@ -5,6 +5,7 @@ Always respond in Chinese-simplified
 - 整个仓库处于开发中（pre-v1.0.0），**禁止直接用于生产开发**；详情见根目录 `DEVELOPMENT.md`。
 - 所有改动默认不承诺向后兼容；破坏性变更必须在提交说明与 README 中显式标注。
 - 未经维护者明确授权，不得向远程推送、打 tag、发布或部署。
+- 模块依赖遵循三层分层原则：基础契约层（gerr/gretry/grx 等）可被上层引用；能力层（ghttp/glog/gsd 等）之间禁止互相 import；拼接走接口 + 适配层。详见 `docs/superpowers/specs/2026-08-07-gk-module-dependency-policy.md`。
 
 # Repository Guidelines
 

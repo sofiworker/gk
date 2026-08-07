@@ -11,6 +11,7 @@
 - ghttp：SSE `WriteJSONWithID`（Last-Event-ID 续传）。
 - ghttp：client 正式实现——重试、before/after 钩子、错误模型绑定、输出文件、BasicAuth/认证 scheme、查询参数/字符串、按请求超时、client cookies、Response 访问器、调试日志。
 - 仓库：golangci-lint 配置与全仓 lint 清零；CI 增加 Go 1.27 预览、race、coverage、gofmt、lint 门禁。
+- 仓库：模块依赖三层分层原则设计文档（基础契约层 / 能力层 / 适配层）。
 
 ### Changed
 
