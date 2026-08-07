@@ -1,10 +1,10 @@
 # grx
 
-[English](README.en.md) | 中文
+English | [中文](README.md)
 
-反射工具与扩展。
+Reflection utilities and extensions.
 
-## 用法
+## Usage
 
 ```go
 import "github.com/sofiworker/gk/grx"

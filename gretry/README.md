@@ -1,33 +1,34 @@
-# gretry - 增强重试包 / Enhanced Retry Package
+# gretry - 增强重试包
+
+[English](README.en.md) | 中文
 
 `gretry` 为 Go 应用提供完整且灵活的重试机制：多种重试策略、可配置退避算法、抖动选项与回调钩子。
-`gretry` provides a comprehensive and flexible retry mechanism: multiple strategies, configurable backoff, jitter options and callback hooks.
 
-## 特性 / Features
+## 特性
 
-- 多种重试策略（指数、线性、固定、随机）；multiple strategies (exponential, linear, fixed, random)
-- 可配置退避乘数；configurable backoff multiplier
-- 抖动支持（full、equal、decorrelated）；jitter support
-- 感知 context 取消；context-aware cancellation
-- 可自定义重试条件；customizable retry conditions
-- 回调钩子（重试前、成功后、最终失败）；callback hooks
-- 详细的结果统计与上报；detailed result metrics
-- 超时支持；timeout support
+- 多种重试策略（指数、线性、固定、随机）
+- 可配置退避乘数
+- 抖动支持（full、equal、decorrelated）
+- 感知 context 取消
+- 可自定义重试条件
+- 回调钩子（重试前、成功后、最终失败）
+- 详细的结果统计与上报
+- 超时支持
 
-## 安装 / Installation
+## 安装
 
 ```bash
 go get github.com/sofiworker/gk/gretry
 ```
 
-## 用法 / Usage
+## 用法
 
-### 基础用法 / Basic Usage
+### 基础用法
 
 ```go
 result := gretry.DoWithDefault(context.Background(), func() error {
-	// 你的操作 / your operation
-	return nil // 或返回 error 触发重试 / or return an error to retry
+	// 你的操作
+	return nil // 或返回 error 触发重试
 })
 
 if result.Success {
@@ -37,7 +38,7 @@ if result.Success {
 }
 ```
 
-### 自定义配置 / Custom Configuration
+### 自定义配置
 
 ```go
 options := gretry.NewErrorHandlingOptions(
@@ -55,7 +56,7 @@ options := gretry.NewErrorHandlingOptions(
 result := gretry.Do(context.Background(), func() error { return nil }, options)
 ```
 
-### context 取消 / Context Cancellation
+### context 取消
 
 ```go
 ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -67,18 +68,17 @@ result := gretry.Do(ctx, func() error {
 }, gretry.DefaultErrorHandlingOptions)
 ```
 
-## 配置项 / Configuration Options
+## 配置项
 
-| 配置 / Option | 说明 / Description | 默认值 / Default |
+| 配置 | 说明 | 默认值 |
 |------|------|--------|
-| `MaxRetries` | 最大重试次数 / max retries | 3 |
-| `RetryDelay` | 初始延迟 / initial delay | 1 秒 |
-| `MaxRetryDelay` | 最大延迟 / max delay | 30 秒 |
-| `RetryStrategy` | 延迟策略 / strategy | 指数 / exponential |
-| `BackoffMultiplier` | 指数退避乘数 / multiplier | 2.0 |
-| `JitterType` | 抖动类型 / jitter type | 无 / none |
-| `JitterFactor` | 抖动因子 / jitter factor | 0.0 |
-| `Timeout` | 整体超时 / overall timeout | 10 秒 |
+| `MaxRetries` | 最大重试次数 | 3 |
+| `RetryDelay` | 初始延迟 | 1 秒 |
+| `MaxRetryDelay` | 最大延迟 | 30 秒 |
+| `RetryStrategy` | 延迟策略 | 指数 |
+| `BackoffMultiplier` | 指数退避乘数 | 2.0 |
+| `JitterType` | 抖动类型 | 无 |
+| `JitterFactor` | 抖动因子 | 0.0 |
+| `Timeout` | 整体超时 | 10 秒 |
 
 更多用法见 `gretry` 包测试（`retry_test.go`）。
-More usage examples are in `gretry`'s tests (`retry_test.go`).

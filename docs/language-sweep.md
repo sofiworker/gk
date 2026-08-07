@@ -24,6 +24,6 @@
 - [ ] ghttp 大文件（route_* 等，多数无注释，核对后关闭）
 - [x] gnet 核对完成
 - [x] README 双语化：全部完成
-- [ ] README 按语言拆分：将当前混排版拆为 `README.md`（中文）与 `README.en.md`（英文）并互相链接（根/小包先行，gcache/ghttp 最后）
+- [x] README 按语言拆分：全部 15 个 README 拆为 `README.md`（中文）与 `README.en.md`（英文）并互相链接
 
 处理原则：优先删除复述型/标签型注释；有信息量的注释转双语；不修改功能代码。

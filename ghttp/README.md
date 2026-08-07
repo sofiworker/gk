@@ -1,24 +1,19 @@
 # ghttp
 
+[English](README.en.md) | 中文
+
 通用 Go HTTP 框架 —— 基于 Go 1.24+ 泛型和标准库 `net/http`，整合服务端与客户端，内建 OpenAPI 3.1 文档生成、内容协商、模板渲染、WebSocket/SSE 等能力。
-A general-purpose Go HTTP framework built on Go 1.24+ generics and the standard library `net/http`, with server/client support, OpenAPI 3.1 generation, content negotiation, template rendering, WebSocket/SSE and more.
 
 ---
 
-## 特性 / Features
+## 特性
 
 - **泛型优先 API** — `Route[Req,Resp]` 链式构建器（Go 1.27 起自动切换到 `Server.Route().To[Req,Resp]` 泛型方法形态），编译期类型安全
-- **Generic-first API** — typed route chains with compile-time safety
 - **显式输入读取** — `Params` 读取 path/query/header/cookie，`Body` 字段解析请求体
-- **Explicit input** — `Params` for path/query/header/cookie and a `Body` field for request bodies
 - **内容协商** — `Accept` 驱动响应 Codec，`Consumes` 约束请求 `Content-Type`
-- **Content negotiation** — `Accept`-driven response codecs and `Consumes`-constrained request types
 - **灵活输出** — 支持响应体结构体和自定义 Envelope 包装（code/msg/data 模式）
-- **Flexible output** — response structs and custom Envelope wrapping
 - **内建路由匹配** — 唯一的 method-first matcher，支持静态、参数与 catch-all 路径
-- **Built-in routing** — a single method-first matcher with static, parameter and catch-all paths
 - **OpenAPI 3.1** — 从路由元数据自动生成 JSON Schema 和 OAS 文档
-- **OpenAPI 3.1** — inferred JSON Schema and OAS documents from route metadata
 - **WebSocket / SSE** — 服务端推送和双向通信
 - **模板渲染** — 集成 Go 模板引擎，路由级 `ToHTML()`
 - **静态文件服务** — 路由级 `ToStatic*()`
@@ -28,7 +23,7 @@ A general-purpose Go HTTP framework built on Go 1.24+ generics and the standard 
 
 ---
 
-## 安装 / Installation
+## 安装
 
 ```bash
 go get github.com/sofiworker/gk
@@ -40,9 +35,9 @@ import "github.com/sofiworker/gk/ghttp"
 
 ---
 
-## 快速开始 / Quick Start
+## 快速开始
 
-### 服务端 / Server
+### 服务端
 
 ```go
 package main
@@ -63,50 +58,44 @@ type GreetOutput struct {
 func main() {
     s := ghttp.New(ghttp.WithProduces(ghttp.MIMEJSON))
 
-    // 链式构建器（支持 OpenAPI 元数据）；
-    // chain builder (with OpenAPI metadata).
+    // 链式构建器（支持 OpenAPI 元数据）
     ghttp.Route[GreetInput, GreetOutput](s).
-    GET("/hello/{name}").
-    Produces(ghttp.MIMEJSON, ghttp.MIMEXML).
-    Doc(ghttp.Summary("返回个性化的问候消息")).
-    To(func(ctx context.Context, req GreetInput) (GreetOutput, error) {
+        GET("/hello/{name}").
+        Produces(ghttp.MIMEJSON, ghttp.MIMEXML).
+        Doc(ghttp.Summary("返回个性化的问候消息")).
+        To(func(ctx context.Context, req GreetInput) (GreetOutput, error) {
             return GreetOutput{Message: "Hello, " + req.Path("name")}, nil
-    })
+        })
 
     s.Run(":8080")
 }
 ```
 
-### 客户端 / Client
+### 客户端
 
 ```go
 client := ghttp.NewClient()
 
-// 泛型调用；
-// typed generic call.
+// 泛型调用
 resp, err := ghttp.GET[GreetInput, GreetOutput](client, "/hello/world", nil)
 
-// 链式调用（go-resty 风格）；
-// chain call (go-resty style).
+// 链式调用（go-resty 风格）
 result, err := client.R().
     SetHeader("Authorization", "Bearer token").
     SetQueryParam("lang", "zh").
     Get("/hello/world")
 
-// 结构化请求；
-// structured request.
+// 结构化请求
 input := &GreetInput{}
 resp, err := ghttp.Do[GreetInput, GreetOutput](client, "POST", "/hello", input)
 
-// 自定义底层客户端或 Transport；
-// custom underlying client or transport.
+// 自定义底层客户端或 Transport
 client = ghttp.NewClient(
     ghttp.WithHTTPClient(&http.Client{Timeout: 10 * time.Second}),
     ghttp.WithTransport(customTransport),
 )
 
-// 流式响应由调用方关闭 RawBody；
-// streaming responses are closed by the caller via RawBody.
+// 流式响应由调用方关闭 RawBody
 streamResp, err := client.R().SetStreamResponse(true).Get("/download")
 if err != nil { return err }
 defer streamResp.RawBody().Close()
@@ -114,100 +103,82 @@ _, err = io.Copy(dst, streamResp.RawBody())
 ```
 
 客户端能力（参考 go-resty / imroc/req）：
-Client capabilities (inspired by go-resty / imroc/req):
 
 - **重试**：`client.SetRetryCount(n).SetRetryWaitTime(d).SetRetryMaxWaitTime(d).SetRetryConditions(func(*Response, error) bool)`；默认条件为传输错误或状态码 >= 500，请求级可用 `client.R().SetRetryCount(...)` 覆盖。
-- **Retry** — client/request level with default transport-error or >= 500 conditions.
 - **钩子**：`client.OnBeforeRequest(func(*Request) error)` / `client.OnAfterResponse(func(*Response) error)`，请求级同样支持 `.OnBeforeRequest(...)` / `.OnAfterResponse(...)`；before 钩子可修改请求（header/cookie/body 等）。
-- **Hooks** — before/after request lifecycle hooks at client and request level.
 - **错误模型绑定**：`client.R().SetError(&apiErr)` 自动把非 2xx 响应体绑定到目标，`resp.Error()` 取回。
-- **Error binding** — automatic non-2xx body binding via `SetError`.
 - **认证**：`SetAuthToken` / `SetBasicAuth` / `SetAuthScheme`（Basic 认证实际写入请求）。
-- **Auth** — token/basic auth actually sent on the wire.
 - **输出文件**：`client.R().SetOutput("./out.json")` 把响应体写入文件。
-- **Output** — write response bodies to files.
 - **查询参数**：`SetQueryParam(s)` / `SetQueryParamsFromValues(url.Values)` / `SetQueryString("raw=1&b=2")`。
-- **Query** — params, values and raw query strings.
 - **超时与上下文**：`client.R().SetTimeout(d)`（按请求）与 `SetContext(ctx)`。
-- **Timeout/context** — per-request timeout and context.
 - **Cookie**：`client.SetCookie(s)` / `client.R().SetCookies(...)`。
-- **Cookies** — client and request level.
 - **响应访问器**：`Time()` / `ReceivedAt()` / `Size()` / `Cookies()` / `Unmarshal(target)`（按 Content-Type 自动 JSON/XML）/ `Error()` / `Result()`。
-- **Response accessors** — Time/ReceivedAt/Size/Cookies/Unmarshal/Error/Result.
 - **调试**：`client.SetDebug(true)` + `SetLogger(...)`（或 `WithClientLogger`）输出请求摘要。
-- **Debug** — request summaries via logger.
 - Go 1.27+ 类型化方法：`client.Get[Req,Resp](ctx, path)` / `client.Post/Put/Delete[...]`（与包级泛型函数等价）。
-- **Go 1.27+ typed methods** — `client.Get/Post/Put/Delete[...]`.
 
 ---
 
-## API 概览 / API Overview
+## API 概览
 
-### 路由注册 / Route Registration
+### 路由注册
 
-| 函数 / Function | 说明 / Description |
+| 函数 | 说明 |
 |------|------|
-| `Route[Req,Resp](target)` | 链式构建器起始（`*Server` 或 `*Group`）；Go 1.27 起为 deprecated shim。<br>Chain start; deprecated shim on Go 1.27+. |
-| `.GET(path)` | 注册 GET 路由。<br>Register a GET route. |
-| `.POST(path)` | 注册 POST 路由。<br>Register a POST route. |
-| `.PUT(path)` | 注册 PUT 路由。<br>Register a PUT route. |
-| `.DELETE(path)` | 注册 DELETE 路由。<br>Register a DELETE route. |
-| `.PATCH(path)` | 注册 PATCH 路由。<br>Register a PATCH route. |
-| `.ANY(path)` | 注册所有标准 HTTP 方法，常用于测试或兜底 API。<br>Register all standard methods. |
-| `.CUSTOM(method, path)` | 注册自定义 HTTP 方法，`method` 必须是合法 token。<br>Register a custom method token. |
+| `Route[Req,Resp](target)` | 链式构建器起始，`target` 可以是 `*Server` 或 `*Group`；Go 1.27 起仅作 deprecated 兼容 shim（空壳返回同一个根组 builder），新代码直接使用 `s.GET(path)` 等动词方法 |
+| `.GET(path)` | 注册 GET 路由 |
+| `.POST(path)` | 注册 POST 路由 |
+| `.PUT(path)` | 注册 PUT 路由 |
+| `.DELETE(path)` | 注册 DELETE 路由 |
+| `.PATCH(path)` | 注册 PATCH 路由 |
+| `.ANY(path)` | 注册所有标准 HTTP 方法，常用于测试或兜底 API |
+| `.CUSTOM(method, path)` | 注册自定义 HTTP 方法，`method` 必须是合法 token |
 
-### 链式构建器方法 / Chain Builder Methods
+### 链式构建器方法
 
-| 方法 / Method | 说明 / Description |
+| 方法 | 说明 |
 |------|------|
-| `.GET(path)` | 设置 GET 方法和路由路径。<br>Set GET method and path. |
-| `.POST(path)` | 设置 POST 方法和路由路径。<br>Set POST method and path. |
-| `.PUT(path)` | 设置 PUT 方法和路由路径。<br>Set PUT method and path. |
-| `.DELETE(path)` | 设置 DELETE 方法和路由路径。<br>Set DELETE method and path. |
-| `.PATCH(path)` | 设置 PATCH 方法和路由路径。<br>Set PATCH method and path. |
-| `.ANY(path)` | 设置所有标准 HTTP 方法和路由路径。<br>Set all standard methods and path. |
-| `.CUSTOM(method, path)` | 设置自定义 HTTP 方法和路由路径。<br>Set a custom method and path. |
-| `.Doc(ghttp.Summary("..."), ghttp.Tags("..."))` | 操作描述。<br>Operation documentation. |
-| `.Consumes(contentTypes...)` | 声明可自动解析的请求 Content-Type，可在 server/group/route 上声明。<br>Declare accepted request Content-Types. |
-| `.MaxBodyBytes(n)` | 覆盖当前路由自动解析请求体的大小上限；`n <= 0` 表示不限制。<br>Override body size limit; <= 0 disables it. |
-| `.Produces(contentTypes...)` | 自动响应编码的 Content-Type，可在 server/group/route 上声明。<br>Declare response Content-Types. |
-| `.Group(prefix, mws...)` | 从 builder 分支创建子组（gin 的 `r.Group` 语义）；须在设置 method/path 之前调用。<br>Branch into a sub-group; call before setting method/path. |
+| `.GET(path)` | 设置 GET 方法和路由路径 |
+| `.POST(path)` | 设置 POST 方法和路由路径 |
+| `.PUT(path)` | 设置 PUT 方法和路由路径 |
+| `.DELETE(path)` | 设置 DELETE 方法和路由路径 |
+| `.PATCH(path)` | 设置 PATCH 方法和路由路径 |
+| `.ANY(path)` | 设置所有标准 HTTP 方法和路由路径 |
+| `.CUSTOM(method, path)` | 设置自定义 HTTP 方法和路由路径 |
+| `.Doc(ghttp.Summary("..."), ghttp.Tags("..."))` | 操作描述 |
+| `.Consumes(contentTypes...)` | 声明可自动解析的请求 Content-Type，可在 server/group/route 上声明 |
+| `.MaxBodyBytes(n)` | 覆盖当前路由自动解析请求体的大小上限；`n <= 0` 表示不限制 |
+| `.Produces(contentTypes...)` | 自动响应编码的 Content-Type，可在 server/group/route 上声明 |
+| `.Group(prefix, mws...)` | 从 builder 分支创建子组（gin 的 `r.Group` 语义）；须在设置 method/path 之前调用，已设置的路由级选项不转移 |
 
-### 终结方法 / Terminal Methods
+### 终结方法
 
-| 方法 / Method | 说明 / Description |
+| 方法 | 说明 |
 |------|------|
-| `.To(handler)` | 注册类型化处理函数，配置错误在终结调用处立即 panic。<br>Register a typed handler; setup errors panic. |
-| `.ToNoInput(handler)` | 注册无请求输入的类型化处理函数（不解析 body、不校验 Content-Type）。<br>Register a handler with no request input. |
-| `.ToNoOutput(handler)` | 注册只返回 error 的处理函数，成功默认 204，可用 `.Status(code)` 覆盖。<br>Register an error-only handler; 204 by default. |
-| `.ToHTTP(handler)` / `.ToRaw(handler)` | 原始 `http.Handler` / `RawHandler` 逃生口。<br>Raw escape hatches. |
-| `.ToHTTPFunc(handler)` | 解析输入后由 handler 自己写响应的逃生口。<br>Parsed-input handler writing its own response. |
-| `.ToRedirect(code, location)` / `.ToRedirectFunc(...)` | 重定向。<br>Redirects. |
-| `.ToSSE` / `.ToWebSocket` / `.ToStatic*` / `.ToHTML` | 专用终结器。<br>Specialized terminals. |
+| `.To(handler)` | 注册类型化处理函数，配置错误在终结调用处立即 panic |
+| `.ToNoInput(handler)` | 注册无请求输入的类型化处理函数（不解析 body、不校验 Content-Type） |
+| `.ToNoOutput(handler)` | 注册只返回 error 的处理函数，成功默认 204，可用 `.Status(code)` 覆盖 |
+| `.ToHTTP(handler)` / `.ToRaw(handler)` | 原始 `http.Handler` / `RawHandler` 逃生口 |
+| `.ToHTTPFunc(handler)` | 解析输入后由 handler 自己写响应的逃生口 |
+| `.ToRedirect(code, location)` / `.ToRedirectFunc(...)` | 重定向 |
+| `.ToSSE` / `.ToWebSocket` / `.ToStatic*` / `.ToHTML` | 专用终结器 |
 
 > 无输入/无输出都是显式终结器，不使用 `struct{}` 魔法：`.ToNoOutput` 成功默认 204，错误照常走统一错误管线；`.ToNoInput` 完全跳过请求解析。
-> No-input/no-output are explicit terminals, never `struct{}` magic: `.ToNoOutput` defaults to 204; `.ToNoInput` skips request parsing entirely.
 
-### Go 1.27 泛型方法版本 / Go 1.27 Generic Methods
+### Go 1.27 泛型方法版本
 
 模块内同时保留两套 API，编译时按工具链版本**自动选择**（类似 Go 标准库的 `//go:build` 版本约束），使用者不需要传任何 build tag：
-Both APIs ship in the same module and are selected automatically by toolchain version (like stdlib `//go:build` constraints); users pass no build tags:
 
 - Go < 1.27：`ghttp.Route[Req, Resp](target).GET(path).To(handler)`，类型参数在包级函数上（Go 1.27 前方法不支持类型参数）；
-- Go < 1.27: package-level type parameters.
 - Go ≥ 1.27：`server.GET(path).Doc(...).To[Req, Resp](handler)`，类型参数在终结方法上并由 handler 自动推断；Server/Group 本身即“根组”（gin 风格），路由动词直接挂在上面，**没有 `.Route()` 方法**，也没有小写快捷注册，注册统一走 `动词(path).Doc(...).To(handler)`；`ANY`/`CUSTOM` 同样是直接链式起点（`s.ANY(path)` / `s.CUSTOM(method, path)`）；包级 `Route[Req,Resp](target)` 仅保留为 deprecated 兼容 shim（空壳，直接返回同一个根组 builder），供 1.27 前代码无痛迁移。
-- Go >= 1.27: generic terminal methods inferred from handlers; Server/Group act as root groups; no `.Route()` method; `Route[Req,Resp]` remains a deprecated shim.
 
 ```go
-// Go 1.27+ 写法；
-// Go 1.27+ style.
+// Go 1.27+ 写法
 s.GET("/hello/{name}").Doc(ghttp.Summary("问候")).
     To(func(ctx context.Context, req *GreetInput) (*GreetOutput, error) {
     return &GreetOutput{Message: "Hello, " + req.Path("name")}, nil
 })
 
-// 分组与 Server 一致；
-// groups behave like the server.
+// 分组与 Server 一致
 api := s.Group("/api")
 api.GET("/users/{id}").To(func(ctx context.Context, req *GetUserReq) (*GetUserResp, error) {
     return &GetUserResp{ID: req.ID}, nil
@@ -216,43 +187,37 @@ api.POST("/users").Status(http.StatusCreated).To(func(ctx context.Context, req *
     return &CreateUserResp{ID: "u-1"}, nil
 })
 
-// 显式起点：自定义方法或全方法路由直接链式；
-// explicit starts: custom or all-method chains.
+// 显式起点：自定义方法或全方法路由直接链式
 s.ANY("/health").ToNoInput(func(ctx context.Context) (*HealthResp, error) { ... })
 s.CUSTOM("PURGE", "/cache").ToNoOutput(func(ctx context.Context, req *PurgeReq) error { ... })
 ```
 
 两套 API 共享同一内部实现（`routeBuilderCore`），行为完全一致。注意：Go 1.27 专用文件包含泛型方法语法，`go fmt`/`gofmt` 需使用 Go 1.27+ 工具链（旧工具链的 gofmt 无法解析该文件）。
-Both APIs share one implementation (`routeBuilderCore`). Note: Go 1.27-only files use generic-method syntax, so `go fmt`/`gofmt` must be Go 1.27+.
 
-### 路由参数 / Route Parameters
+### 路由参数
 
 路由路径推荐使用 Go 标准库和 OpenAPI 一致的 `{param}` 语法：
-Route paths use stdlib/OpenAPI-compatible `{param}` syntax:
 
 - `{param}` — 命名参数
-- `{param}` — named parameter
 - `{path...}` — 通配符（匹配剩余路径）
-- `{path...}` — wildcard (matches the remaining path)
 
 ```go
-ghttp.Route[Req, Resp](s).GET("/users/{id}").To(handler)      // 命名参数；named parameter.
-ghttp.Route[Req, Resp](s).GET("/files/{path...}").To(handler)  // 通配符；wildcard.
+ghttp.Route[Req, Resp](s).GET("/users/{id}").To(handler)      // 命名参数
+ghttp.Route[Req, Resp](s).GET("/files/{path...}").To(handler)  // 通配符
 ```
 
 旧的 :param 和 *path 语法已删除；使用 {param} 和 {path...}。
-Legacy `:param` and `*path` syntax is removed; use `{param}` and `{path...}`.
 
-### 输入结构体 / Input Structs
+### 输入结构体
 
 ```go
 type CreateUserInput struct {
     ghttp.Params `json:"-"`
 
     Body struct {
-    Name   string `json:"name"`
-    Age    int    `json:"age"`
-    Active bool   `json:"active"`
+        Name   string `json:"name"`
+        Age    int    `json:"age"`
+        Active bool   `json:"active"`
     } `json:"body"`
 }
 
@@ -269,7 +234,6 @@ func createUser(ctx context.Context, req CreateUserInput) (UserOutput, error) {
 ```
 
 请求体媒体类型使用 `Consumes` 声明，语义对应请求头 `Content-Type`；响应媒体类型继续使用 `Produces`，语义对应响应 `Content-Type` 和客户端 `Accept`：
-Request media types are declared with `Consumes` (matching `Content-Type`); response media types use `Produces` (matching response `Content-Type` and client `Accept`):
 
 ```go
 ghttp.Route[CreateUserInput, UserOutput](s).
@@ -280,68 +244,60 @@ ghttp.Route[CreateUserInput, UserOutput](s).
 ```
 
 `Consumes` 只约束带 `Body` 的自动解析路由。已配置 `Consumes` 时，请求 `Content-Type` 缺失或不匹配都返回 `415 Unsupported Media Type`；未配置 `Consumes` 时，缺失 `Content-Type` 按默认 JSON 解析（宽松默认）。
-`Consumes` only constrains routes with a `Body`. When configured, missing or mismatched `Content-Type` returns 415; without it, missing `Content-Type` defaults to JSON.
 
 `application/x-www-form-urlencoded` 表单支持显式 `form:"name"` tag 绑定到 `Body` 结构体字段（标量类型；重复 key 取第一个值）。目标 struct 有可绑定字段但完全没有 `form` tag 时返回 `400 Bad Request`，避免静默空值。
-`application/x-www-form-urlencoded` forms bind via explicit `form:"name"` tags; a bindable struct without any `form` tag returns 400 instead of silently binding nothing.
 
-### 默认值速查 / Defaults at a Glance
+### 默认值速查
 
-| 场景 / Scenario | 默认行为 / Default | 显式覆盖 / Override |
+| 场景 | 默认行为 | 显式覆盖 |
 |------|----------|----------|
-| `Accept` 明确列出但无匹配 / explicit Accept with no match | `406 Not Acceptable` | `WithLenientContentNegotiation()` 回退第一个 `Produces` / fall back to the first `Produces` |
-| `Accept` 为空或 `*/*` / empty or `*/*` | 第一个 `Produces` / first `Produces` | — |
-| 显式但未注册的请求 `Content-Type` / unknown explicit request type | `415 Unsupported Media Type` | `WithLenientContentType()` 按 JSON 解析 / decode as JSON |
-| 缺失请求 `Content-Type`（已配置 `Consumes`）/ missing type with `Consumes` | `415 Unsupported Media Type` | 不配置 `Consumes` 时按 JSON 解析 / JSON without `Consumes` |
-| 已注册 codec 无法解码目标类型 / codec cannot decode | `400 Bad Request`（codec 报错，不静默吞掉） | — |
-| 错误响应体 / error body | `{code,message}` | `WithProblemDetails()` / 路由级 `.ProblemDetails()` 使用 RFC 9457 `application/problem+json`；`WithErrorWriter` / 路由级 `.ErrorWriter` 完全自定义 |
+| `Accept` 明确列出但无匹配 | `406 Not Acceptable`（huma/go-restful 风格） | `WithLenientContentNegotiation()` 回退第一个 `Produces` |
+| `Accept` 为空或 `*/*` | 第一个 `Produces` | — |
+| 显式但未注册的请求 `Content-Type` | `415 Unsupported Media Type`（huma/go-restful 风格） | `WithLenientContentType()` 按 JSON 解析 |
+| 缺失请求 `Content-Type`（已配置 `Consumes`） | `415 Unsupported Media Type` | 不配置 `Consumes` 时按 JSON 解析 |
+| 已注册 codec 无法解码目标类型 | `400 Bad Request`（codec 报错，不静默吞掉） | — |
+| 错误响应体 | `{code,message}` | `WithProblemDetails()` / 路由级 `.ProblemDetails()` 使用 RFC 9457 `application/problem+json`；`WithErrorWriter` / 路由级 `.ErrorWriter` 完全自定义 |
 
 `WithStrictContentNegotiation()` / `WithStrictContentType()` 保留为兼容别名（当前默认已是严格行为，调用无额外效果）。
-`WithStrictContentNegotiation()` / `WithStrictContentType()` remain as no-op compatibility aliases.
 
 `Params` 是请求输入的**惰性视图**：query/cookie/客户端 IP 在首次访问时解析并缓存，header 直接透读请求，构造本身几乎零开销。它不持有 `ResponseWriter`，也不负责中断请求或写响应；cookie 写入通过输出对象完成。
-`Params` is a lazy view of request inputs: query/cookies/client IP parse on first access and are cached, headers read through; it never holds a `ResponseWriter`.
 
 视图在 handler 存活期内有效，且应在单个 goroutine 中使用；如需在 handler 返回后留存、或跨 goroutine 传递，先调用 `Detach()` 获得不再引用底层请求的不可变快照：
-The view is valid for the handler lifetime and must be used from a single goroutine; call `Detach()` to retain it beyond the handler or share it across goroutines:
 
 ```go
 func handler(ctx context.Context, p ghttp.Params) (Out, error) {
-    snapshot := p.Detach() // 深拷贝，安全跨 goroutine / 超生命周期使用；deep copy, safe across goroutines/lifetime.
+    snapshot := p.Detach() // 深拷贝，安全跨 goroutine / 超生命周期使用
     go audit(snapshot)
     return Out{}, nil
 }
 ```
 
 只有 path/query/header/cookie 参数、没有请求体时，可以直接使用值类型 `ghttp.Params` 作为输入类型：
-When only path/query/header/cookie inputs are needed, use the value type `ghttp.Params` directly as the input:
 
 ```go
 ghttp.Route[ghttp.Params, UserOutput](s).
     GET("/users/{id}").
     To(func(ctx context.Context, params ghttp.Params) (UserOutput, error) {
-    return UserOutput{
+        return UserOutput{
             ID: params.Path("id"),
-    }, nil
+        }, nil
     })
 ```
 
 需要请求体时，使用匿名值嵌入：
-For request bodies, embed `Params` anonymously:
 
 ```go
 type Input struct {
     ghttp.Params `json:"-"`
     Body struct {
-    Name string `json:"name"`
+        Name string `json:"name"`
     } `json:"body"`
 }
 ```
 
 `Route[*ghttp.Params, Resp]`、`Params ghttp.Params` 命名字段、`*ghttp.Params` 匿名指针字段、间接嵌入 `Params` 都属于路由配置错误：对应 `To*` 终结调用会立即 panic，panic error 可用 `errors.Is(err, ghttp.ErrInvalidParamsUsage)` 判断。
-`Route[*ghttp.Params, Resp]`, named `Params` fields, pointer embeddings and indirect embeddings are setup errors: the terminal call panics with `ErrInvalidParamsUsage`.
 
-### 输出 / Output
+### 输出
 
 ```go
 type UserOutput struct {
@@ -352,7 +308,6 @@ type UserOutput struct {
 ```
 
 响应对象实现 `Cookies() []*http.Cookie` 时，框架会在写响应前统一设置 `Set-Cookie`：
-When the response implements `Cookies() []*http.Cookie`, the framework writes `Set-Cookie` headers before the response:
 
 ```go
 type LoginOutput struct {
@@ -361,21 +316,20 @@ type LoginOutput struct {
 
 func (o LoginOutput) Cookies() []*http.Cookie {
     return []*http.Cookie{
-    {
+        {
             Name:     "session_id",
             Value:    o.Token,
             Path:     "/",
             HttpOnly: true,
             Secure:   true,
             SameSite: http.SameSiteLaxMode,
-    },
-    ghttp.DeleteCookie("old_session"),
+        },
+        ghttp.DeleteCookie("old_session"),
     }
 }
 ```
 
 默认响应格式：
-Default response format:
 ```json
 {
     "code": 0,
@@ -385,7 +339,6 @@ Default response format:
 ```
 
 错误响应：
-Error response:
 ```json
 {
     "code": 40001,
@@ -394,16 +347,12 @@ Error response:
 ```
 
 可通过 `WithEnvelope(fn)` 自定义包装格式。
-Customize the wrapping format with `WithEnvelope(fn)`.
 
 `EnvelopeFunc` 签名为 `func(w http.ResponseWriter, r *http.Request, statusCode int, resp interface{}, err error, contentType string, codec Codec)`；`contentType`/`codec` 是路由协商结果，envelope 只允许包装 body，不得改写 HTTP 状态码。错误响应默认只返回 HTTP 状态文本，`WithExposeErrorDetails()` 开启后才返回内部错误信息（显式 `HTTPError` 消息始终返回）。
-`EnvelopeFunc` must not change the HTTP status code. Error responses return only status text by default; `WithExposeErrorDetails()` enables internal messages.
 
 `WithProblemDetails()` 开启后，错误响应改用 RFC 9457 `application/problem+json`（`type/title/status/detail/instance`），错误场景优先于 envelope；显式 `WithErrorHandler` 优先级最高。
-`WithProblemDetails()` switches errors to RFC 9457 `application/problem+json`; the explicit `WithErrorHandler` has the highest priority.
 
 错误模型可按路由选择：`.ProblemDetails()` 只影响该路由；`.ErrorWriter(fn)` 安装路由级 writer。`ErrorWriter` 的契约是“返回 true 表示已处理，返回 false 则落到下一个 writer/框架默认”，因此可用 `ChainErrorWriters(w1, w2, ...)` 组合（例如先记录日志再写响应）：
-Error models are per-route: `.ProblemDetails()` affects only that route; `.ErrorWriter(fn)` installs a route-level writer. `ErrorWriter` returns true when handled, false to fall through, so `ChainErrorWriters` composes them:
 
 ```go
 ghttp.Route[Req, Resp](s).GET("/users/{id}").
@@ -411,22 +360,19 @@ ghttp.Route[Req, Resp](s).GET("/users/{id}").
     To(handler)
 
 s := ghttp.New(ghttp.WithErrorWriter(ghttp.ChainErrorWriters(
-    logErrorWriter,            // 返回 false，继续；returns false, falls through.
-    problemWriter,             // 返回 true，结束；returns true, stops.
+    logErrorWriter,            // 返回 false，继续
+    problemWriter,             // 返回 true，结束
 )))
 ```
 
 类型化响应可显式声明状态码与响应头：响应对象实现 `StatusCode() int` 与/或 `WriteResponseHeaders(http.Header)`，或在 builder 上用 `.Status(code)`/`.ResponseHeader(name, value)` 声明固定值。204/304/1xx 自动不写 body；动态状态（`StatusCode()`）无法静态推断，OpenAPI 以 builder `Status` 为准。
-Typed responses can declare status/headers via `StatusCode()`/`WriteResponseHeaders` or builder `.Status()`/`.ResponseHeader()`. 204/304/1xx skip the body automatically.
 
-### 中间件 / Middleware
+### 中间件
 
 ```go
-// 注入结构化 logger，glog.Default() 可直接满足 ghttp.Logger；
-// inject a structured logger; glog.Default() satisfies ghttp.Logger.
+// 注入结构化 logger，glog.Default() 可直接满足 ghttp.Logger。
 s := ghttp.New(ghttp.WithLogger(glog.Default()))
-// 或使用标准库 slog 适配；
-// or use the standard library slog adapter.
+// 或使用标准库 slog 适配：s := ghttp.New(ghttp.WithLogger(ghttp.NewSlogLogger(slog.Default())))
 
 s.Use(ghttp.RequestID())
 s.Use(ghttp.CORS(ghttp.CORSConfig{
@@ -436,23 +382,20 @@ s.Use(ghttp.RequestLogger())
 s.Use(ghttp.Recoverer())
 s.Use(ghttp.Timeout(5 * time.Second))
 
-// 分组路由添加中间件；
-// add middleware to a group.
+// 分组路由添加中间件
 group := s.Group("/api")
 group.Use(authMiddleware)
 
-// 中间件中读取已匹配的路径参数（显式访问器，默认不注入 context）；
-// read matched path params in middleware (explicit accessor).
+// 中间件中读取已匹配的路径参数（显式访问器，默认不注入 context）
 s.Use(func(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-    id := s.MatchedParams(r).Path("id")
-    _ = id
-    next.ServeHTTP(w, r)
+        id := s.MatchedParams(r).Path("id")
+        _ = id
+        next.ServeHTTP(w, r)
     })
 })
 
-// RBAC 能力：Authorizer 接口 + 默认 RBAC 实现；
-// RBAC capability: Authorizer interface + default implementation.
+// RBAC 能力：Authorizer 接口 + 默认 RBAC 实现
 s.Use(ghttp.RBACMiddleware(authz,
     func(r *http.Request) string { return r.Header.Get("X-User") },
     func(r *http.Request) string { return "users:read" },
@@ -460,13 +403,10 @@ s.Use(ghttp.RBACMiddleware(authz,
 ))
 ```
 
-中间件行为约定 / Middleware behavior:
+中间件行为约定：
 - `RequestID` 只回显长度不超过 `DefaultMaxRequestIDLength`（128）的客户端 `X-Request-ID`，超长值会被新生成的 ID 替换；可用 `RequestID(ghttp.WithRequestIDMaxLength(n))` 调整上限。
-- `RequestID` echoes incoming IDs up to 128 chars; longer values are replaced.
 - `CORS` 只对真正的预检请求（`OPTIONS` + `Origin` + `Access-Control-Request-Method`）自行返回 204 并短路；普通 `OPTIONS` 请求会继续进入路由，显式注册的 `OPTIONS` handler 正常执行。
-- `CORS` short-circuits only true preflights; ordinary OPTIONS reach the router.
 - `Timeout` 超时返回 504 并取消请求 context；超时后 handler 对响应写入会被丢弃，handler 应通过 `ctx.Done()` 协作退出（Go 无法强制终止不协作的 goroutine）。`Timeout` 的 writer 支持 `Hijack`/`Flush`，WebSocket 升级与 SSE 流式可以放在 `Timeout` 中间件之后。
-- `Timeout` returns 504, cancels the context and discards late writes; its writer supports Hijack/Flush for WS/SSE.
 
 ### WebSocket
 
@@ -474,7 +414,7 @@ s.Use(ghttp.RBACMiddleware(authz,
 ghttp.Route[struct{}, struct{}](s).GET("/ws/{room}").ToWebSocket(func(ctx context.Context, params ghttp.Params, conn *ghttp.WebSocketConn) error {
     var msg map[string]string
     if err := conn.ReadJSON(&msg); err != nil {
-    return err
+        return err
     }
     msg["room"] = params.Path("room")
     return conn.WriteJSON(msg)
@@ -482,25 +422,22 @@ ghttp.Route[struct{}, struct{}](s).GET("/ws/{room}").ToWebSocket(func(ctx contex
 ```
 
 WebSocket 默认执行同源校验：同源或缺 `Origin` 放行，跨源返回 403。可用 `WithWebSocketOriginChecker(fn)` 替换默认策略；路由级可用 `.WebSocketCheckOrigin(fn)` 覆盖（须在 `ToWebSocket` 之前调用）。
-WebSocket defaults to same-origin checks (missing Origin is allowed); override globally with `WithWebSocketOriginChecker` or per-route with `.WebSocketCheckOrigin`.
 
 `WebSocketConn` 提供：
-`WebSocketConn` provides:
 
 - `ReadJSON` / `WriteJSON`（JSON 消息）、`ReadMessage` / `WriteMessage`（raw 文本/二进制帧，`TextMessage` / `BinaryMessage`）；
 - `ReadJSONContext(ctx, v)` / `WriteJSONContext(ctx, v)`：context 取消时返回 `ctx.Err()`，并解除底层阻塞读写（取消后连接应视为已关闭）；
 - `Subprotocol()`：握手协商出的子协议；`SetReadDeadline` / `SetWriteDeadline`：读写截止时间。
 
 服务端 WebSocket 选项（默认关闭，显式开启）：
-Server WebSocket options (disabled by default, opt-in):
 
 ```go
 s := ghttp.New(
-    ghttp.WithServerWebSocketSubprotocols([]string{"chat", "json"}), // 握手子协议；handshake subprotocols.
+    ghttp.WithServerWebSocketSubprotocols([]string{"chat", "json"}), // 握手子协议
     ghttp.WithServerWebSocketReadBufferSize(4096),
     ghttp.WithServerWebSocketWriteBufferSize(4096),
     ghttp.WithServerWebSocketPingPeriod(30*time.Second), // keepalive ping
-    ghttp.WithServerWebSocketPongWait(60*time.Second),   // pong 等待上限；pong wait cap.
+    ghttp.WithServerWebSocketPongWait(60*time.Second),   // pong 等待上限
 )
 ```
 
@@ -509,16 +446,14 @@ s := ghttp.New(
 ```go
 ghttp.Route[struct{}, struct{}](s).GET("/events").ToSSE(func(ctx context.Context, params ghttp.Params, w *ghttp.SSEWriter) error {
     for i := 0; i < 10; i++ {
-    w.WriteEvent("message", fmt.Sprintf("event %d", i))
-    time.Sleep(time.Second)
+        w.WriteEvent("message", fmt.Sprintf("event %d", i))
+        time.Sleep(time.Second)
     }
     return nil
 })
 
 // SSEWriter 还提供 WriteJSON / WriteJSONWithID / WriteEventWithID / WriteComment / Retry；
-// SSEWriter also offers WriteJSON/WriteJSONWithID/WriteEventWithID/WriteComment/Retry.
 // data 含换行时会按规范拆成多行 data: 字段。
-// newlines in data are split into multiple data: lines per spec.
 
 stream, err := client.SSE("/events", ghttp.SSEConfig{
     Reconnect:     true,
@@ -530,52 +465,45 @@ if err != nil { return err }
 defer stream.Close()
 ```
 
-### 静态文件 / Static Files
+### 静态文件
 
 ```go
-// 使用服务器级 VFS 根目录：/a.txt 会解析到 /srv/files/a.txt；
-// uses the server-level VFS root: /a.txt resolves to /srv/files/a.txt.
+// 使用服务器级 VFS 根目录：/a.txt 会解析到 /srv/files/a.txt
 s := ghttp.New(ghttp.WithVFSPath("/srv/files"))
 ghttp.Route[struct{}, struct{}](s).GET("/").ToStatic()
 
-// 也可以为单条静态路由显式指定根目录；
-// or set an explicit root for a single static route.
+// 也可以为单条静态路由显式指定根目录
 ghttp.Route[struct{}, struct{}](s).GET("/static").ToStatic("./public")
 ghttp.Route[struct{}, struct{}](s).GET("/assets").ToStaticFS(http.FS(embeddedAssets))
 ghttp.Route[struct{}, struct{}](s).GET("/favicon.ico").ToStaticFile("./favicon.ico")
 ```
 
 `ToStatic` 默认使用安全 VFS，所有请求路径都会作为相对路径解析到静态根目录下。
-`ToStatic` uses a safe VFS: all request paths resolve relatively beneath the static root.
 `../`、URL 编码后的路径穿越、Windows 反斜杠分隔符等越界访问会被拒绝。
-Traversal via `../`, URL-encoded paths and Windows backslashes is rejected.
 
-### 模板渲染 / Template Rendering
+### 模板渲染
 
 ```go
 renderer := ghttp.NewRenderer("./templates/*.html")
 s = ghttp.New(ghttp.WithRenderer(renderer))
 
-// 处理函数中；
-// inside the handler.
+// 处理函数中
 ghttp.Route[NoInput, NoOutput](s).GET("/page").Produces(ghttp.MIMEJSON, ghttp.MIMEXML).To(func(ctx context.Context, req NoInput) (NoOutput, error) {
     return NoOutput{}, nil
 })
 ```
 
-### OpenAPI 文档 / OpenAPI Documentation
+### OpenAPI 文档
 
 使用 WithOpenAPI 启用可选的 best-effort 文档。Server.OpenAPI 从当前 routeDefinition 快照生成独立 JSON 字节，不会冻结 Server 或改变运行时语义。默认 HTTP endpoint 是 /openapi.json；WithOpenAPIPath 空路径只关闭 HTTP 暴露。CONNECT 和 CUSTOM 使用 x-ghttp-methods 扩展。
-Enable optional best-effort docs with WithOpenAPI. `Server.OpenAPI` generates JSON from the current route snapshot without freezing the Server; the default endpoint is /openapi.json.
 
 ```go
 document, err := s.OpenAPI()
 ```
 
 `WithOpenAPIServers(urls...)` 与 `WithOpenAPISecurity(requirements...)` 可声明文档级 servers/security；envelope 启用时自动生成 `{code,msg,data}` 包装 schema，类型化路由附带 404/405 错误响应。
-`WithOpenAPIServers` and `WithOpenAPISecurity` declare document-level servers/security; envelope mode generates the `{code,msg,data}` schema automatically.
 
-### 验证器 / Validation
+### 验证器
 
 ```go
 import "github.com/sofiworker/gk/ghttp"
@@ -583,8 +511,7 @@ import "github.com/sofiworker/gk/ghttp"
 type validator struct{}
 
 func (v *validator) Validate(i any) error {
-    // 自定义验证逻辑；
-    // custom validation logic.
+    // 自定义验证逻辑
     return nil
 }
 
@@ -592,53 +519,47 @@ s = ghttp.New(ghttp.WithValidator(&validator{}))
 ```
 
 server 级 validator **默认关闭**：`New()` 不自动安装任何 validator，需要 `WithValidator(v)` 显式启用（破坏性变更）；`ghttp.NewDefaultValidator()` 可恢复内置 struct-tag 校验。路由级 `.Validate(fn)` 与 `.SkipValidation()` 不受影响。
-The server-level validator is **disabled by default**; enable it with `WithValidator(v)` or restore struct-tag checks with `NewDefaultValidator()`. Route-level `.Validate`/`.SkipValidation` are unaffected.
 
 ---
 
-## 路由引擎 / Routing Engine
+## 路由引擎
 
 Server 使用唯一的未导出 method-first matcher。没有 Router、WithRouter 或 Server.Router；路由只通过 Route[Req, Resp](serverOrGroup).METHOD(path).To 注册。
-The server uses a single method-first matcher; routes are registered only through the builder chain.
 
 首次服务入口冻结路由表。默认尾斜杠不敏感，WithStrictRouting 下尾斜杠不同；OPTIONS 不自动返回 204；HEAD 优先匹配显式 HEAD，否则回退 GET 并抑制 body。
-The route table freezes at the first serve. Trailing slashes are insensitive by default (strict via WithStrictRouting); OPTIONS is not automatic; HEAD falls back to GET with the body suppressed.
 
 只支持 {param} 与 {path...}。旧 :param 和 *path 路径立即报配置错误。请求路径不清洗、不重定向；双斜杠、dot segment 和非法百分号转义返回 400。{path...} 可以匹配零段。
-Only `{param}` and `{path...}` are supported; paths are not cleaned or redirected, and invalid escapes return 400.
 
 中间件顺序固定为内建 Recovery、Server、父 Group、子 Group、Route、Handler。Group 中间件在创建子组时快照（与 gin 一致）：父组在子组创建之后新增的中间件不会传播到已创建的子组。Server middleware 同时覆盖成功、400、404、405 和 OpenAPI endpoint。
-Middleware order is fixed; group middleware snapshots at child creation (gin-like); server middleware also covers 400/404/405 and the OpenAPI endpoint.
 
 类型化 To 支持显式状态码与响应头（见“输出”一节）。ToHTTP 与 ToRaw 得到原始 request；ghttp 不设置 PathValue，middleware 通过 `Server.MatchedParams(r)` 读取路径参数。
-Typed handlers support explicit status/headers; raw terminals get the raw request, and middleware reads path params via `Server.MatchedParams(r)`.
 
 ---
 
-## 配置选项 / Configuration Options
+## 配置选项
 
 ```go
 s := ghttp.New(
-    ghttp.WithAddress(":8080"),                              // 监听地址；listen address.
-    ghttp.WithValidator(myValidator),                        // 验证器；validator.
-    ghttp.WithEnvelope(myEnvelope),                          // Envelope 函数；envelope function.
-    ghttp.WithConsumes(ghttp.MIMEJSON),                      // 默认请求 Content-Type；default request Content-Type.
+    ghttp.WithAddress(":8080"),                              // 监听地址
+    ghttp.WithValidator(myValidator),                        // 验证器
+    ghttp.WithEnvelope(myEnvelope),                          // Envelope 函数
+    ghttp.WithConsumes(ghttp.MIMEJSON),                      // 默认请求 Content-Type
 server 级 validator **默认关闭**：`New()` 不自动安装任何 validator，需要 `WithValidator(v)` 显式启用（破坏性变更）；`ghttp.NewDefaultValidator()` 可恢复内置 struct-tag 校验。路由级 `.Validate(fn)` 与 `.SkipValidation()` 不受影响。
 
-    ghttp.WithBodyDecoder(func(r io.Reader, contentType string, target interface{}) error { // 自定义 Body 解码；custom body decoder.
-    return customDecoder.Decode(r, target)
+    ghttp.WithBodyDecoder(func(r io.Reader, contentType string, target interface{}) error { // 自定义 Body 解码
+        return customDecoder.Decode(r, target)
     }),
-    ghttp.WithRenderer(myRenderer),                          // 模板渲染器；template renderer.
-    ghttp.WithReadHeaderTimeout(5*time.Second),              // 请求头读取超时；read header timeout.
-    ghttp.WithReadTimeout(30*time.Second),                   // 读取超时；read timeout.
-    ghttp.WithWriteTimeout(30*time.Second),                  // 写入超时；write timeout.
-    ghttp.WithIdleTimeout(60*time.Second),                   // keep-alive 空闲超时；idle timeout.
-    ghttp.WithMaxHeaderBytes(1<<20),                         // 最大请求头；max header bytes.
-    ghttp.WithMaxBodyBytes(ghttp.DefaultMaxBodyBytes),        // 自动解析请求体大小上限，默认 4 MiB；max decoded body, default 4 MiB.
-    ghttp.WithTLSConfig(tlsConfig),                          // TLS 配置；TLS config.
-    ghttp.WithBaseContext(baseContext),                      // 底层 Server BaseContext；underlying BaseContext.
-    ghttp.WithConnContext(connContext),                      // 连接级 Context；per-connection context.
-    ghttp.WithErrorLog(errorLog),                            // 底层 Server 错误日志；underlying server error log.
+    ghttp.WithRenderer(myRenderer),                          // 模板渲染器
+    ghttp.WithReadHeaderTimeout(5*time.Second),              // 请求头读取超时
+    ghttp.WithReadTimeout(30*time.Second),                   // 读取超时
+    ghttp.WithWriteTimeout(30*time.Second),                  // 写入超时
+    ghttp.WithIdleTimeout(60*time.Second),                   // keep-alive 空闲超时
+    ghttp.WithMaxHeaderBytes(1<<20),                         // 最大请求头
+    ghttp.WithMaxBodyBytes(ghttp.DefaultMaxBodyBytes),        // 自动解析请求体大小上限，默认 4 MiB
+    ghttp.WithTLSConfig(tlsConfig),                          // TLS 配置
+    ghttp.WithBaseContext(baseContext),                      // 底层 Server BaseContext
+    ghttp.WithConnContext(connContext),                      // 连接级 Context
+    ghttp.WithErrorLog(errorLog),                            // 底层 Server 错误日志
 )
 ```
 
@@ -648,7 +569,7 @@ if err != nil {
     return err
 }
 go s.Serve(ln)
-fmt.Println(s.Addr()) // 包含 :0 自动分配后的真实端口；includes the real port allocated for :0.
+fmt.Println(s.Addr()) // 包含 :0 自动分配后的真实端口
 
 err = s.ListenAndServeTLS(":8443", "server.crt", "server.key")
 ```
@@ -702,14 +623,14 @@ ghttp.Route[CreateUserReq, UserDTO](app).
     Consumes(ghttp.MIMEJSON, ghttp.MIMEXML).
     Produces(ghttp.MIMEJSON, ghttp.MIMEXML).
     Doc(
-    ghttp.Summary("Create user"),
-    ghttp.Tags("users"),
-    ghttp.OperationID("createUser"),
-    ghttp.Success(ghttp.Code(0), ghttp.Message("created")),
-    ghttp.Errors(ErrInvalidInput),
-    ghttp.Deprecated("use /v2/users instead"),
-    ghttp.Sunset(time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)),
-    ghttp.ExternalDocs("migration guide", "https://example.com/migrate-users"),
+        ghttp.Summary("Create user"),
+        ghttp.Tags("users"),
+        ghttp.OperationID("createUser"),
+        ghttp.Success(ghttp.Code(0), ghttp.Message("created")),
+        ghttp.Errors(ErrInvalidInput),
+        ghttp.Deprecated("use /v2/users instead"),
+        ghttp.Sunset(time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)),
+        ghttp.ExternalDocs("migration guide", "https://example.com/migrate-users"),
     ).
     Validate(validateCreateUser).
     To(createUser)
