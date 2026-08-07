@@ -1,8 +1,9 @@
 # gconfig
 
+基于 Viper 的文件与环境变量配置加载。
 Configuration loading from files and environment variables using Viper.
 
-## Usage
+## 用法 / Usage
 
 ```go
 import "github.com/sofiworker/gk/gconfig"
@@ -10,17 +11,17 @@ import "github.com/sofiworker/gk/gconfig"
 loader, _ := gconfig.New(gconfig.WithFile("config.yaml"))
 loader.Unmarshal(&cfg)
 
-// 类型化访问器（懒加载）
+// 类型化访问器（懒加载）/ typed accessors (lazy loading)
 host := loader.GetString("server.host")
 port := loader.GetInt("server.port")
 timeout := loader.GetDuration("server.timeout")
 loader.UnmarshalKey("server", &serverCfg)
 ```
 
-## Remote Sources
+## 远程源 / Remote Sources
 
-Remote configuration is opt-in. Applications that need Viper remote providers
-must register them explicitly:
+远程配置为可选；使用 Viper 远程 provider 需显式注册：
+Remote configuration is opt-in; Viper remote providers must be registered explicitly:
 
 ```go
 import (

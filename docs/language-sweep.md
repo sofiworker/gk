@@ -13,12 +13,13 @@
 - ghttp 大文件：builder_core/config/params。
 - ghttp 大文件：builder_go127/builder_pre127/client。
 - gnet：核对完成——大部分注释已是中文，少量英文已双语化（forward/addr/pcapng/rawcap/layers/link/pcap）。
+- README 双语化（第一批）：根 README 与 gotel/grx/gsd/gcrypt/gcompress/gresolver/gnet/gconfig/gsql/gerr/glog/gretry。
 
 ## 待办（按批次）
 
 - [x] gcache 测试、gcompress 测试
 - [ ] ghttp 大文件（route_* 等，多数无注释，核对后关闭）
 - [x] gnet 核对完成
-- [ ] README 双语化（当前为中文为主）
+- [ ] README 双语化：gcache、ghttp（大文件）
 
 处理原则：优先删除复述型/标签型注释；有信息量的注释转双语；不修改功能代码。
