@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
@@ -289,25 +288,26 @@ func TestTraceContextFields(t *testing.T) {
 
 	emptyFields := logger.traceContextFields(context.Background())
 	if len(emptyFields) != 0 {
-		t.Fatalf("expected no fields for empty context")
+		t.Fatalf("expected no fields without extractor")
 	}
 
-	traceID, err := trace.TraceIDFromHex("0102030405060708090a0b0c0d0e0f10")
-	if err != nil {
-		t.Fatalf("failed to build trace ID: %v", err)
+	extractor := &zapLogger{
+		l:           zap.NewNop(),
+		atomicLevel: zap.NewAtomicLevel(),
+		config:      DefaultConfig(),
 	}
-	spanID, err := trace.SpanIDFromHex("0102030405060708")
-	if err != nil {
-		t.Fatalf("failed to build span ID: %v", err)
+	extractor.config.TraceExtractor = func(context.Context) (string, string) {
+		return "0102030405060708090a0b0c0d0e0f10", "0102030405060708"
 	}
-	validSpanCtx := trace.NewSpanContext(trace.SpanContextConfig{
-		TraceID: traceID,
-		SpanID:  spanID,
-	})
-	ctxValid := trace.ContextWithSpanContext(context.Background(), validSpanCtx)
-	validFields := logger.traceContextFields(ctxValid)
-	if len(validFields) != 0 {
-		t.Fatalf("expected no fields for non-recording span, got %d", len(validFields))
+	validFields := extractor.traceContextFields(context.Background())
+	if len(validFields) != 2 {
+		t.Fatalf("expected 2 trace fields, got %d", len(validFields))
+	}
+	if validFields[0].String != "0102030405060708090a0b0c0d0e0f10" {
+		t.Fatalf("trace_id = %q", validFields[0].String)
+	}
+	if validFields[1].String != "0102030405060708" {
+		t.Fatalf("span_id = %q", validFields[1].String)
 	}
 }
 

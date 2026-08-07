@@ -1,6 +1,7 @@
 package glog
 
 import (
+	"context"
 	"io"
 	"os"
 
@@ -38,6 +39,9 @@ type Config struct {
 	DisableStacktrace bool
 	Development       bool
 	TimeFormat        string
+	// TraceExtractor 从 context 提取 trace_id/span_id；为空则不输出追踪字段。
+	// 避免 glog 核心依赖具体可观测性实现（如 OpenTelemetry）。
+	TraceExtractor func(context.Context) (traceID, spanID string)
 }
 
 // DefaultConfig 返回一个被完全初始化的、适合生产环境的默认日志配置。

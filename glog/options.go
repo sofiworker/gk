@@ -1,5 +1,7 @@
 package glog
 
+import "context"
+
 // Option 是一个函数，用于修改 glog 的配置。
 type Option func(*Config)
 
@@ -114,5 +116,13 @@ func WithStacktraceKey(key string) Option {
 func WithTimeFormat(format string) Option {
 	return func(c *Config) {
 		c.TimeFormat = format
+	}
+}
+
+// WithTraceExtractor 设置从 context 提取 trace_id/span_id 的函数。提取器由
+// 使用方提供（例如基于 OpenTelemetry），glog 核心不依赖具体实现。
+func WithTraceExtractor(extract func(context.Context) (traceID, spanID string)) Option {
+	return func(c *Config) {
+		c.TraceExtractor = extract
 	}
 }

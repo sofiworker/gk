@@ -3,7 +3,6 @@ package glog
 import (
 	"context"
 
-	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -169,18 +168,21 @@ func (l *zapLogger) argsToZapFields(args ...interface{}) ([]zap.Field, error) {
 }
 
 func (l *zapLogger) traceContextFields(ctx context.Context) []zap.Field {
-	span := trace.SpanFromContext(ctx)
-	if !span.IsRecording() {
+	if l.config.TraceExtractor == nil {
 		return nil
 	}
-	spanCtx := span.SpanContext()
-	if !spanCtx.IsValid() {
+	traceID, spanID := l.config.TraceExtractor(ctx)
+	if traceID == "" && spanID == "" {
 		return nil
 	}
-	return []zap.Field{
-		zap.String("trace_id", spanCtx.TraceID().String()),
-		zap.String("span_id", spanCtx.SpanID().String()),
+	fields := make([]zap.Field, 0, 2)
+	if traceID != "" {
+		fields = append(fields, zap.String("trace_id", traceID))
 	}
+	if spanID != "" {
+		fields = append(fields, zap.String("span_id", spanID))
+	}
+	return fields
 }
 
 func buildEncoder(config *Config) zapcore.Encoder {
