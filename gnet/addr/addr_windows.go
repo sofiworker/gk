@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	// AF_UNSPEC for GetAdaptersAddresses
+	// GetAdaptersAddresses 使用 AF_UNSPEC；AF_UNSPEC for GetAdaptersAddresses.
 	familyUnspec = windows.AF_UNSPEC
 )
 

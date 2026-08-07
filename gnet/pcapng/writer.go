@@ -272,7 +272,7 @@ func encodeOptions(options []Option, order binary.ByteOrder) []byte {
 			buf.Write(make([]byte, pad))
 		}
 	}
-	// end of options
+	// 选项结束；end of options.
 	putUint16(&buf, order, 0)
 	putUint16(&buf, order, 0)
 	return buf.Bytes()

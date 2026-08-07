@@ -339,7 +339,7 @@ func parseOptions(data []byte, order binary.ByteOrder) ([]Option, error) {
 			return nil, err
 		}
 
-		if code == 0 { // end of options
+		if code == 0 { // 选项结束；end of options.
 			pad := (4 - (int(length) % 4)) % 4
 			if err := discard(reader, int(length)+pad); err != nil {
 				return nil, err

@@ -33,7 +33,7 @@ type pcapWriter struct {
 }
 
 func (w *pcapWriter) Close() error {
-	//TODO implement me
+	// TODO: 待实现；implement me.
 	panic("implement me")
 }
 

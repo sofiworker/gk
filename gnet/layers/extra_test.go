@@ -28,11 +28,11 @@ func (m *MockDecoder) Decode(data []byte) (Layer, error) {
 
 func TestLayerRegistry(t *testing.T) {
 	decoder := &MockDecoder{}
-	// Register a custom type
+	// 注册自定义类型；register a custom type.
 	customType := LayerType(100)
 	RegisterLayerDecoder(customType, decoder)
 
-	// Decode
+	// 解码；decode.
 	data := []byte("test")
 	l, err := DecodeLayer(customType, data)
 	if err != nil {
@@ -43,7 +43,7 @@ func TestLayerRegistry(t *testing.T) {
 		t.Errorf("payload mismatch")
 	}
 
-	// Decode unknown
+	// 解码未知类型；decode an unknown type.
 	_, err = DecodeLayer(LayerType(999), data)
 	if err == nil {
 		t.Error("expected error for unknown layer")

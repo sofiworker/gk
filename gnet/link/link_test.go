@@ -36,8 +36,8 @@ func TestIsUp(t *testing.T) {
 }
 
 func TestListLinksStubUnsupported(t *testing.T) {
-	// Ensure Unsupported stub compiles and returns error when built on
-	// non-supported platforms. On linux/windows this test is skipped via build tags.
+	// 确保 Unsupported 桩在非支持平台编译并返回错误；linux/windows 通过 build tag 跳过本测试。
+	// Ensure the Unsupported stub compiles and errors on unsupported platforms.
 	if runtimeGOOS() != "linux" && runtimeGOOS() != "windows" {
 		if _, err := listLinks(); err == nil {
 			t.Fatalf("expected error on unsupported platform")
@@ -45,7 +45,8 @@ func TestListLinksStubUnsupported(t *testing.T) {
 	}
 }
 
-// runtimeGOOS is split for test-only runtime lookup without pulling full runtime in production.
+// runtimeGOOS 拆分为仅供测试的运行时查询，避免在生产引入完整 runtime。
+// runtimeGOOS is split for test-only runtime lookup without pulling runtime in production.
 var runtimeGOOS = func() string {
 	return runtime.GOOS
 }

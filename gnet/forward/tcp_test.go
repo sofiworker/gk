@@ -21,7 +21,8 @@ func (m *mockHandler) ProcessData(data []byte, direction Direction) []byte {
 	return out
 }
 
-// helper to create two connected pairs so bridge directions can be validated independently.
+// 创建两对已连接的对端，以便独立验证桥接方向。
+// helper to create two connected pairs so directions can be validated independently.
 func pipePair(t *testing.T) (localPeer net.Conn, bridgeEnd net.Conn, remotePeer net.Conn, bridgeEndRemote net.Conn) {
 	t.Helper()
 	localPeer, bridgeEnd = net.Pipe()
@@ -58,7 +59,7 @@ func TestProtocolAwareBridgeForward(t *testing.T) {
 		t.Fatalf("expected protocol handler uppercased, got %q", string(buf))
 	}
 
-	// reverse direction
+	// 反向；reverse direction.
 	reply := []byte("pong")
 	if _, err := remotePeer.Write(reply); err != nil {
 		t.Fatalf("write remote: %v", err)

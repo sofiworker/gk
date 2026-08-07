@@ -25,7 +25,7 @@ func TestFilterCopy(t *testing.T) {
 		t.Fatalf("write p2: %v", err)
 	}
 
-	// Filter: first byte == 'A'
+	// 过滤条件：首字节为 'A'；filter: first byte == 'A'.
 	prog := []bpf.Instruction{
 		bpf.LoadAbsolute{Off: 0, Size: 1},
 		bpf.JumpIf{Cond: bpf.JumpEqual, Val: 0x41, SkipTrue: 0, SkipFalse: 1},

@@ -247,7 +247,7 @@ func (h *LinuxHandle) enableTPacketV3() error {
 func (h *LinuxHandle) readTPacket() (*Packet, error) {
 	r := h.ring
 	for {
-		// Ensure we have a block with data
+		// 确保存在包含数据的 block；ensure the block has data.
 		if r.blockHeader == nil || r.pktOffset == 0 || r.pktOffset >= uint32(r.blockSize) {
 			if err := h.nextBlock(); err != nil {
 				if err == unix.EAGAIN {
@@ -257,12 +257,12 @@ func (h *LinuxHandle) readTPacket() (*Packet, error) {
 			}
 		}
 
-		// packet pointer within block
+		// block 内的包指针；packet pointer within the block.
 		blockStart := r.blockIdx * r.blockSize
 		pktHdr := (*unix.Tpacket3Hdr)(unsafe.Add(unsafe.Pointer(&r.data[blockStart]), uintptr(r.pktOffset)))
 
 		if pktHdr.Status&unix.TP_STATUS_USER == 0 {
-			// should not happen, retry
+			// 不应发生，重试；should not happen, retry.
 			r.blockHeader = nil
 			continue
 		}
@@ -270,7 +270,7 @@ func (h *LinuxHandle) readTPacket() (*Packet, error) {
 		start := blockStart + int(pktHdr.Mac)
 		end := start + int(pktHdr.Snaplen)
 		if end > len(r.data) {
-			// corrupted, drop block
+			// 数据损坏，丢弃该 block；corrupted, drop the block.
 			r.blockHeader.Block_status = unix.TP_STATUS_KERNEL
 			r.blockHeader = nil
 			continue
@@ -287,7 +287,7 @@ func (h *LinuxHandle) readTPacket() (*Packet, error) {
 		}
 		h.stats.PacketsReceived++
 
-		// Move to next packet in block
+		// 移动到 block 中的下一个包；move to the next packet in the block.
 		if pktHdr.Next_offset == 0 {
 			r.pktOffset = uint32(r.blockSize)
 		} else {
