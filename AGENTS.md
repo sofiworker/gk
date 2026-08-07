@@ -1,5 +1,11 @@
 Always respond in Chinese-simplified
 
+# 仓库状态
+
+- 整个仓库处于开发中（pre-v1.0.0），**禁止直接用于生产开发**；详情见根目录 `DEVELOPMENT.md`。
+- 所有改动默认不承诺向后兼容；破坏性变更必须在提交说明与 README 中显式标注。
+- 未经维护者明确授权，不得向远程推送、打 tag、发布或部署。
+
 # Repository Guidelines
 
 ## Code Style (Go)
