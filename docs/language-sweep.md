@@ -11,11 +11,12 @@
 - ghttp 大文件：codec_manager/doc/websocket。
 - ghttp 大文件：server/middleware。
 - ghttp 大文件：builder_core/config/params。
+- ghttp 大文件：builder_go127/builder_pre127/client。
 
 ## 待办（按批次）
 
 - [x] gcache 测试、gcompress 测试
-- [ ] ghttp 大文件（builder_go127/builder_pre127/client/route_* 等）
+- [ ] ghttp 大文件（route_* 等，多数无注释，核对后关闭）
 - [ ] gnet（26 个文件）
 - [ ] README 双语化（当前为中文为主）
 

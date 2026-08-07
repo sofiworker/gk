@@ -1,5 +1,8 @@
 package ghttp
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 import (
 	"bytes"
 	"context"
@@ -16,12 +19,19 @@ import (
 	"strings"
 	"time"
 
+	// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+	// marshal Body if present, otherwise the whole request.
 	"github.com/sofiworker/gk/gretry"
 )
 
-// Client is an HTTP client with a go-resty-style chain API, plus typed
-// generic endpoints. Request lifecycle (hooks, retry, binding, output)
-// mirrors the practical features of go-resty and imroc/req.
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// Client 是带 go-resty 风格链式 API 与类型化泛型端点的 HTTP 客户端。
+// Client is an HTTP client with a go-resty-style chain API and typed endpoints.
+// 请求生命周期（钩子、重试、绑定、输出）参考 go-resty 与 imroc/req。
+// the request lifecycle mirrors go-resty and imroc/req.
 type Client struct {
 	baseURL     string
 	httpClient  *http.Client
@@ -35,6 +45,9 @@ type Client struct {
 	logger      Logger
 	codecMgr    *CodecManager
 
+	// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+	// marshal Body if present, otherwise the whole request.
 	retryCount       int
 	retryWaitTime    time.Duration
 	retryMaxWaitTime time.Duration
@@ -43,9 +56,16 @@ type Client struct {
 	afterResponse    []ResponseHook
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// ClientOption 配置 Client。
 // ClientOption configures a Client.
 type ClientOption func(*Client)
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func NewClient(opts ...ClientOption) *Client {
 	c := &Client{
 		httpClient: &http.Client{
@@ -64,28 +84,53 @@ func NewClient(opts ...ClientOption) *Client {
 	return c
 }
 
-// RetryConditionFunc decides whether a request attempt should be retried.
-// It receives the response (nil on transport errors) and the error.
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// RetryConditionFunc 决定请求尝试是否应重试。
+// RetryConditionFunc decides whether an attempt should be retried.
+// 接收响应（传输错误时为 nil）与错误。
+// it receives the response (nil on transport errors) and the error.
 type RetryConditionFunc func(*Response, error) bool
 
-// RequestHook runs before a request is sent and may mutate the request.
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// RequestHook 在请求发送前运行，可修改请求。
+// RequestHook runs before a request is sent and may mutate it.
 type RequestHook func(*Request) error
 
-// ResponseHook runs after a response is received (body already parsed for
-// non-stream responses) and may mutate the response.
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// ResponseHook 在收到响应后运行（非流式响应 body 已解析），可修改响应。
+// ResponseHook runs after a response is received and may mutate it.
 type ResponseHook func(*Response) error
 
-// DefaultRetryWaitTime is the initial retry backoff when SetRetryCount is
-// used without an explicit wait time.
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// DefaultRetryWaitTime 是使用 SetRetryCount 且未显式设置等待时间时的初始退避。
+// DefaultRetryWaitTime is the initial backoff for SetRetryCount.
 const DefaultRetryWaitTime = 100 * time.Millisecond
 
-// DefaultRetryMaxWaitTime caps the exponential retry backoff.
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// DefaultRetryMaxWaitTime 限制指数退避上限。
+// DefaultRetryMaxWaitTime caps the exponential backoff.
 const DefaultRetryMaxWaitTime = 2 * time.Second
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func WithBaseURL(baseURL string) ClientOption {
 	return func(c *Client) { c.baseURL = strings.TrimRight(baseURL, "/") }
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func WithHTTPClient(client *http.Client) ClientOption {
 	return func(c *Client) {
 		if client != nil {
@@ -94,6 +139,9 @@ func WithHTTPClient(client *http.Client) ClientOption {
 	}
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func WithTransport(transport http.RoundTripper) ClientOption {
 	return func(c *Client) {
 		if transport == nil {
@@ -106,11 +154,19 @@ func WithTransport(transport http.RoundTripper) ClientOption {
 	}
 }
 
-// WithClientLogger sets the logger used by client debug output.
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// WithClientLogger 设置客户端调试输出使用的日志。
+// WithClientLogger sets the logger for client debug output.
 func WithClientLogger(logger Logger) ClientOption {
 	return func(c *Client) { c.logger = logger }
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// R 返回带客户端默认值的新 Request。
 // R returns a new Request with the client's defaults.
 func (c *Client) R() *Request {
 	r := &Request{
@@ -134,16 +190,25 @@ func (c *Client) R() *Request {
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (c *Client) SetBaseURL(baseURL string) *Client {
 	c.baseURL = strings.TrimRight(baseURL, "/")
 	return c
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (c *Client) SetHeader(key, value string) *Client {
 	c.headers.Set(key, value)
 	return c
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (c *Client) SetHeaders(headers map[string]string) *Client {
 	for k, v := range headers {
 		c.headers.Set(k, v)
@@ -151,36 +216,55 @@ func (c *Client) SetHeaders(headers map[string]string) *Client {
 	return c
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (c *Client) SetAuthToken(token string) *Client {
 	c.authToken = token
 	c.authScheme = "Bearer"
 	return c
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (c *Client) SetTimeout(d time.Duration) *Client {
 	c.httpClient.Timeout = d
 	return c
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (c *Client) SetDebug(debug bool) *Client {
 	c.debug = debug
 	return c
 }
 
-// SetLogger sets the logger used by client debug output.
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// SetLogger 设置客户端调试输出使用的日志。
+// SetLogger sets the logger for client debug output.
 func (c *Client) SetLogger(logger Logger) *Client {
 	c.logger = logger
 	return c
 }
 
-// SetRetryCount sets how many times a request is retried. The default retry
-// condition is transport error or status >= 500; override with
-// SetRetryConditions.
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// SetRetryCount 设置请求重试次数；默认条件是传输错误或状态码 >= 500。
+// SetRetryCount sets retry count; default condition is transport error or >= 500.
 func (c *Client) SetRetryCount(count int) *Client {
 	c.retryCount = count
 	return c
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// SetRetryWaitTime 设置初始重试退避。
 // SetRetryWaitTime sets the initial retry backoff.
 func (c *Client) SetRetryWaitTime(d time.Duration) *Client {
 	if d > 0 {
@@ -189,7 +273,11 @@ func (c *Client) SetRetryWaitTime(d time.Duration) *Client {
 	return c
 }
 
-// SetRetryMaxWaitTime caps the exponential retry backoff.
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// SetRetryMaxWaitTime 限制指数退避上限。
+// SetRetryMaxWaitTime caps the exponential backoff.
 func (c *Client) SetRetryMaxWaitTime(d time.Duration) *Client {
 	if d > 0 {
 		c.retryMaxWaitTime = d
@@ -197,25 +285,40 @@ func (c *Client) SetRetryMaxWaitTime(d time.Duration) *Client {
 	return c
 }
 
-// SetRetryConditions replaces the default retry condition. A request is
-// retried while any condition returns true.
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// SetRetryConditions 替换默认重试条件；任一条件为 true 即重试。
+// SetRetryConditions replaces the default condition; any true means retry.
 func (c *Client) SetRetryConditions(conditions ...RetryConditionFunc) *Client {
 	c.retryConditions = append([]RetryConditionFunc(nil), conditions...)
 	return c
 }
 
-// OnBeforeRequest registers request-level hooks run before each attempt.
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// OnBeforeRequest 注册每次尝试前运行的请求级钩子。
+// OnBeforeRequest registers hooks run before each attempt.
 func (c *Client) OnBeforeRequest(hooks ...RequestHook) *Client {
 	c.beforeRequest = append(c.beforeRequest, hooks...)
 	return c
 }
 
-// OnAfterResponse registers response-level hooks run after each attempt.
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// OnAfterResponse 注册每次尝试后运行的响应级钩子。
+// OnAfterResponse registers hooks run after each attempt.
 func (c *Client) OnAfterResponse(hooks ...ResponseHook) *Client {
 	c.afterResponse = append(c.afterResponse, hooks...)
 	return c
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// SetCookie 添加随每个请求发送的 cookie。
 // SetCookie adds a cookie sent with every request.
 func (c *Client) SetCookie(cookie *http.Cookie) *Client {
 	if cookie != nil {
@@ -224,6 +327,10 @@ func (c *Client) SetCookie(cookie *http.Cookie) *Client {
 	return c
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// SetCookies 添加随每个请求发送的多个 cookie。
 // SetCookies adds multiple cookies sent with every request.
 func (c *Client) SetCookies(cookies []*http.Cookie) *Client {
 	for _, cookie := range cookies {
@@ -232,6 +339,10 @@ func (c *Client) SetCookies(cookies []*http.Cookie) *Client {
 	return c
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// Request 是 go-resty 风格请求构建器。
 // Request is a go-resty-style request builder.
 type Request struct {
 	client *Client
@@ -239,6 +350,9 @@ type Request struct {
 	URL    string
 	ctx    context.Context
 
+	// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+	// marshal Body if present, otherwise the whole request.
 	Header             http.Header
 	QueryParams        url.Values
 	PathParams         map[string]string
@@ -258,6 +372,9 @@ type Request struct {
 	Timeout            time.Duration
 	FileFields         []*FileField
 
+	// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+	// marshal Body if present, otherwise the whole request.
 	RetryCount       int
 	RetryWaitTime    time.Duration
 	RetryMaxWaitTime time.Duration
@@ -267,6 +384,10 @@ type Request struct {
 	queryString      string
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// FileField 表示文件上传字段。
 // FileField represents a file upload field.
 type FileField struct {
 	Param    string
@@ -275,11 +396,17 @@ type FileField struct {
 	Reader   io.Reader
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) SetHeader(key, value string) *Request {
 	r.Header.Set(key, value)
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) SetHeaders(headers map[string]string) *Request {
 	for k, v := range headers {
 		r.Header.Set(k, v)
@@ -287,11 +414,17 @@ func (r *Request) SetHeaders(headers map[string]string) *Request {
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) SetQueryParam(key, value string) *Request {
 	r.QueryParams.Set(key, value)
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) SetQueryParams(params map[string]string) *Request {
 	for k, v := range params {
 		r.QueryParams.Set(k, v)
@@ -299,6 +432,10 @@ func (r *Request) SetQueryParams(params map[string]string) *Request {
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// SetQueryParamsFromValues 从 url.Values 设置查询参数。
 // SetQueryParamsFromValues sets query parameters from a url.Values.
 func (r *Request) SetQueryParamsFromValues(params url.Values) *Request {
 	for k, values := range params {
@@ -309,17 +446,27 @@ func (r *Request) SetQueryParamsFromValues(params url.Values) *Request {
 	return r
 }
 
-// SetQueryString appends a raw query string (already URL-encoded) to the URL.
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// SetQueryString 向 URL 追加原始查询串（已 URL 编码）。
+// SetQueryString appends a raw, URL-encoded query string.
 func (r *Request) SetQueryString(query string) *Request {
 	r.queryString = query
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) SetPathParam(key, value string) *Request {
 	r.PathParams[key] = value
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) SetPathParams(params map[string]string) *Request {
 	for k, v := range params {
 		r.PathParams[k] = v
@@ -327,23 +474,35 @@ func (r *Request) SetPathParams(params map[string]string) *Request {
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) SetBody(body interface{}) *Request {
 	r.Body = body
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) SetJSONBody(body interface{}) *Request {
 	r.Body = body
 	r.Header.Set("Content-Type", "application/json")
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) SetXMLBody(body interface{}) *Request {
 	r.Body = body
 	r.Header.Set("Content-Type", "application/xml")
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) SetFormData(data map[string]string) *Request {
 	for k, v := range data {
 		r.FormData.Set(k, v)
@@ -351,6 +510,9 @@ func (r *Request) SetFormData(data map[string]string) *Request {
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) SetFile(param, filePath string) *Request {
 	r.FileFields = append(r.FileFields, &FileField{
 		Param:    param,
@@ -359,6 +521,9 @@ func (r *Request) SetFile(param, filePath string) *Request {
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) SetFileReader(param, fileName string, reader io.Reader) *Request {
 	r.FileFields = append(r.FileFields, &FileField{
 		Param:    param,
@@ -368,28 +533,46 @@ func (r *Request) SetFileReader(param, fileName string, reader io.Reader) *Reque
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) SetResult(result interface{}) *Request {
 	r.Result = result
 	return r
 }
 
-// SetError sets the target for automatic non-2xx response binding.
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// SetError 设置非 2xx 响应自动绑定的目标。
+// SetError sets the target for automatic non-2xx binding.
 func (r *Request) SetError(err interface{}) *Request {
 	r.Error = err
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// SetOutput 将响应体写入给定文件路径。
 // SetOutput writes the response body to the given file path.
 func (r *Request) SetOutput(path string) *Request {
 	r.Output = path
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) SetStreamResponse(stream bool) *Request {
 	r.StreamResponse = stream
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// SetDoNotParseResponse 是 SetStreamResponse(true) 的别名。
 // SetDoNotParseResponse is an alias for SetStreamResponse(true).
 func (r *Request) SetDoNotParseResponse(stream bool) *Request {
 	r.StreamResponse = stream
@@ -397,29 +580,47 @@ func (r *Request) SetDoNotParseResponse(stream bool) *Request {
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) SetContext(ctx context.Context) *Request {
 	r.ctx = ctx
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// SetTimeout 覆盖本请求的客户端超时。
 // SetTimeout overrides the client timeout for this request.
 func (r *Request) SetTimeout(d time.Duration) *Request {
 	r.Timeout = d
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) SetAuthToken(token string) *Request {
 	r.AuthToken = token
 	r.AuthScheme = "Bearer"
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// SetAuthScheme 覆盖 SetAuthToken 使用的认证 scheme。
 // SetAuthScheme overrides the auth scheme used with SetAuthToken.
 func (r *Request) SetAuthScheme(scheme string) *Request {
 	r.AuthScheme = scheme
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// SetBasicAuth 为本请求设置 HTTP Basic 认证。
 // SetBasicAuth sets HTTP Basic authentication for this request.
 func (r *Request) SetBasicAuth(user, pass string) *Request {
 	r.BasicAuthUser = user
@@ -427,6 +628,9 @@ func (r *Request) SetBasicAuth(user, pass string) *Request {
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) SetCookie(cookie *http.Cookie) *Request {
 	if cookie != nil {
 		r.Cookies = append(r.Cookies, cookie)
@@ -434,6 +638,10 @@ func (r *Request) SetCookie(cookie *http.Cookie) *Request {
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// SetCookies 向请求添加多个 cookie。
 // SetCookies adds multiple cookies to the request.
 func (r *Request) SetCookies(cookies []*http.Cookie) *Request {
 	for _, cookie := range cookies {
@@ -442,17 +650,28 @@ func (r *Request) SetCookies(cookies []*http.Cookie) *Request {
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) SetContentType(ct string) *Request {
 	r.Header.Set("Content-Type", ct)
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// SetRetryCount 覆盖本请求的客户端重试次数。
 // SetRetryCount overrides the client retry count for this request.
 func (r *Request) SetRetryCount(count int) *Request {
 	r.RetryCount = count
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// SetRetryWaitTime 覆盖本请求的客户端重试等待。
 // SetRetryWaitTime overrides the client retry wait for this request.
 func (r *Request) SetRetryWaitTime(d time.Duration) *Request {
 	if d > 0 {
@@ -461,7 +680,11 @@ func (r *Request) SetRetryWaitTime(d time.Duration) *Request {
 	return r
 }
 
-// SetRetryMaxWaitTime overrides the client retry backoff cap for this request.
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// SetRetryMaxWaitTime 覆盖本请求的客户端退避上限。
+// SetRetryMaxWaitTime overrides the client backoff cap for this request.
 func (r *Request) SetRetryMaxWaitTime(d time.Duration) *Request {
 	if d > 0 {
 		r.RetryMaxWaitTime = d
@@ -469,67 +692,112 @@ func (r *Request) SetRetryMaxWaitTime(d time.Duration) *Request {
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// SetRetryConditions 覆盖本请求的客户端重试条件。
 // SetRetryConditions overrides the client retry conditions for this request.
 func (r *Request) SetRetryConditions(conditions ...RetryConditionFunc) *Request {
 	r.RetryConditions = append([]RetryConditionFunc(nil), conditions...)
 	return r
 }
 
-// OnBeforeRequest registers request-level hooks for this request only.
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// OnBeforeRequest 仅为该请求注册请求级钩子。
+// OnBeforeRequest registers hooks for this request only.
 func (r *Request) OnBeforeRequest(hooks ...RequestHook) *Request {
 	r.beforeRequest = append(r.beforeRequest, hooks...)
 	return r
 }
 
-// OnAfterResponse registers response-level hooks for this request only.
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// OnAfterResponse 仅为该请求注册响应级钩子。
+// OnAfterResponse registers hooks for this request only.
 func (r *Request) OnAfterResponse(hooks ...ResponseHook) *Request {
 	r.afterResponse = append(r.afterResponse, hooks...)
 	return r
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) Execute(method, url string) (*Response, error) {
 	r.Method = method
 	r.URL = url
 	return r.client.execute(r)
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) Get(url string) (*Response, error) {
 	return r.Execute(http.MethodGet, url)
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) Post(url string) (*Response, error) {
 	return r.Execute(http.MethodPost, url)
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) Put(url string) (*Response, error) {
 	return r.Execute(http.MethodPut, url)
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) Delete(url string) (*Response, error) {
 	return r.Execute(http.MethodDelete, url)
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) Patch(url string) (*Response, error) {
 	return r.Execute(http.MethodPatch, url)
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Request) Head(url string) (*Response, error) {
 	return r.Execute(http.MethodHead, url)
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (c *Client) execute(r *Request) (*Response, error) {
 	start := time.Now()
 
+	// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+	// marshal Body if present, otherwise the whole request.
 	urlStr := r.URL
 	for k, v := range r.PathParams {
 		urlStr = strings.ReplaceAll(urlStr, "{"+k+"}", url.PathEscape(v))
 		urlStr = strings.ReplaceAll(urlStr, ":"+k, url.PathEscape(v))
 	}
 
+	// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+	// marshal Body if present, otherwise the whole request.
 	if c.baseURL != "" && !strings.HasPrefix(urlStr, "http") {
 		urlStr = c.baseURL + "/" + strings.TrimLeft(urlStr, "/")
 	}
 
+	// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+	// marshal Body if present, otherwise the whole request.
 	if len(r.QueryParams) > 0 {
 		if strings.Contains(urlStr, "?") {
 			urlStr += "&" + r.QueryParams.Encode()
@@ -545,13 +813,22 @@ func (c *Client) execute(r *Request) (*Response, error) {
 		urlStr += sep + strings.TrimPrefix(r.queryString, "?")
 	}
 
+	// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+	// marshal Body if present, otherwise the whole request.
 	var bodyBytes []byte
 	contentType := r.Header.Get("Content-Type")
 
+	// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+	// marshal Body if present, otherwise the whole request.
 	if len(r.FileFields) > 0 {
 		return c.executeMultipart(r, urlStr, start)
 	}
 
+	// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+	// marshal Body if present, otherwise the whole request.
 	if len(r.FormData) > 0 && contentType == "" {
 		contentType = "application/x-www-form-urlencoded"
 		bodyBytes = []byte(r.FormData.Encode())
@@ -577,6 +854,9 @@ func (c *Client) execute(r *Request) (*Response, error) {
 	return c.send(r, urlStr, bodyBytes, contentType, start)
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (c *Client) send(r *Request, urlStr string, bodyBytes []byte, contentType string, start time.Time) (*Response, error) {
 	ctx := r.ctx
 	if ctx == nil {
@@ -588,6 +868,9 @@ func (c *Client) send(r *Request, urlStr string, bodyBytes []byte, contentType s
 		defer cancel()
 	}
 
+	// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+	// marshal Body if present, otherwise the whole request.
 	attempts := 1 + c.retryCount
 	if r.RetryCount > 0 {
 		attempts = 1 + r.RetryCount
@@ -605,6 +888,9 @@ func (c *Client) send(r *Request, urlStr string, bodyBytes []byte, contentType s
 		conditions = r.RetryConditions
 	}
 
+	// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+	// marshal Body if present, otherwise the whole request.
 	var lastResp *Response
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
@@ -625,11 +911,17 @@ func (c *Client) send(r *Request, urlStr string, bodyBytes []byte, contentType s
 			body = bytes.NewReader(bodyBytes)
 		}
 
+		// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+		// marshal Body if present, otherwise the whole request.
 		httpReq, err := http.NewRequestWithContext(ctx, r.Method, urlStr, body)
 		if err != nil {
 			return nil, err
 		}
 
+		// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+		// marshal Body if present, otherwise the whole request.
 		for _, hook := range c.beforeRequest {
 			if hook != nil {
 				if err := hook(r); err != nil {
@@ -645,6 +937,9 @@ func (c *Client) send(r *Request, urlStr string, bodyBytes []byte, contentType s
 			}
 		}
 
+		// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+		// marshal Body if present, otherwise the whole request.
 		for k, v := range r.Header {
 			for _, vv := range v {
 				httpReq.Header.Add(k, vv)
@@ -665,6 +960,9 @@ func (c *Client) send(r *Request, urlStr string, bodyBytes []byte, contentType s
 			httpReq.AddCookie(cookie)
 		}
 
+		// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+		// marshal Body if present, otherwise the whole request.
 		httpResp, err := c.httpClient.Do(httpReq)
 		if err != nil {
 			lastErr = err
@@ -684,6 +982,9 @@ func (c *Client) send(r *Request, urlStr string, bodyBytes []byte, contentType s
 		}
 		lastResp = resp
 
+		// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+		// marshal Body if present, otherwise the whole request.
 		if r.StreamResponse || r.DoNotParseResponse {
 			resp.rawBody = httpResp.Body
 		} else {
@@ -714,6 +1015,9 @@ func (c *Client) send(r *Request, urlStr string, bodyBytes []byte, contentType s
 			}
 		}
 
+		// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+		// marshal Body if present, otherwise the whole request.
 		for _, hook := range c.afterResponse {
 			if hook != nil {
 				if err := hook(resp); err != nil {
@@ -729,6 +1033,9 @@ func (c *Client) send(r *Request, urlStr string, bodyBytes []byte, contentType s
 			}
 		}
 
+		// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+		// marshal Body if present, otherwise the whole request.
 		if c.debug && c.logger != nil {
 			c.logger.InfoContext(ctx, "http client request",
 				"method", r.Method,
@@ -739,6 +1046,9 @@ func (c *Client) send(r *Request, urlStr string, bodyBytes []byte, contentType s
 			)
 		}
 
+		// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+		// marshal Body if present, otherwise the whole request.
 		if shouldRetry(resp, nil, conditions) && attempt+1 < attempts {
 			if resp.rawBody != nil {
 				_ = resp.rawBody.Close()
@@ -750,6 +1060,9 @@ func (c *Client) send(r *Request, urlStr string, bodyBytes []byte, contentType s
 	return lastResp, lastErr
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func shouldRetry(resp *Response, err error, conditions []RetryConditionFunc) bool {
 	if len(conditions) == 0 {
 		return err != nil || (resp != nil && resp.StatusCode >= 500)
@@ -762,20 +1075,32 @@ func shouldRetry(resp *Response, err error, conditions []RetryConditionFunc) boo
 	return false
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (c *Client) executeMultipart(r *Request, urlStr string, start time.Time) (*Response, error) {
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
 
+	// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+	// marshal Body if present, otherwise the whole request.
 	for k, v := range r.FormData {
 		for _, vv := range v {
 			_ = writer.WriteField(k, vv)
 		}
 	}
 
+	// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+	// marshal Body if present, otherwise the whole request.
 	for _, f := range r.FileFields {
 		var fileReader io.Reader
 		var fileName string
 
+		// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+		// marshal Body if present, otherwise the whole request.
 		if f.Reader != nil {
 			fileReader = f.Reader
 			fileName = f.FileName
@@ -789,6 +1114,9 @@ func (c *Client) executeMultipart(r *Request, urlStr string, start time.Time) (*
 			fileName = filepath.Base(f.FilePath)
 		}
 
+		// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+		// marshal Body if present, otherwise the whole request.
 		part, err := writer.CreateFormFile(f.Param, fileName)
 		if err != nil {
 			return nil, err
@@ -799,10 +1127,17 @@ func (c *Client) executeMultipart(r *Request, urlStr string, start time.Time) (*
 		}
 	}
 
+	// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+	// marshal Body if present, otherwise the whole request.
 	_ = writer.Close()
 	return c.send(r, urlStr, buf.Bytes(), writer.FormDataContentType(), start)
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// Response 表示 HTTP 响应。
 // Response represents an HTTP response.
 type Response struct {
 	StatusCode  int
@@ -817,14 +1152,25 @@ type Response struct {
 	errValue    interface{}
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Response) String() string  { return string(r.Body) }
 func (r *Response) Bytes() []byte   { return r.Body }
 func (r *Response) IsSuccess() bool { return r.StatusCode >= 200 && r.StatusCode < 300 }
 func (r *Response) IsError() bool   { return !r.IsSuccess() }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// Time 返回请求总耗时。
 // Time returns the total request duration.
 func (r *Response) Time() time.Duration { return r.Duration }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// ReceivedAt 返回响应接收时间。
 // ReceivedAt returns when the response was received.
 func (r *Response) ReceivedAt() time.Time {
 	if r == nil {
@@ -833,6 +1179,10 @@ func (r *Response) ReceivedAt() time.Time {
 	return r.receivedAt
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// Size 返回缓冲的响应体大小。
 // Size returns the buffered response body size.
 func (r *Response) Size() int64 {
 	if r == nil {
@@ -841,6 +1191,10 @@ func (r *Response) Size() int64 {
 	return int64(len(r.Body))
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// Cookies 返回原始响应的 Set-Cookie 头。
 // Cookies returns the Set-Cookie headers of the raw response.
 func (r *Response) Cookies() []*http.Cookie {
 	if r == nil || r.RawResponse == nil {
@@ -849,7 +1203,11 @@ func (r *Response) Cookies() []*http.Cookie {
 	return r.RawResponse.Cookies()
 }
 
-// Error returns the value bound from a non-2xx body via Request.SetError.
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// Error 返回通过 Request.SetError 从非 2xx 响应体绑定的值。
+// Error returns the value bound from a non-2xx body via SetError.
 func (r *Response) Error() interface{} {
 	if r == nil {
 		return nil
@@ -857,7 +1215,11 @@ func (r *Response) Error() interface{} {
 	return r.errValue
 }
 
-// Result returns the value bound from a 2xx body via Request.SetResult.
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// Result 返回通过 Request.SetResult 从 2xx 响应体绑定的值。
+// Result returns the value bound from a 2xx body via SetResult.
 func (r *Response) Result() interface{} {
 	if r == nil || r.Request == nil {
 		return nil
@@ -865,6 +1227,9 @@ func (r *Response) Result() interface{} {
 	return r.Request.Result
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Response) RawBody() io.ReadCloser {
 	if r == nil {
 		return io.NopCloser(bytes.NewReader(nil))
@@ -875,12 +1240,18 @@ func (r *Response) RawBody() io.ReadCloser {
 	return io.NopCloser(bytes.NewReader(r.Body))
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Response) BindJSON(target interface{}) error {
 	return json.Unmarshal(r.Body, target)
 }
 
-// Unmarshal decodes the response body based on its Content-Type (XML or
-// JSON; JSON is the fallback).
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
+// Unmarshal 按 Content-Type 解码响应体（XML 或 JSON，JSON 为回退）。
+// Unmarshal decodes by Content-Type (XML or JSON; JSON is the fallback).
 func (r *Response) Unmarshal(target interface{}) error {
 	if r == nil {
 		return fmt.Errorf("response is nil")
@@ -892,6 +1263,9 @@ func (r *Response) Unmarshal(target interface{}) error {
 	return json.Unmarshal(r.Body, target)
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func (r *Response) UnwrapEnvelope(target interface{}) error {
 	var env struct {
 		Code int             `json:"code"`
@@ -907,12 +1281,20 @@ func (r *Response) UnwrapEnvelope(target interface{}) error {
 	return json.Unmarshal(r.Body, target)
 }
 
-// Endpoint generic callers
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
 
+// marshal Body if present, otherwise the whole request.
+// 类型化泛型端点调用；typed generic endpoint callers.
+
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func Do[Req, Resp any](ctx context.Context, client *Client, method, path string, req *Req) (*Resp, error) {
 
+	// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+	// marshal Body if present, otherwise the whole request.
 	// For generic endpoints, we need to send just the Body field content
-	// because the server's parseBody decodes into the Body nested struct.
 	// If Req has a Body field, marshal just that; otherwise marshal the whole request.
 	var bodyReader io.Reader
 	if req != nil {
@@ -937,28 +1319,43 @@ func Do[Req, Resp any](ctx context.Context, client *Client, method, path string,
 		}
 	}
 
+	// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+	// marshal Body if present, otherwise the whole request.
 	urlStr := path
 	if client.baseURL != "" {
 		urlStr = strings.TrimRight(client.baseURL, "/") + "/" + strings.TrimLeft(path, "/")
 	}
 
+	// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+	// marshal Body if present, otherwise the whole request.
 	httpReq, err := http.NewRequestWithContext(ctx, method, urlStr, bodyReader)
 	if err != nil {
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
+	// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+	// marshal Body if present, otherwise the whole request.
 	httpResp, err := client.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, err
 	}
 	defer httpResp.Body.Close()
 
+	// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+	// marshal Body if present, otherwise the whole request.
 	respData, err := io.ReadAll(httpResp.Body)
 	if err != nil {
 		return nil, err
 	}
 
+	// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+	// marshal Body if present, otherwise the whole request.
 	var env struct {
 		Code int             `json:"code"`
 		Msg  string          `json:"msg"`
@@ -968,6 +1365,9 @@ func Do[Req, Resp any](ctx context.Context, client *Client, method, path string,
 		return nil, err
 	}
 
+	// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+	// marshal Body if present, otherwise the whole request.
 	var resp Resp
 	if env.Data != nil {
 		if err := json.Unmarshal(env.Data, &resp); err != nil {
@@ -981,18 +1381,30 @@ func Do[Req, Resp any](ctx context.Context, client *Client, method, path string,
 	return &resp, nil
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func GET[Req, Resp any](ctx context.Context, client *Client, path string) (*Resp, error) {
 	return Do[Req, Resp](ctx, client, http.MethodGet, path, nil)
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func POST[Req, Resp any](ctx context.Context, client *Client, path string, req *Req) (*Resp, error) {
 	return Do[Req, Resp](ctx, client, http.MethodPost, path, req)
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func PUT[Req, Resp any](ctx context.Context, client *Client, path string, req *Req) (*Resp, error) {
 	return Do[Req, Resp](ctx, client, http.MethodPut, path, req)
 }
 
+// If Req has a Body field, marshal just that; otherwise marshal the whole request.	// 若 Req 有 Body 字段只序列化它，否则序列化整个请求。
+
+// marshal Body if present, otherwise the whole request.
 func DELETE[Req, Resp any](ctx context.Context, client *Client, path string) (*Resp, error) {
 	return Do[Req, Resp](ctx, client, http.MethodDelete, path, nil)
 }
