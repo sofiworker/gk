@@ -27,6 +27,7 @@
 - gnet：`netinfo.Interface` 移除永不填充/错位字段（DNSServers/DHCPServer/Location/VendorID/DeviceID），新增 `BusInfo`/`DriverVersion` 正确映射 ethtool；`capture` 新增 `WithFilterInstructions`；`netinfo` 补测试与 gnet 子包文档。
 - 仓库：新增文档语言规范（README 与注释统一**中英双语**、错误消息保持英文、标识符与测试名保持英文），全部包 README 统一为中文为主的双语文档。
 - 仓库：注释语言规范修订为**中英双语**（中文在前、英文在后），并规定冗余注释（复述代码、无信息量标签）直接删除；首批完成 gresolver/gsql/gcache 库文件与 gretry/grx/gconfig/gresolver/gcrypt/gsd/glog 测试注释的清理。
+- 仓库：第二批复述型注释清理（gcache/gsql/gcompress 测试中的纯标签删除），进度见 `docs/language-sweep.md`。
 
 ### Changed
 

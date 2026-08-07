@@ -9,7 +9,6 @@ import (
 
 func TestTimedCache(t *testing.T) {
 	t.Run("NewTimedCache", func(t *testing.T) {
-		// Test with a cleanup interval
 		cache := NewTimedCache(10 * time.Millisecond)
 		if cache.stop == nil {
 			t.Error("expected stop channel to be initialized")
@@ -19,7 +18,6 @@ func TestTimedCache(t *testing.T) {
 			t.Error("expected stop channel to be nil after Close")
 		}
 
-		// Test without a cleanup interval
 		cache = NewTimedCache(0)
 		if cache.stop != nil {
 			t.Error("expected stop channel to be nil for zero interval")
@@ -30,14 +28,12 @@ func TestTimedCache(t *testing.T) {
 		cache := NewTimedCache(0)
 		defer cache.Close()
 
-		// Test item that doesn't expire
 		cache.Set("key1", "value1", 0)
 		val, ok := cache.Get("key1")
 		if !ok || val != "value1" {
 			t.Errorf("expected to get 'value1', got '%v'", val)
 		}
 
-		// Test item with TTL
 		cache.Set("key2", 123, 100*time.Millisecond)
 		val, ok = cache.Get("key2")
 		if !ok || val != 123 {
@@ -69,7 +65,7 @@ func TestTimedCache(t *testing.T) {
 			t.Errorf("expected length 2, got %d", cache.Len())
 		}
 
-		// Wait for cleanup to run
+		// 等待后台清理执行；wait for the background cleanup to run.
 		time.Sleep(15 * time.Millisecond)
 
 		if cache.Len() != 1 {
@@ -108,7 +104,7 @@ func TestTimedCache(t *testing.T) {
 		var wg sync.WaitGroup
 		numGoroutines := 100
 
-		// Concurrent writes
+		// 并发写入；concurrent writes.
 		for i := 0; i < numGoroutines; i++ {
 			wg.Add(1)
 			go func(i int) {
@@ -124,10 +120,10 @@ func TestTimedCache(t *testing.T) {
 			t.Errorf("expected cache length %d, got %d", numGoroutines, cache.Len())
 		}
 
-		// Wait for some items to expire
+		// 等待部分条目过期；wait for some items to expire.
 		time.Sleep(50 * time.Millisecond)
 
-		// Concurrent reads and deletes
+		// 并发读取与删除；concurrent reads and deletes.
 		var foundCount int
 		var mu sync.Mutex
 		for i := 0; i < numGoroutines; i++ {
@@ -148,9 +144,8 @@ func TestTimedCache(t *testing.T) {
 		if foundCount == 0 {
 			t.Error("expected some items to be found before deletion")
 		}
-		// The cache might not be empty if some items were set with very long TTLs or if cleanup hasn't run yet for all.
-		// A more precise check would be to count expected remaining items based on TTLs.
-		// For this test, we just ensure it's not the initial full count.
+		// 长 TTL 或清理未完成时缓存可能非空，这里只确保数量已减少；
+		// long TTLs or pending cleanup may keep items; only assert the count decreased.
 		if cache.Len() == numGoroutines {
 			t.Errorf("expected cache to have fewer than %d items after concurrent operations, got len %d", numGoroutines, cache.Len())
 		}

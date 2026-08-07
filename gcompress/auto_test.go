@@ -13,7 +13,6 @@ func TestAutoCompress(t *testing.T) {
 	_ = os.Mkdir(srcDir, 0755)
 	_ = os.WriteFile(filepath.Join(srcDir, "test.txt"), []byte("data"), 0644)
 
-	// Test Zip
 	zipFile := filepath.Join(tmpDir, "test.zip")
 	if err := cm.AutoCompress(srcDir, zipFile); err != nil {
 		t.Errorf("AutoCompress zip failed: %v", err)
@@ -22,7 +21,6 @@ func TestAutoCompress(t *testing.T) {
 		t.Errorf("AutoDecompress zip failed: %v", err)
 	}
 
-	// Test Tar
 	tarFile := filepath.Join(tmpDir, "test.tar")
 	if err := cm.AutoCompress(srcDir, tarFile); err != nil {
 		t.Errorf("AutoCompress tar failed: %v", err)
@@ -31,7 +29,6 @@ func TestAutoCompress(t *testing.T) {
 		t.Errorf("AutoDecompress tar failed: %v", err)
 	}
 
-	// Test Tgz
 	tgzFile := filepath.Join(tmpDir, "test.tar.gz")
 	if err := cm.AutoCompress(srcDir, tgzFile); err != nil {
 		t.Errorf("AutoCompress tgz failed: %v", err)
@@ -46,7 +43,6 @@ func TestAutoCompress(t *testing.T) {
 		t.Errorf("AutoCompress .tgz failed: %v", err)
 	}
 
-	// Test Unsupported
 	if err := cm.AutoCompress(srcDir, "test.rar"); err == nil {
 		t.Error("expected error for rar")
 	}

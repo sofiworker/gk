@@ -12,7 +12,6 @@ func TestTarUtil(t *testing.T) {
 	tarFile := filepath.Join(tmpDir, "test.tar")
 	outDir := filepath.Join(tmpDir, "out")
 
-	// Setup source
 	if err := os.Mkdir(srcDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -22,17 +21,14 @@ func TestTarUtil(t *testing.T) {
 
 	tu := NewTarUtil()
 
-	// Compress
 	if err := tu.Compress(srcDir, tarFile); err != nil {
 		t.Fatalf("Compress failed: %v", err)
 	}
 
-	// Decompress
 	if err := tu.Decompress(tarFile, outDir); err != nil {
 		t.Fatalf("Decompress failed: %v", err)
 	}
 
-	// Verify
 	c1, err := os.ReadFile(filepath.Join(outDir, "file1.txt"))
 	if err != nil {
 		t.Fatal(err)

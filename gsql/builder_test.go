@@ -12,13 +12,14 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// mockExecutor is a mock implementation of the Executor interface for testing.
+// mockExecutor 是 Executor 接口的测试桩。
+// mockExecutor is a mock implementation of Executor for testing.
 type mockExecutor struct {
-	// Fields to store the last query and args for inspection
+	// 记录最后执行的查询与参数以便断言；store the last query and args for inspection.
 	lastQuery string
 	lastArgs  []interface{}
 
-	// Fields to control the mock's behavior
+	// 控制桩行为；fields to control the mock behavior.
 	result sql.Result
 	err    error
 }
@@ -35,7 +36,7 @@ func (m *mockExecutor) GetContext(ctx context.Context, dest interface{}, query s
 	if m.err != nil {
 		return m.err
 	}
-	// Simulate finding a result for count queries
+	// 模拟 count 查询返回结果；simulate a result for count queries.
 	if ptr, ok := dest.(*int64); ok {
 		*ptr = 1
 	}
@@ -48,30 +49,31 @@ func (m *mockExecutor) SelectContext(ctx context.Context, dest interface{}, quer
 	return m.err
 }
 
-// newTestBuilder creates a new Builder with a mock executor for testing.
+// newTestBuilder 创建带 mock executor 的 Builder 用于测试。
+// newTestBuilder creates a Builder with a mock executor.
 func newTestBuilder() (*Builder, *mockExecutor) {
 	executor := &mockExecutor{}
 	builder := &Builder{
 		executor: executor,
-		dialect:  newDialect("mysql"), // Using mysql dialect for predictable placeholders
+		dialect:  newDialect("mysql"), // 使用 mysql 方言以获得可预期的占位符；mysql dialect for predictable placeholders.
 	}
 	return builder, executor
 }
 
 func TestBuilder_Subquery(t *testing.T) {
 	t.Run("should build where clause with subquery", func(t *testing.T) {
-		// Subquery to select user IDs from the 'banned_users' table
+		// 子查询：从 banned_users 表取用户 ID；subquery selecting IDs from banned_users.
 		subBuilder, _ := newTestBuilder()
 		subBuilder.From("banned_users").Select("user_id")
 
-		// Main query to select users who are not in the banned list
+		// 主查询：选择不在封禁列表中的用户；main query excluding banned users.
 		builder, _ := newTestBuilder()
 		builder.From("users").
 			Select("id", "name").
 			Where("id NOT IN ?", subBuilder)
 
 		expectedSQL := "SELECT id, name FROM users WHERE id NOT IN (SELECT user_id FROM banned_users)"
-		var expectedArgs []interface{} // Expect a nil slice to match the implementation's return
+		var expectedArgs []interface{} // 期望 nil 切片与实现返回一致；expect a nil slice to match.
 
 		sql, args, err := builder.ToSQL()
 		if err != nil {
@@ -88,13 +90,13 @@ func TestBuilder_Subquery(t *testing.T) {
 	})
 
 	t.Run("should build where clause with subquery with its own where clause", func(t *testing.T) {
-		// Subquery
+		// 子查询；subquery.
 		subBuilder, _ := newTestBuilder()
 		subBuilder.From("orders").
 			Select("user_id").
 			Where("status = ?", "shipped")
 
-		// Main query
+		// 主查询；main query.
 		builder, _ := newTestBuilder()
 		builder.From("users").
 			Select("id", "name").
@@ -118,11 +120,11 @@ func TestBuilder_Subquery(t *testing.T) {
 	})
 
 	t.Run("should return error if subquery fails", func(t *testing.T) {
-		// Subquery with an error (e.g., no table)
+		// 构造子查询错误（例如缺表）；subquery that errors (e.g., missing table).
 		subBuilder, _ := newTestBuilder()
-		// Missing .From("some_table") to cause an error
+		// 缺少 .From 以触发错误；missing From to cause an error.
 
-		// Main query
+		// 主查询；main query.
 		builder, _ := newTestBuilder()
 		builder.From("users").Where("id IN ?", subBuilder)
 
@@ -164,13 +166,14 @@ func TestBuilder_Insert(t *testing.T) {
 	data := map[string]interface{}{"name": "John Doe", "age": 30}
 	builder.Insert("users", data)
 
-	// The order of columns in the generated SQL can vary with maps, so we check for both possibilities.
+	// 使用 map 时生成 SQL 的列顺序可能不同，因此同时检查两种可能；
+	// map iteration may vary column order, so check both possibilities.
 	sql, args, err := builder.ToSQL()
 	if err != nil {
 		t.Fatalf("ToSQL() returned an unexpected error: %v", err)
 	}
 
-	// Sort args to make the test deterministic
+	// 排序参数使测试确定性；sort args for determinism.
 	var sortedArgs []interface{}
 	if len(args) > 1 && args[0] == "John Doe" {
 		sortedArgs = []interface{}{"John Doe", 30}
@@ -245,7 +248,7 @@ func TestBuilder_Delete(t *testing.T) {
 func TestBuilder_UnsafeUpdate(t *testing.T) {
 	builder, _ := newTestBuilder()
 	data := map[string]interface{}{"name": "Jane Doe"}
-	builder.Update("users", data) // No WHERE clause
+	builder.Update("users", data) // 无 WHERE 子句；no WHERE clause.
 
 	_, _, err := builder.ToSQL()
 	if err == nil {

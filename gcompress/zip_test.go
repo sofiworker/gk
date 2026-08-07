@@ -12,7 +12,6 @@ func TestZipUtil(t *testing.T) {
 	zipFile := filepath.Join(tmpDir, "test.zip")
 	outDir := filepath.Join(tmpDir, "out")
 
-	// Setup source
 	if err := os.Mkdir(srcDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +27,6 @@ func TestZipUtil(t *testing.T) {
 
 	z := NewZipUtil()
 
-	// Compress
 	if err := z.Compress(srcDir, zipFile); err != nil {
 		t.Fatalf("Compress failed: %v", err)
 	}
@@ -59,12 +57,10 @@ func TestZipUtil(t *testing.T) {
 		// It might be possible that implementation details vary.
 	}
 
-	// Decompress
 	if err := z.Decompress(zipFile, outDir); err != nil {
 		t.Fatalf("Decompress failed: %v", err)
 	}
 
-	// Verify
 	c1, err := os.ReadFile(filepath.Join(outDir, "file1.txt"))
 	if err != nil {
 		t.Fatal(err)

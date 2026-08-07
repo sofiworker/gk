@@ -10,7 +10,6 @@ import (
 func TestJSONSerializer(t *testing.T) {
 	s := JSONSerializer{}
 
-	// Test Serialize
 	data, err := s.Serialize(map[string]string{"foo": "bar"})
 	if err != nil {
 		t.Fatalf("Serialize failed: %v", err)
@@ -19,7 +18,6 @@ func TestJSONSerializer(t *testing.T) {
 		t.Fatalf("unexpected serialized bytes: %s", data)
 	}
 
-	// Test Deserialize
 	var v map[string]string
 	err = s.Deserialize([]byte(`{"foo":"bar"}`), &v)
 	if err != nil {
@@ -118,12 +116,10 @@ func runCacheTestSuite(t *testing.T, cache Cache) {
 	})
 
 	t.Run("KeyValue", func(t *testing.T) {
-		// Set
 		if err := cache.Set("key1", []byte("value1"), 10*time.Second); err != nil {
 			t.Fatalf("Set failed: %v", err)
 		}
 
-		// Get
 		val, err := cache.Get("key1")
 		if err != nil {
 			t.Fatalf("Get failed: %v", err)
@@ -138,7 +134,6 @@ func runCacheTestSuite(t *testing.T, cache Cache) {
 			t.Errorf("Get non-existent: expected ErrCacheMiss, got %v", err)
 		}
 
-		// Exists
 		exists, err := cache.Exists("key1")
 		if err != nil {
 			t.Fatalf("Exists failed: %v", err)
@@ -147,7 +142,6 @@ func runCacheTestSuite(t *testing.T, cache Cache) {
 			t.Error("Exists: expected key1 to exist")
 		}
 
-		// Delete
 		if err := cache.Delete("key1"); err != nil {
 			t.Fatalf("Delete failed: %v", err)
 		}
@@ -166,7 +160,6 @@ func runCacheTestSuite(t *testing.T, cache Cache) {
 			t.Fatalf("Set with expiration failed: %v", err)
 		}
 
-		// TTL
 		ttl, err := cache.TTL("key2")
 		if err != nil {
 			t.Fatalf("TTL failed: %v", err)
@@ -182,7 +175,6 @@ func runCacheTestSuite(t *testing.T, cache Cache) {
 			t.Errorf("Get after expiration: expected ErrCacheMiss, got %v", err)
 		}
 
-		// Expire
 		if err := cache.Set("key3", []byte("value3"), 0); err != nil {
 			t.Fatalf("Set for Expire failed: %v", err)
 		}
@@ -199,7 +191,6 @@ func runCacheTestSuite(t *testing.T, cache Cache) {
 	})
 
 	t.Run("Counter", func(t *testing.T) {
-		// Increment
 		newVal, err := cache.Increment("counter1", 1)
 		if err != nil {
 			t.Fatalf("Increment failed: %v", err)
@@ -215,7 +206,6 @@ func runCacheTestSuite(t *testing.T, cache Cache) {
 			t.Errorf("Increment again: expected 5, got %d", newVal)
 		}
 
-		// Decrement
 		newVal, err = cache.Decrement("counter1", 2)
 		if err != nil {
 			t.Fatalf("Decrement failed: %v", err)
@@ -228,7 +218,6 @@ func runCacheTestSuite(t *testing.T, cache Cache) {
 	// Only run these tests if the cache is not MemoryCache
 	if _, ok := cache.(*MemoryCache); !ok {
 		t.Run("Hash", func(t *testing.T) {
-			// HashSet
 			if err := cache.HashSet("hash1", "field1", []byte("value1")); err != nil {
 				t.Fatalf("HashSet failed: %v", err)
 			}
@@ -236,7 +225,6 @@ func runCacheTestSuite(t *testing.T, cache Cache) {
 				t.Fatalf("HashSet failed: %v", err)
 			}
 
-			// HashGet
 			val, err := cache.HashGet("hash1", "field1")
 			if err != nil {
 				t.Fatalf("HashGet failed: %v", err)
@@ -245,7 +233,6 @@ func runCacheTestSuite(t *testing.T, cache Cache) {
 				t.Errorf("HashGet: expected 'value1', got '%s'", string(val))
 			}
 
-			// HashGetAll
 			all, err := cache.HashGetAll("hash1")
 			if err != nil {
 				t.Fatalf("HashGetAll failed: %v", err)
@@ -254,7 +241,6 @@ func runCacheTestSuite(t *testing.T, cache Cache) {
 				t.Errorf("HashGetAll: unexpected result: %v", all)
 			}
 
-			// HashDelete
 			if err := cache.HashDelete("hash1", "field1"); err != nil {
 				t.Fatalf("HashDelete failed: %v", err)
 			}
@@ -265,12 +251,10 @@ func runCacheTestSuite(t *testing.T, cache Cache) {
 		})
 
 		t.Run("List", func(t *testing.T) {
-			// ListPush
 			if err := cache.ListPush("list1", []byte("a"), []byte("b"), []byte("c")); err != nil {
 				t.Fatalf("ListPush failed: %v", err)
 			}
 
-			// ListRange
 			items, err := cache.ListRange("list1", 0, -1)
 			if err != nil {
 				t.Fatalf("ListRange failed: %v", err)
@@ -279,7 +263,6 @@ func runCacheTestSuite(t *testing.T, cache Cache) {
 				t.Errorf("ListRange: unexpected items: %v", items)
 			}
 
-			// ListPop
 			item, err := cache.ListPop("list1")
 			if err != nil {
 				t.Fatalf("ListPop failed: %v", err)
@@ -290,12 +273,10 @@ func runCacheTestSuite(t *testing.T, cache Cache) {
 		})
 
 		t.Run("Set", func(t *testing.T) {
-			// SetAdd
 			if err := cache.SetAdd("set1", []byte("a"), []byte("b"), []byte("c")); err != nil {
 				t.Fatalf("SetAdd failed: %v", err)
 			}
 
-			// SetIsMember
 			isMember, err := cache.SetIsMember("set1", []byte("b"))
 			if err != nil {
 				t.Fatalf("SetIsMember failed: %v", err)
@@ -304,7 +285,6 @@ func runCacheTestSuite(t *testing.T, cache Cache) {
 				t.Error("SetIsMember: expected 'b' to be a member")
 			}
 
-			// SetMembers
 			members, err := cache.SetMembers("set1")
 			if err != nil {
 				t.Fatalf("SetMembers failed: %v", err)

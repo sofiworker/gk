@@ -12,7 +12,6 @@ func TestDialects(t *testing.T) {
 	for _, dName := range drivers {
 		d := newDialect(dName)
 
-		// Test PlaceholderSQL
 		sql := "SELECT * FROM t WHERE id = ?"
 		pSql := d.PlaceholderSQL(sql)
 		if dName == "postgres" {
@@ -25,7 +24,6 @@ func TestDialects(t *testing.T) {
 			}
 		}
 
-		// Test Placeholder
 		ph := d.Placeholder(0)
 		if dName == "postgres" {
 			if ph != "$1" {
@@ -37,7 +35,6 @@ func TestDialects(t *testing.T) {
 			}
 		}
 
-		// Test DataTypeOf
 		types := []reflect.Type{
 			reflect.TypeOf(true),
 			reflect.TypeOf(int(1)),
@@ -53,13 +50,11 @@ func TestDialects(t *testing.T) {
 			}
 		}
 
-		// Test AutoIncrement
 		if d.AutoIncrement() == "" && dName != "postgres" {
-			// Postgres returns empty, others usually shouldn't
+			// Postgres 返回空，其它驱动通常不应为空；Postgres returns empty, others usually should not.
 			t.Logf("%s AutoIncrement returned empty (may be expected for this driver)", dName)
 		}
 
-		// Test PrimaryKeyStr
 		if d.PrimaryKeyStr() == "" {
 			t.Errorf("%s PrimaryKeyStr failed", dName)
 		}

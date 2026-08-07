@@ -12,7 +12,6 @@ func TestTarGzUtil(t *testing.T) {
 	tgzFile := filepath.Join(tmpDir, "test.tar.gz")
 	outDir := filepath.Join(tmpDir, "out")
 
-	// Setup source
 	if err := os.Mkdir(srcDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -22,17 +21,14 @@ func TestTarGzUtil(t *testing.T) {
 
 	tg := NewTarGzUtil()
 
-	// Compress
 	if err := tg.Compress(srcDir, tgzFile); err != nil {
 		t.Fatalf("Compress failed: %v", err)
 	}
 
-	// Decompress
 	if err := tg.Decompress(tgzFile, outDir); err != nil {
 		t.Fatalf("Decompress failed: %v", err)
 	}
 
-	// Verify
 	c1, err := os.ReadFile(filepath.Join(outDir, "file1.txt"))
 	if err != nil {
 		t.Fatal(err)

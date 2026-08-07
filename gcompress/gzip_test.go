@@ -11,7 +11,6 @@ func TestGzipUtil(t *testing.T) {
 	gz := NewGzipUtil().WithCompressionLevel(9)
 	data := []byte("hello world hello world hello world")
 
-	// Test Compress/Decompress
 	compressed, err := gz.Compress(data)
 	if err != nil {
 		t.Fatalf("Compress failed: %v", err)
@@ -45,7 +44,6 @@ func TestGzipUtil(t *testing.T) {
 		t.Fatalf("expected %s, got %s", str, dStr)
 	}
 
-	// Test File
 	tmpDir := t.TempDir()
 	srcFile := filepath.Join(tmpDir, "test.txt")
 	dstFile := filepath.Join(tmpDir, "test.txt.gz")
