@@ -42,8 +42,17 @@ glog.Info("user login", "user_id", 123, "ip", "192.168.1.1")
 ## Context Logging
 
 ```go
-ctx := trace.ContextWithSpan(context.Background(), span)
 glog.InfoContext(ctx, "request done", "path", "/v1/items")
+glog.InfofContext(ctx, "user %s", "alice") // 格式化 + context
+```
+
+Trace 字段通过可选提取器注入（glog 核心不依赖 OpenTelemetry）：
+
+```go
+glog.Configure(glog.WithTraceExtractor(func(ctx context.Context) (traceID, spanID string) {
+    sc := trace.SpanContextFromContext(ctx)
+    return sc.TraceID().String(), sc.SpanID().String()
+}))
 ```
 
 ## Error Handling

@@ -98,4 +98,20 @@ func WarnContext(ctx context.Context, msg string, args ...interface{}) {
 func ErrorContext(ctx context.Context, msg string, args ...interface{}) {
 	Default().ErrorContext(ctx, msg, args...)
 }
+
+func DebugfContext(ctx context.Context, template string, args ...interface{}) {
+	Default().DebugfContext(ctx, template, args...)
+}
+
+func InfofContext(ctx context.Context, template string, args ...interface{}) {
+	Default().InfofContext(ctx, template, args...)
+}
+
+func WarnfContext(ctx context.Context, template string, args ...interface{}) {
+	Default().WarnfContext(ctx, template, args...)
+}
+
+func ErrorfContext(ctx context.Context, template string, args ...interface{}) {
+	Default().ErrorfContext(ctx, template, args...)
+}
 func Sync() error { return Default().Sync() }

@@ -24,6 +24,10 @@ type GLogger interface {
 	InfoContext(ctx context.Context, msg string, args ...interface{})
 	WarnContext(ctx context.Context, msg string, args ...interface{})
 	ErrorContext(ctx context.Context, msg string, args ...interface{})
+	DebugfContext(ctx context.Context, template string, args ...interface{})
+	InfofContext(ctx context.Context, template string, args ...interface{})
+	WarnfContext(ctx context.Context, template string, args ...interface{})
+	ErrorfContext(ctx context.Context, template string, args ...interface{})
 
 	// SetLevel 动态地改变日志记录器的级别。
 	SetLevel(level Level)

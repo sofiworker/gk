@@ -277,6 +277,30 @@ func TestBuildOptionsCallerAndStacktrace(t *testing.T) {
 	}
 }
 
+func TestFormattedContextMethods(t *testing.T) {
+	t.Parallel()
+
+	core, logs := observer.New(zapcore.InfoLevel)
+	logger := &zapLogger{
+		l:           zap.New(core),
+		atomicLevel: zap.NewAtomicLevel(),
+		config:      DefaultConfig(),
+	}
+	logger.InfofContext(context.Background(), "user %s logged in from %s", "alice", "127.0.0.1")
+	logger.ErrorfContext(context.Background(), "boom %d", 500)
+
+	entries := logs.All()
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+	if entries[0].Message != "user alice logged in from 127.0.0.1" {
+		t.Fatalf("message = %q", entries[0].Message)
+	}
+	if entries[1].Message != "boom 500" {
+		t.Fatalf("message = %q", entries[1].Message)
+	}
+}
+
 func TestTraceContextFields(t *testing.T) {
 	t.Parallel()
 

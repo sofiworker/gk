@@ -2,6 +2,7 @@ package glog
 
 import (
 	"context"
+	"fmt"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -146,6 +147,22 @@ func (l *zapLogger) ErrorContext(ctx context.Context, msg string, args ...interf
 	}
 	fields = append(fields, l.traceContextFields(ctx)...)
 	l.l.Error(msg, fields...)
+}
+
+func (l *zapLogger) DebugfContext(ctx context.Context, template string, args ...interface{}) {
+	l.l.Debug(fmt.Sprintf(template, args...), l.traceContextFields(ctx)...)
+}
+
+func (l *zapLogger) InfofContext(ctx context.Context, template string, args ...interface{}) {
+	l.l.Info(fmt.Sprintf(template, args...), l.traceContextFields(ctx)...)
+}
+
+func (l *zapLogger) WarnfContext(ctx context.Context, template string, args ...interface{}) {
+	l.l.Warn(fmt.Sprintf(template, args...), l.traceContextFields(ctx)...)
+}
+
+func (l *zapLogger) ErrorfContext(ctx context.Context, template string, args ...interface{}) {
+	l.l.Error(fmt.Sprintf(template, args...), l.traceContextFields(ctx)...)
 }
 
 func (l *zapLogger) Sync() error {
