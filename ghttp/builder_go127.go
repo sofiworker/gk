@@ -17,9 +17,11 @@ type RouteBuilder struct {
 	core *routeBuilderCore
 }
 
-// Route is the pre-1.27 compatibility entry point. Its type arguments are
-// accepted for source compatibility but ignored; terminal methods infer
-// Req/Resp from the handler. Prefer Server.Route or Group.Route.
+// Route is the deprecated pre-1.27 compatibility entry point. Its type
+// arguments are accepted for source compatibility but ignored; it returns
+// the same root-group builder that s.GET(path) and friends start, so old
+// code keeps compiling without an extra layer. New code should call the
+// verb methods directly (s.GET(path).To(handler), group.POST(path).To(...)).
 func Route[Req, Resp any](target routeTarget) *RouteBuilder {
 	return newRouteBuilder(target)
 }
@@ -28,127 +30,114 @@ func newRouteBuilder(target routeTarget) *RouteBuilder {
 	return &RouteBuilder{core: newRouteBuilderCore(target)}
 }
 
-// Route starts a new route chain on the server. It is the explicit entry for
-// ANY/CUSTOM or for callers that prefer a method-less start; for standard
-// verbs the server itself is a root group, so s.GET(path) works directly.
-func (s *Server) Route() *RouteBuilder {
-	return newRouteBuilder(s)
-}
-
-// Route starts a new route chain on the group. For standard verbs the group
-// itself registers routes directly, so g.GET(path) works without Route().
-func (g *Group) Route() *RouteBuilder {
-	return newRouteBuilder(g)
-}
-
 // GET starts a GET route chain on the server, like gin's root group.
 func (s *Server) GET(path string) *RouteBuilder {
-	return s.Route().GET(path)
+	return newRouteBuilder(s).GET(path)
 }
 
 // POST starts a POST route chain on the server.
 func (s *Server) POST(path string) *RouteBuilder {
-	return s.Route().POST(path)
+	return newRouteBuilder(s).POST(path)
 }
 
 // PUT starts a PUT route chain on the server.
 func (s *Server) PUT(path string) *RouteBuilder {
-	return s.Route().PUT(path)
+	return newRouteBuilder(s).PUT(path)
 }
 
 // DELETE starts a DELETE route chain on the server.
 func (s *Server) DELETE(path string) *RouteBuilder {
-	return s.Route().DELETE(path)
+	return newRouteBuilder(s).DELETE(path)
 }
 
 // PATCH starts a PATCH route chain on the server.
 func (s *Server) PATCH(path string) *RouteBuilder {
-	return s.Route().PATCH(path)
+	return newRouteBuilder(s).PATCH(path)
 }
 
 // HEAD starts a HEAD route chain on the server.
 func (s *Server) HEAD(path string) *RouteBuilder {
-	return s.Route().HEAD(path)
+	return newRouteBuilder(s).HEAD(path)
 }
 
 // OPTIONS starts an OPTIONS route chain on the server.
 func (s *Server) OPTIONS(path string) *RouteBuilder {
-	return s.Route().OPTIONS(path)
+	return newRouteBuilder(s).OPTIONS(path)
 }
 
 // CONNECT starts a CONNECT route chain on the server.
 func (s *Server) CONNECT(path string) *RouteBuilder {
-	return s.Route().CONNECT(path)
+	return newRouteBuilder(s).CONNECT(path)
 }
 
 // TRACE starts a TRACE route chain on the server.
 func (s *Server) TRACE(path string) *RouteBuilder {
-	return s.Route().TRACE(path)
+	return newRouteBuilder(s).TRACE(path)
 }
 
 // ANY starts a route chain for every standard HTTP method on the server.
 func (s *Server) ANY(path string) *RouteBuilder {
-	return s.Route().ANY(path)
+	return newRouteBuilder(s).ANY(path)
 }
 
 // CUSTOM starts a route chain with a custom HTTP method on the server.
 func (s *Server) CUSTOM(method, path string) *RouteBuilder {
-	return s.Route().CUSTOM(method, path)
+	return newRouteBuilder(s).CUSTOM(method, path)
 }
 
 // GET starts a GET route chain on the group.
 func (g *Group) GET(path string) *RouteBuilder {
-	return g.Route().GET(path)
+	return newRouteBuilder(g).GET(path)
 }
 
 // POST starts a POST route chain on the group.
 func (g *Group) POST(path string) *RouteBuilder {
-	return g.Route().POST(path)
+	return newRouteBuilder(g).POST(path)
 }
 
 // PUT starts a PUT route chain on the group.
 func (g *Group) PUT(path string) *RouteBuilder {
-	return g.Route().PUT(path)
+	return newRouteBuilder(g).PUT(path)
 }
 
 // DELETE starts a DELETE route chain on the group.
 func (g *Group) DELETE(path string) *RouteBuilder {
-	return g.Route().DELETE(path)
+	return newRouteBuilder(g).DELETE(path)
 }
 
 // PATCH starts a PATCH route chain on the group.
 func (g *Group) PATCH(path string) *RouteBuilder {
-	return g.Route().PATCH(path)
+	return newRouteBuilder(g).PATCH(path)
 }
 
 // HEAD starts a HEAD route chain on the group.
 func (g *Group) HEAD(path string) *RouteBuilder {
-	return g.Route().HEAD(path)
+	return newRouteBuilder(g).HEAD(path)
 }
 
 // OPTIONS starts an OPTIONS route chain on the group.
 func (g *Group) OPTIONS(path string) *RouteBuilder {
-	return g.Route().OPTIONS(path)
+	return newRouteBuilder(g).OPTIONS(path)
 }
 
 // CONNECT starts a CONNECT route chain on the group.
 func (g *Group) CONNECT(path string) *RouteBuilder {
-	return g.Route().CONNECT(path)
+	return newRouteBuilder(g).CONNECT(path)
 }
 
 // TRACE starts a TRACE route chain on the group.
 func (g *Group) TRACE(path string) *RouteBuilder {
-	return g.Route().TRACE(path)
+	return newRouteBuilder(g).TRACE(path)
 }
 
 // ANY starts a route chain for every standard HTTP method on the group.
 func (g *Group) ANY(path string) *RouteBuilder {
-	return g.Route().ANY(path)
+	return newRouteBuilder(g).ANY(path)
 }
 
 // CUSTOM starts a route chain with a custom HTTP method on the group.
 func (g *Group) CUSTOM(method, path string) *RouteBuilder {
-	return g.Route().CUSTOM(method, path)
+	return newRouteBuilder(g).CUSTOM(method, path)
 }
 
 func (b *RouteBuilder) POST(path string) *RouteBuilder {
@@ -385,70 +374,70 @@ func (b *RouteBuilder) ToHTML(status int, name string, data interface{}) {
 
 // Get registers a typed GET route with default options.
 func (s *Server) Get[Req, Resp any](path string, handler func(context.Context, Req) (Resp, error)) {
-	s.Route().GET(path).To(handler)
+	newRouteBuilder(s).GET(path).To(handler)
 }
 
 // Post registers a typed POST route with default options.
 func (s *Server) Post[Req, Resp any](path string, handler func(context.Context, Req) (Resp, error)) {
-	s.Route().POST(path).To(handler)
+	newRouteBuilder(s).POST(path).To(handler)
 }
 
 // Put registers a typed PUT route with default options.
 func (s *Server) Put[Req, Resp any](path string, handler func(context.Context, Req) (Resp, error)) {
-	s.Route().PUT(path).To(handler)
+	newRouteBuilder(s).PUT(path).To(handler)
 }
 
 // Patch registers a typed PATCH route with default options.
 func (s *Server) Patch[Req, Resp any](path string, handler func(context.Context, Req) (Resp, error)) {
-	s.Route().PATCH(path).To(handler)
+	newRouteBuilder(s).PATCH(path).To(handler)
 }
 
 // Delete registers a typed DELETE route with default options.
 func (s *Server) Delete[Req, Resp any](path string, handler func(context.Context, Req) (Resp, error)) {
-	s.Route().DELETE(path).To(handler)
+	newRouteBuilder(s).DELETE(path).To(handler)
 }
 
 // Head registers a typed HEAD route with default options.
 func (s *Server) Head[Req, Resp any](path string, handler func(context.Context, Req) (Resp, error)) {
-	s.Route().HEAD(path).To(handler)
+	newRouteBuilder(s).HEAD(path).To(handler)
 }
 
 // Options registers a typed OPTIONS route with default options.
 func (s *Server) Options[Req, Resp any](path string, handler func(context.Context, Req) (Resp, error)) {
-	s.Route().OPTIONS(path).To(handler)
+	newRouteBuilder(s).OPTIONS(path).To(handler)
 }
 
 // Get registers a typed GET route with default options.
 func (g *Group) Get[Req, Resp any](path string, handler func(context.Context, Req) (Resp, error)) {
-	g.Route().GET(path).To(handler)
+	newRouteBuilder(g).GET(path).To(handler)
 }
 
 // Post registers a typed POST route with default options.
 func (g *Group) Post[Req, Resp any](path string, handler func(context.Context, Req) (Resp, error)) {
-	g.Route().POST(path).To(handler)
+	newRouteBuilder(g).POST(path).To(handler)
 }
 
 // Put registers a typed PUT route with default options.
 func (g *Group) Put[Req, Resp any](path string, handler func(context.Context, Req) (Resp, error)) {
-	g.Route().PUT(path).To(handler)
+	newRouteBuilder(g).PUT(path).To(handler)
 }
 
 // Patch registers a typed PATCH route with default options.
 func (g *Group) Patch[Req, Resp any](path string, handler func(context.Context, Req) (Resp, error)) {
-	g.Route().PATCH(path).To(handler)
+	newRouteBuilder(g).PATCH(path).To(handler)
 }
 
 // Delete registers a typed DELETE route with default options.
 func (g *Group) Delete[Req, Resp any](path string, handler func(context.Context, Req) (Resp, error)) {
-	g.Route().DELETE(path).To(handler)
+	newRouteBuilder(g).DELETE(path).To(handler)
 }
 
 // Head registers a typed HEAD route with default options.
 func (g *Group) Head[Req, Resp any](path string, handler func(context.Context, Req) (Resp, error)) {
-	g.Route().HEAD(path).To(handler)
+	newRouteBuilder(g).HEAD(path).To(handler)
 }
 
 // Options registers a typed OPTIONS route with default options.
 func (g *Group) Options[Req, Resp any](path string, handler func(context.Context, Req) (Resp, error)) {
-	g.Route().OPTIONS(path).To(handler)
+	newRouteBuilder(g).OPTIONS(path).To(handler)
 }

@@ -20,7 +20,7 @@ type go127Resp struct {
 
 func TestGo127RouteChainInference(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	app.Route().GET("/users/{id}").To(func(ctx context.Context, in *go127Params) (*go127Resp, error) {
+	app.GET("/users/{id}").To(func(ctx context.Context, in *go127Params) (*go127Resp, error) {
 		return &go127Resp{ID: in.ID}, nil
 	})
 
@@ -37,8 +37,7 @@ func TestGo127RouteChainInference(t *testing.T) {
 
 func TestGo127RouteChainStatusAndOptions(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	app.Route().
-		POST("/users").
+	app.POST("/users").
 		Status(http.StatusCreated).
 		To(func(ctx context.Context, in *go127Params) (*go127Resp, error) {
 			return &go127Resp{ID: in.ID}, nil
@@ -54,10 +53,10 @@ func TestGo127RouteChainStatusAndOptions(t *testing.T) {
 
 func TestGo127RouteChainNoInputNoOutput(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	app.Route().GET("/health").ToNoInput(func(ctx context.Context) (*go127Resp, error) {
+	app.GET("/health").ToNoInput(func(ctx context.Context) (*go127Resp, error) {
 		return &go127Resp{ID: "ok"}, nil
 	})
-	app.Route().DELETE("/users/{id}").ToNoOutput(func(ctx context.Context, in *go127Params) error {
+	app.DELETE("/users/{id}").ToNoOutput(func(ctx context.Context, in *go127Params) error {
 		if in.ID != "u1" {
 			return Err(http.StatusBadRequest, "bad id")
 		}
@@ -108,7 +107,7 @@ func TestGo127ServerShorthands(t *testing.T) {
 func TestGo127GroupRoute(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	group := app.Group("/api")
-	group.Route().GET("/users/{id}").To(func(ctx context.Context, in *go127Params) (*go127Resp, error) {
+	group.GET("/users/{id}").To(func(ctx context.Context, in *go127Params) (*go127Resp, error) {
 		return &go127Resp{ID: in.ID}, nil
 	})
 	group.Get("/pings", func(ctx context.Context, in *go127Params) (*go127Resp, error) {
@@ -125,13 +124,13 @@ func TestGo127GroupRoute(t *testing.T) {
 func TestGo127BuilderGroupBranchLikeGin(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	var mwRan bool
-	api := app.Route().Group("/api", func(next http.Handler) http.Handler {
+	api := app.Group("/api", func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			mwRan = true
 			next.ServeHTTP(w, r)
 		})
 	})
-	api.Route().GET("/users/{id}").To(func(ctx context.Context, in *go127Params) (*go127Resp, error) {
+	api.GET("/users/{id}").To(func(ctx context.Context, in *go127Params) (*go127Resp, error) {
 		return &go127Resp{ID: in.ID}, nil
 	})
 	api.Get("/pings", func(ctx context.Context, _ struct{}) (*go127Resp, error) {
