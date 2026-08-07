@@ -5,33 +5,39 @@ import (
 	"net/http"
 )
 
-// Authorizer checks whether a subject may perform an action on a resource.
+// Authorizer 判断主体是否可对资源执行动作。
+// Authorizer checks whether a subject may act on a resource.
 type Authorizer interface {
 	Authorize(ctx context.Context, subject, action, resource string) error
 }
 
+// RoleResolver 解析主体拥有的角色。
 // RoleResolver resolves the roles assigned to a subject.
 type RoleResolver interface {
 	RolesFor(ctx context.Context, subject string) ([]string, error)
 }
 
-// PolicyStore answers whether a role may perform an action on a resource.
+// PolicyStore 判断角色是否可对资源执行动作。
+// PolicyStore answers whether a role may act on a resource.
 type PolicyStore interface {
 	Allowed(ctx context.Context, role, action, resource string) (bool, error)
 }
 
+// RBAC 是默认的基于角色的访问控制实现。
 // RBAC is the default role-based access control implementation.
 type RBAC struct {
 	roles    RoleResolver
 	policies PolicyStore
 }
 
+// NewRBAC 创建 RBAC authorizer。
 // NewRBAC creates an RBAC authorizer.
 func NewRBAC(roles RoleResolver, policies PolicyStore) *RBAC {
 	return &RBAC{roles: roles, policies: policies}
 }
 
-// Authorize allows the request when any of the subject's roles is permitted.
+// Authorize 在主体的任一角色被允许时放行请求。
+// Authorize allows the request when any subject role is permitted.
 func (r *RBAC) Authorize(ctx context.Context, subject, action, resource string) error {
 	if r == nil || r.roles == nil || r.policies == nil {
 		return ErrRBACNotConfigured
@@ -52,7 +58,8 @@ func (r *RBAC) Authorize(ctx context.Context, subject, action, resource string) 
 	return ErrForbidden
 }
 
-// RBACMiddleware rejects requests that fail authorization with 403 Forbidden.
+// RBACMiddleware 对鉴权失败的请求返回 403。
+// RBACMiddleware rejects unauthorized requests with 403.
 func RBACMiddleware(a Authorizer, subject, action, resource func(*http.Request) string) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

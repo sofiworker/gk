@@ -10,6 +10,7 @@ import (
 	"sync"
 )
 
+// structInfo 缓存输入结构体的反射元数据。
 // structInfo caches reflection metadata for input struct types.
 type structInfo struct {
 	bodyIdx   int
@@ -120,6 +121,7 @@ func validateRequestParamsUsage[Req any]() error {
 	return validateInputParamsUsage(reflect.TypeOf(input))
 }
 
+// BodyDecodeFunc 将请求体解码到 target。
 // BodyDecodeFunc decodes a request body into target.
 type BodyDecodeFunc func(r io.Reader, ct string, target interface{}) error
 
@@ -165,11 +167,11 @@ func parseInputWithConfigAndPathParams(r *http.Request, input interface{}, c *Co
 		return err
 	}
 
-	// Parse Body
+	// 解析请求体；parse body.
 	if info.hasBody {
 		bodyField := v.Field(info.bodyIdx)
 
-		// Check if multipart - parse the form first
+		// 先解析 form 以判断是否 multipart；parse the form first to detect multipart.
 		ct := r.Header.Get("Content-Type")
 		if strings.HasPrefix(ct, "multipart/form-data") {
 			if err := r.ParseMultipartForm(defaultMaxMemory); err != nil {
@@ -309,8 +311,10 @@ func parseBody(r *http.Request, bodyField reflect.Value, c *Config, codecMgr *Co
 	var codec Codec
 	var ok bool
 	if mediaType == "" {
-		// Missing Content-Type is a documented protocol convenience: decode
-		// as JSON (gin-style). Unknown explicit types stay strict (415).
+		// 缺失 Content-Type 是文档化的协议便利：按 JSON 解码。
+		// Missing Content-Type is a documented convenience: decode as JSON.
+		// 未知显式类型保持严格（415）。
+		// unknown explicit types stay strict (415).
 		codec, ok = codecMgr.Resolve(MIMEJSON)
 	} else {
 		codec, ok = codecMgr.Resolve(mediaType)

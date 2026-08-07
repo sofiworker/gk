@@ -1,5 +1,6 @@
 package ghttp
 
+// Group 持有共享前缀的一组路由。
 // Group holds a set of routes with a common prefix.
 type Group struct {
 	server      *Server
@@ -11,6 +12,7 @@ type Group struct {
 	middlewares []Middleware
 }
 
+// Use 追加组级中间件。
 // Use appends group-level middleware.
 func (g *Group) Use(mws ...Middleware) *Group {
 	g.server.mu.Lock()
@@ -20,7 +22,8 @@ func (g *Group) Use(mws ...Middleware) *Group {
 	return g
 }
 
-// Produces declares the default response Content-Types for routes in this group.
+// Produces 声明组内路由的默认响应 Content-Type。
+// Produces declares default response Content-Types for this group.
 func (g *Group) Produces(contentTypes ...string) *Group {
 	g.server.mu.Lock()
 	defer g.server.mu.Unlock()
@@ -29,7 +32,8 @@ func (g *Group) Produces(contentTypes ...string) *Group {
 	return g
 }
 
-// Consumes declares the default request Content-Types for routes in this group.
+// Consumes 声明组内路由的默认请求 Content-Type。
+// Consumes declares default request Content-Types for this group.
 func (g *Group) Consumes(contentTypes ...string) *Group {
 	g.server.mu.Lock()
 	defer g.server.mu.Unlock()
@@ -39,6 +43,7 @@ func (g *Group) Consumes(contentTypes ...string) *Group {
 	return g
 }
 
+// Group 创建嵌套路由组。
 // Group creates a nested route group.
 func (g *Group) Group(prefix string, mws ...Middleware) *Group {
 	g.server.mu.Lock()

@@ -12,15 +12,18 @@ import (
 	"time"
 )
 
+// SSEWriter 向响应写入 Server-Sent Events。
 // SSEWriter writes Server-Sent Events to a response.
 type SSEWriter struct {
 	w       http.ResponseWriter
 	flusher http.Flusher
 }
 
+// SSEHandler 处理 SSE 连接。
 // SSEHandler handles an SSE connection.
 type SSEHandler func(ctx context.Context, params Params, stream *SSEWriter) error
 
+// SSEEvent 表示单个 SSE 事件。
 // SSEEvent represents a single SSE event.
 type SSEEvent struct {
 	ID    string
@@ -85,7 +88,9 @@ func (s *SSEWriter) WriteJSON(event string, data interface{}) error {
 	return s.WriteEvent(event, string(b))
 }
 
-// WriteJSONWithID writes a JSON event with an explicit id, so reconnecting
+// WriteJSONWithID 写入带显式 id 的 JSON 事件。
+// WriteJSONWithID writes a JSON event with an explicit id.
+// 客户端可按 Last-Event-ID 续传。
 // clients can resume from Last-Event-ID.
 func (s *SSEWriter) WriteJSONWithID(event, id string, data interface{}) error {
 	if strings.ContainsAny(id, "\r\n") {
@@ -101,6 +106,7 @@ func (s *SSEWriter) WriteJSONWithID(event, id string, data interface{}) error {
 	return s.WriteEvent(event, string(b))
 }
 
+// SSEStream 是客户端 SSE 流。
 // SSEStream is a client-side SSE stream.
 type SSEStream struct {
 	Events  <-chan SSEEvent
@@ -108,6 +114,7 @@ type SSEStream struct {
 	closeFn context.CancelFunc
 }
 
+// SSEConfig 配置客户端 SSE 行为。
 // SSEConfig configures client SSE behavior.
 type SSEConfig struct {
 	Context       context.Context

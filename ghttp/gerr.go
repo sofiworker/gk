@@ -7,6 +7,7 @@ import (
 	"github.com/sofiworker/gk/gerr"
 )
 
+// GerrStatus 将 gerr.Kind 映射为规范 HTTP 状态码。
 // GerrStatus maps a gerr.Kind to the canonical HTTP status code.
 func GerrStatus(err error) (int, bool) {
 	ge, ok := gerr.ErrorOf(err)
@@ -16,9 +17,10 @@ func GerrStatus(err error) (int, bool) {
 	return gerrKindStatus(ge.Kind), true
 }
 
-// FromGerr converts a gerr.Error into an HTTPError using the Kind -> status
-// mapping. The original error stays in the chain, so errors.Is/As still work
-// through the returned HTTPError.
+// FromGerr 按 Kind -> status 映射将 gerr.Error 转换为 HTTPError。
+// FromGerr converts a gerr.Error into an HTTPError via Kind -> status.
+// 原始错误保留在链上，errors.Is/As 仍可穿透。
+// the original error stays in the chain, so errors.Is/As still work.
 func FromGerr(err error) (*HTTPError, bool) {
 	ge, ok := gerr.ErrorOf(err)
 	if !ok {
@@ -32,8 +34,10 @@ func FromGerr(err error) (*HTTPError, bool) {
 	return Err(status, message, WithCause(err)), true
 }
 
-// ToGerr converts an HTTPError into a gerr.Error using the status -> Kind
-// mapping. The HTTP status is preserved as the business Code.
+// ToGerr 按 status -> Kind 映射将 HTTPError 转换为 gerr.Error。
+// ToGerr converts an HTTPError into a gerr.Error via status -> Kind.
+// HTTP 状态码保留为业务 Code。
+// the HTTP status is preserved as the business Code.
 func ToGerr(err error) (*gerr.Error, bool) {
 	he := AsError(err)
 	if he == nil {
