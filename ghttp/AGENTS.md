@@ -43,7 +43,7 @@
 - Go 1.27 泛型方法可用后，演进为方法链 `target.Route().METHOD(path).To[Req, Resp](handler)`（类型由 handler 推断），不再经包级函数绕层。
 - **双版本共存（build tag 自动选择）**：本包同时保留两套 API，靠 `//go:build go1.27` / `//go:build !go1.27` 按工具链版本自动选择（类似 Go 标准库），使用者无需显式传 tag：
   - `builder_pre127.go`：泛型 `RouteBuilder[Req, Resp]` + 包级 `Route[Req,Resp](target)`，Go 1.27 前编译；
-  - `builder_go127.go`：非泛型 `RouteBuilder` + 泛型终结方法（`To[Req,Resp]`、`ToNoInput[Resp]`、`ToNoOutput[Req]`、`ToHTTPFunc[Req]`、`ToRedirectFunc[Req]`）+ `Server.Route()`/`Group.Route()` + `Server/Group.Get/Post/...` 快捷注册，Go 1.27+ 编译；
+  - `builder_go127.go`：非泛型 `RouteBuilder` + 泛型终结方法（`To[Req,Resp]`、`ToNoInput[Resp]`、`ToNoOutput[Req]`、`ToHTTPFunc[Req]`、`ToRedirectFunc[Req]`）+ `Server/Group.Route()` + `Server/Group.GET/POST/...` 直接链式起点（根组语义，无需 Route()）+ `Server/Group.Get/Post/...` 立即注册快捷方式，Go 1.27+ 编译；
   - 1.27 构建中 `Route[Req,Resp](target)` 保留为源兼容 shim（忽略类型参数），现有测试两套工具链下都必须通过。
 - 两个版本的 `RouteBuilder` 都提供 `.Group(prefix, mws...)` 分支（gin 的 `r.Group` 语义）：须在设置 method/path 之前调用，返回以当前 target 为根的 `*Group`，不转移已设置的路由级选项。
 - 两套 API 共享 `routeBuilderCore`（`builder_core.go`）与所有注册/语义/OpenAPI 内部模型；任何实现不得把泛型参数固化进 Server/Group 类型；相关计划须标注迁移意图。

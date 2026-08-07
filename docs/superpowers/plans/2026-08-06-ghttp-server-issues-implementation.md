@@ -2009,5 +2009,5 @@ git commit -m "perf(ghttp): reduce full-chain allocations with single response w
 4. 类型化状态码：**接口（`StatusCoder`/`ResponseHeaderWriter`）+ builder 固定值（`.Status()`/`.ResponseHeader()`）**，不引入 tag 反射，按 Task 3.1 实施。
 5. WebSocket 默认策略：**同源放行、缺 Origin 放行、跨源 403**，用户未提出异议，按 Task 5.2 实施。
 6. 无输入/无输出：**显式终结器 `ToNoInput`/`ToNoOutput`**，禁止 `struct{}` 魔法与零值自动 204（2026-08-07 确认，方案 A）。
-7. 双版本共存：**`//go:build go1.27` 版本约束自动选择，不要求使用者显式传 tag**；1.27 版为 `Server.Route().To[Req,Resp](handler)` + 快捷注册，`Route[Req,Resp]` 降级为兼容 shim（2026-08-07 确认）。
+7. 双版本共存：**`//go:build go1.27` 版本约束自动选择，不要求使用者显式传 tag**；1.27 版 Server/Group 本身即根组，`Server.GET(path).To[Req,Resp](handler)` 直接注册（`Route()` 仅保留给 ANY/CUSTOM 等显式起点），另有小写 `Get/Post/...` 立即注册快捷方式；`Route[Req,Resp]` 降级为兼容 shim（2026-08-07 确认，2026-08-07 修订为根组语义）。
 8. builder 级 Group：**两个版本的 `RouteBuilder` 均提供 `.Group(prefix, mws...)`**，gin 的 `r.Group` 语义；须在设置 method/path 之前调用，已设置的路由级选项不转移（2026-08-07 确认）。

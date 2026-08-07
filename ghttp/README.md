@@ -153,11 +153,12 @@ _, err = io.Copy(dst, streamResp.RawBody())
 模块内同时保留两套 API，编译时按工具链版本**自动选择**（类似 Go 标准库的 `//go:build` 版本约束），使用者不需要传任何 build tag：
 
 - Go < 1.27：`ghttp.Route[Req, Resp](target).GET(path).To(handler)`，类型参数在包级函数上（Go 1.27 前方法不支持类型参数）；
-- Go ≥ 1.27：`server.Route().GET(path).To[Req, Resp](handler)`，类型参数在终结方法上并由 handler 自动推断；同时提供 `server.Get/Post/Put/Patch/Delete/Head/Options(path, handler)` 快捷注册。
+- Go ≥ 1.27：`server.GET(path).Doc(...).To[Req, Resp](handler)`，类型参数在终结方法上并由 handler 自动推断；Server/Group 本身即“根组”（gin 风格），无需先 `.Route()`；`.Route()` 仅保留给 `ANY`/`CUSTOM` 或显式起点；小写 `server.Get/Post/...` 为立即注册的快捷方式。
 
 ```go
 // Go 1.27+ 写法
-s.Route().GET("/hello/{name}").To(func(ctx context.Context, req *GreetInput) (*GreetOutput, error) {
+s.GET("/hello/{name}").Doc(ghttp.Summary("问候")).
+    To(func(ctx context.Context, req *GreetInput) (*GreetOutput, error) {
     return &GreetOutput{Message: "Hello, " + req.Path("name")}, nil
 })
 
@@ -168,12 +169,15 @@ s.Get("/users/{id}", func(ctx context.Context, req *GetUserReq) (*GetUserResp, e
 
 // 分组与 Server 一致
 api := s.Group("/api")
-api.Route().GET("/users/{id}").To(func(ctx context.Context, req *GetUserReq) (*GetUserResp, error) {
+api.GET("/users/{id}").To(func(ctx context.Context, req *GetUserReq) (*GetUserResp, error) {
     return &GetUserResp{ID: req.ID}, nil
 })
 api.Post("/users", func(ctx context.Context, req *CreateUserReq) (*CreateUserResp, error) {
     return &CreateUserResp{ID: "u-1"}, nil
 })
+
+// 显式起点：自定义方法或全方法路由仍可用 .Route()
+s.Route().ANY("/health").ToNoInput(func(ctx context.Context) (*HealthResp, error) { ... })
 ```
 
 两套 API 共享同一内部实现（`routeBuilderCore`），行为完全一致。注意：Go 1.27 专用文件包含泛型方法语法，`go fmt`/`gofmt` 需使用 Go 1.27+ 工具链（旧工具链的 gofmt 无法解析该文件）。
