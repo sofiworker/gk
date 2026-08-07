@@ -164,6 +164,15 @@ s.Route().GET("/hello/{name}").To(func(ctx context.Context, req *GreetInput) (*G
 s.Get("/users/{id}", func(ctx context.Context, req *GetUserReq) (*GetUserResp, error) {
     return &GetUserResp{ID: req.ID}, nil
 })
+
+// 分组与 Server 一致
+api := s.Group("/api")
+api.Route().GET("/users/{id}").To(func(ctx context.Context, req *GetUserReq) (*GetUserResp, error) {
+    return &GetUserResp{ID: req.ID}, nil
+})
+api.Post("/users", func(ctx context.Context, req *CreateUserReq) (*CreateUserResp, error) {
+    return &CreateUserResp{ID: "u-1"}, nil
+})
 ```
 
 两套 API 共享同一内部实现（`routeBuilderCore`），行为完全一致。注意：Go 1.27 专用文件包含泛型方法语法，`go fmt`/`gofmt` 需使用 Go 1.27+ 工具链（旧工具链的 gofmt 无法解析该文件）。
