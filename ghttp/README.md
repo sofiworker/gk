@@ -227,7 +227,7 @@ ghttp.Route[CreateUserInput, UserOutput](s).
     To(createUser)
 ```
 
-`Consumes` 只约束带 `Body` 的自动解析路由。请求 `Content-Type` 为空时仍按默认 JSON 解析；显式传入不匹配的媒体类型会返回 `415 Unsupported Media Type`。
+`Consumes` 只约束带 `Body` 的自动解析路由。已配置 `Consumes` 时，请求 `Content-Type` 缺失或不匹配都返回 `415 Unsupported Media Type`；未配置 `Consumes` 时，缺失 `Content-Type` 按默认 JSON 解析（宽松默认）。
 
 `application/x-www-form-urlencoded` 表单支持显式 `form:"name"` tag 绑定到 `Body` 结构体字段（标量类型；重复 key 取第一个值）。目标 struct 有可绑定字段但完全没有 `form` tag 时返回 `400 Bad Request`，避免静默空值。
 
@@ -238,7 +238,7 @@ ghttp.Route[CreateUserInput, UserOutput](s).
 | `Accept` 明确列出但无匹配 | `406 Not Acceptable`（huma/go-restful 风格） | `WithLenientContentNegotiation()` 回退第一个 `Produces` |
 | `Accept` 为空或 `*/*` | 第一个 `Produces` | — |
 | 显式但未注册的请求 `Content-Type` | `415 Unsupported Media Type`（huma/go-restful 风格） | `WithLenientContentType()` 按 JSON 解析 |
-| 缺失请求 `Content-Type` | 按 JSON 解析（gin 风格协议便利） | — |
+| 缺失请求 `Content-Type`（已配置 `Consumes`） | `415 Unsupported Media Type` | 不配置 `Consumes` 时按 JSON 解析 |
 | 已注册 codec 无法解码目标类型 | `400 Bad Request`（codec 报错，不静默吞掉） | — |
 | 错误响应体 | `{code,message}` | `WithProblemDetails()` / 路由级 `.ProblemDetails()` 使用 RFC 9457 `application/problem+json`；`WithErrorWriter` / 路由级 `.ErrorWriter` 完全自定义 |
 
@@ -387,6 +387,11 @@ s.Use(ghttp.RBACMiddleware(authz,
 ))
 ```
 
+中间件行为约定：
+- `RequestID` 只回显长度不超过 `DefaultMaxRequestIDLength`（128）的客户端 `X-Request-ID`，超长值会被新生成的 ID 替换；可用 `RequestID(ghttp.WithRequestIDMaxLength(n))` 调整上限。
+- `CORS` 只对真正的预检请求（`OPTIONS` + `Origin` + `Access-Control-Request-Method`）自行返回 204 并短路；普通 `OPTIONS` 请求会继续进入路由，显式注册的 `OPTIONS` handler 正常执行。
+- `Timeout` 超时返回 504 并取消请求 context；超时后 handler 对响应写入会被丢弃，handler 应通过 `ctx.Done()` 协作退出（Go 无法强制终止不协作的 goroutine）。
+
 ### WebSocket
 
 ```go
@@ -491,7 +496,7 @@ Server 使用唯一的未导出 method-first matcher。没有 Router、WithRoute
 
 只支持 {param} 与 {path...}。旧 :param 和 *path 路径立即报配置错误。请求路径不清洗、不重定向；双斜杠、dot segment 和非法百分号转义返回 400。{path...} 可以匹配零段。
 
-中间件顺序固定为内建 Recovery、Server、父 Group、子 Group、Route、Handler。这与 Gin 和 Fiber 等按注册时机嵌套的常见模型不同。Server middleware 同时覆盖成功、400、404、405 和 OpenAPI endpoint。
+中间件顺序固定为内建 Recovery、Server、父 Group、子 Group、Route、Handler。Group 中间件在创建子组时快照（与 gin 一致）：父组在子组创建之后新增的中间件不会传播到已创建的子组。Server middleware 同时覆盖成功、400、404、405 和 OpenAPI endpoint。
 
 类型化 To 支持显式状态码与响应头（见“输出”一节）。ToHTTP 与 ToRaw 得到原始 request；ghttp 不设置 PathValue，middleware 通过 `Server.MatchedParams(r)` 读取路径参数。
 

@@ -28,7 +28,7 @@
 
 - 默认（RFC 正确，huma/go-restful 风格）：
   - 显式但未注册的 Content-Type（且无 Consumes 匹配）→ **415 Unsupported Media Type**；
-  - 缺失 Content-Type（协议级便利，gin 风格）→ 按 JSON 解析；
+  - 已配置 `Consumes` 时缺失 Content-Type → **415 Unsupported Media Type**（2026-08-07 用户确认，替代原“按 JSON 解析”的协议便利）；未配置 `Consumes` 时缺失按 JSON 解析（宽松默认）；
   - 已注册 codec 无法解码目标类型 → 400（由 codec 报错，不静默吞掉）。
 - 显式宽松（gin 风格）：`WithLenientContentType()` 开启后，未知 Content-Type 按 JSON 解析。
 - 兼容：`WithStrictContentType()` 保留，语义变为“当前默认”的无操作别名。

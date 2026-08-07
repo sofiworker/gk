@@ -2001,13 +2001,64 @@ git commit -m "perf(ghttp): reduce full-chain allocations with single response w
 - Go 1.27 RC2（`/root/go-preview/sdk/go`）：`GOROOT=/root/go-preview/sdk/go GOTOOLCHAIN=local go test ./ghttp/`、`go vet ./ghttp/`。
 - 注意：`builder_go127.go` 含泛型方法语法，旧 gofmt 无法解析；格式化必须用 Go 1.27+ 工具链的 gofmt（README/AGENTS.md 已注明）。
 
+## 批次 5：运行时与静态问题修复（P0/P1，2026-08-07 追加）
+
+### Task 5.1: CORS 只短路真正的预检请求
+
+- 判定条件：`OPTIONS` + `Origin` + `Access-Control-Request-Method`；其余 OPTIONS 必须进入路由，显式注册的 OPTIONS handler 正常执行。
+- 文件：`ghttp/middleware.go`；测试：`TestBuiltinMiddlewareCORSPassesThroughNonPreflightOptions`、更新 `TestRouteBuilderBadCasesCORSPreflightShortCircuitsOptionsRoute` 与 `TestFeatureCoverage_MatchedParamsRequestIDCORS`（补 ACRM）。
+
+### Task 5.2: Consumes 已配置时缺失 Content-Type 返回 415
+
+- `validateRequestContentType`：已配置 `Consumes` 且目标有 Body 时，缺失 Content-Type → 415；未配置 `Consumes` 时仍按 JSON 解析（宽松默认）。
+- **注意**：这是对 `docs/superpowers/specs/2026-08-06-ghttp-negotiation-form-problem-design.md` 原“缺失按 JSON”决策的修订（用户 2026-08-07 确认），README/AGENTS/设计文档同步更新。
+- 文件：`ghttp/builder_core.go`；测试：`TestRouteBuilderConsumesRejectsMissingContentType`、`TestRouteBuilderWithoutConsumesParsesMissingContentTypeAsJSON`。
+
+### Task 5.3: Group 中间件创建时快照
+
+- 子组创建时快照父组当前中间件（`Group.Group` 拷贝父组 `middlewares` 并追加新 mws）；父组之后新增的中间件不传播到已创建子组（gin 语义），与 produces/consumes 快照一致。
+- `compileState` 改用 `group.middlewares`，删除 `currentMiddlewaresLocked` 动态递归。
+- 文件：`ghttp/group.go`、`ghttp/server.go`；测试：`TestGroupMiddlewareSnapshotAtCreation`、`TestGroupMiddlewareSnapshotIncludesParentBeforeCreation`。
+
+### Task 5.4: RequestID 长度校验
+
+- 默认上限 `DefaultMaxRequestIDLength = 128`，超长传入值替换为新 ID；`RequestID(WithRequestIDMaxLength(n))` 可调。
+- 文件：`ghttp/middleware.go`；测试：`TestBuiltinMiddlewareRequestIDRejectsOversizedIncomingValue`、`TestBuiltinMiddlewareRequestIDMaxLengthOption`。
+
+### Task 5.5: Timeout 取消 context 并丢弃超时后写入
+
+- 超时返回 504、`ctx.Done()` 生效；`timeoutResponseWriter.stop()` 使超时后 Write/WriteHeader 失效，避免与已发响应竞态；不协作 handler 无法强制终止（文档明示）。
+- 文件：`ghttp/middleware.go`；测试：`TestBuiltinMiddlewareTimeoutStopsLateWrites`、`TestBuiltinMiddlewareTimeoutCancelsContext`。
+
+### Task 5.6: 移除死代码与无用参数
+
+- 删除 `Server.buildHandlerChain`（无调用）；`newRouteRegistry()` 去掉被忽略的 strict 参数。
+- 文件：`ghttp/server.go`、`ghttp/route_registry.go` 及测试。
+
+### Task 5.7: 路径提取只执行一次 + 提取错误走路由级错误管线
+
+- `compiledState.ServeHTTP` 提取一次并存入 context；`extractorTerminal` 从 context 读取（缺 context 时防御性回退）。
+- `routeDefinition` 增加 `errorWriter`；提取错误经 `writeRouteError`（路由级 ErrorWriter → server ErrorHandler → 内置），不再绕过。
+- 文件：`ghttp/server.go`、`ghttp/builder_core.go`、`ghttp/route_definition.go`；测试：`TestServerRoutesMatchOnceDespiteMiddlewarePathMutation`、`TestServerRoutesExtractorFallbackFailureThroughErrorHandler`、`TestWriteRouteErrorUsesRouteWriter`。
+
+### Task 5.8: SSE handler 错误落日志
+
+- `buildSSEHandler` 不再丢弃 error，通过 server logger 记录。
+- 文件：`ghttp/builder_core.go`；测试：`TestSSEHandlerErrorLogged`。
+
+### Task 5.9: Server.Use 链式化
+
+- `Server.Use(mws...) *Server`，与 `Consumes/Group` 等链式 API 一致。
+- 文件：`ghttp/server.go`；测试：`TestServerUseChainable`。
+
 ## 已确认决策（2026-08-06 review 确认）
 
 1. 406 默认行为：**已被 `docs/superpowers/specs/2026-08-06-ghttp-negotiation-form-problem-design.md` 取代**——默认 406，`WithLenientContentNegotiation()` 显式宽松；`WithStrictContentNegotiation()` 保留为兼容别名。
-2. 请求 Content-Type 默认：**已被上述设计取代**——显式未知类型默认 415，缺失类型按 JSON；`WithLenientContentType()` 显式宽松，`WithStrictContentType()` 保留为兼容别名。
+2. 请求 Content-Type 默认：**已被上述设计取代**——显式未知类型默认 415；已配置 `Consumes` 时缺失类型默认 415（2026-08-07 修订），未配置时缺失按 JSON；`WithLenientContentType()` 显式宽松，`WithStrictContentType()` 保留为兼容别名。
 3. server 级 validator：**默认关闭**，需 `WithValidator` 显式启用，按 Task 2.2 实施（标注破坏性）。
 4. 类型化状态码：**接口（`StatusCoder`/`ResponseHeaderWriter`）+ builder 固定值（`.Status()`/`.ResponseHeader()`）**，不引入 tag 反射，按 Task 3.1 实施。
 5. WebSocket 默认策略：**同源放行、缺 Origin 放行、跨源 403**，用户未提出异议，按 Task 5.2 实施。
 6. 无输入/无输出：**显式终结器 `ToNoInput`/`ToNoOutput`**，禁止 `struct{}` 魔法与零值自动 204（2026-08-07 确认，方案 A）。
 7. 双版本共存：**`//go:build go1.27` 版本约束自动选择，不要求使用者显式传 tag**；1.27 版 Server/Group 本身即根组，`Server.GET(path).Doc(...).To[Req,Resp](handler)` 直接注册，**Server/Group 上不提供 `Route()` 方法，也没有小写快捷注册**，`ANY`/`CUSTOM` 走 `s.ANY(path)`/`s.CUSTOM(method,path)` 直接链式起点；包级 `Route[Req,Resp]` 仅保留为 deprecated 兼容空壳（2026-08-07 确认，2026-08-07 修订：移除 `Route()` 方法与全部小写快捷注册，保留包级空壳）。
 8. builder 级 Group：**两个版本的 `RouteBuilder` 均提供 `.Group(prefix, mws...)`**，gin 的 `r.Group` 语义；须在设置 method/path 之前调用，已设置的路由级选项不转移（2026-08-07 确认）。
+9. 批次 5 语义（2026-08-07 确认）：CORS 只短路真预检；Group 中间件创建时快照；RequestID 默认 128 上限；Timeout 超时取消 context 并丢弃迟到写入；路径提取单次 + 错误走路由级管线；SSE error 落日志；`Server.Use` 链式。

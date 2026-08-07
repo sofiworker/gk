@@ -28,7 +28,7 @@
 
 - 影响外部可观察行为的特性必须显式开启，默认值必须是保守值。
 - 例：500 是否泄露内部错误默认关闭，需 `WithExposeErrorDetails` 显式开启；Envelope 默认关闭，需 `WithEnvelope`；服务器级 validator 默认关闭，需 `WithValidator`。
-- 仅允许两类隐式默认：① 协议级便利（HEAD 回退 GET、缺省 Content-Type 等），必须在文档中明示为默认值；② 纯内部实现细节。
+- 仅允许两类隐式默认：① 协议级便利（HEAD 回退 GET 等），必须在文档中明示为默认值；② 纯内部实现细节。
 - 禁止“魔法字段/魔法行为”作为特性存在；`Body` 字段约定、自动校验等必须显式化或在文档中长期声明。
 
 ### 非 200 状态码语义
@@ -54,6 +54,15 @@
 - 无输入路由使用显式 `.ToNoInput(handler)`：不解析 body、不校验 Content-Type、不校验请求参数，handler 签名 `func(context.Context) (Resp, error)`。
 - 无输出路由使用显式 `.ToNoOutput(handler)`：handler 签名 `func(context.Context, Req) error`，成功默认 204（`.Status(code)` 可覆盖），错误走统一错误管线；OpenAPI 响应无 content。
 - 禁止用 `struct{}` 或“零值自动 204”等魔法代替显式终结器；`Route[Req, struct{}]` 中残余的 `struct{}` 只是 Go 1.27 前过渡形态的类型占位。
+
+### 中间件与 Group 语义
+
+- 已配置 `Consumes` 时，请求 `Content-Type` 缺失或不匹配返回 415；未配置 `Consumes` 时缺失按 JSON 解析（宽松默认）。
+- `CORS` 只对真正的预检请求（`OPTIONS` + `Origin` + `Access-Control-Request-Method`）短路返回 204；普通 `OPTIONS` 必须进入路由。
+- `RequestID` 对传入 `X-Request-ID` 有长度上限（默认 128，`WithRequestIDMaxLength` 可调），超长值替换为新 ID。
+- `Timeout` 超时返回 504、取消 context，并丢弃超时后的写入；不协作的 handler goroutine 无法被强制终止，文档必须明示。
+- Group 中间件在创建子组时快照（gin 语义）；父组在子组创建后新增的中间件不传播到已创建的子组。produces/consumes 同为创建时快照。
+- SSE handler 返回的 error 必须记录（logger），不得丢弃。
 
 ## 验证与门禁
 
