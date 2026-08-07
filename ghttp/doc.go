@@ -2,6 +2,7 @@ package ghttp
 
 import "time"
 
+// RouteDoc 保存路由的文档元数据。
 // RouteDoc holds documentation metadata for a route.
 type RouteDoc struct {
 	Summary          string
@@ -16,9 +17,11 @@ type RouteDoc struct {
 	Errors           []DocMessage
 }
 
+// DocOption 配置路由文档元数据。
 // DocOption configures route documentation metadata.
 type DocOption func(*RouteDoc)
 
+// Summary 设置 OpenAPI 操作摘要。
 // Summary sets the OpenAPI operation summary.
 func Summary(summary string) DocOption {
 	return func(d *RouteDoc) {
@@ -26,6 +29,7 @@ func Summary(summary string) DocOption {
 	}
 }
 
+// Description 设置 OpenAPI 操作描述。
 // Description sets the OpenAPI operation description.
 func Description(description string) DocOption {
 	return func(d *RouteDoc) {
@@ -33,6 +37,7 @@ func Description(description string) DocOption {
 	}
 }
 
+// OperationID 设置 OpenAPI 操作 ID。
 // OperationID sets the OpenAPI operation ID.
 func OperationID(id string) DocOption {
 	return func(d *RouteDoc) {
@@ -40,6 +45,7 @@ func OperationID(id string) DocOption {
 	}
 }
 
+// Tags 设置 OpenAPI 操作标签。
 // Tags sets OpenAPI operation tags.
 func Tags(tags ...string) DocOption {
 	return func(d *RouteDoc) {
@@ -47,7 +53,8 @@ func Tags(tags ...string) DocOption {
 	}
 }
 
-// Deprecated marks the route as deprecated and records an optional migration hint.
+// Deprecated 标记路由废弃并记录可选的迁移提示。
+// Deprecated marks the route deprecated with an optional migration hint.
 func Deprecated(reason string) DocOption {
 	return func(d *RouteDoc) {
 		d.Deprecated = true
@@ -55,7 +62,8 @@ func Deprecated(reason string) DocOption {
 	}
 }
 
-// Sunset documents when a deprecated route is expected to stop being available.
+// Sunset 记录废弃路由预计停止可用的时间。
+// Sunset documents when a deprecated route is expected to disappear.
 func Sunset(at time.Time) DocOption {
 	return func(d *RouteDoc) {
 		if at.IsZero() {
@@ -66,12 +74,14 @@ func Sunset(at time.Time) DocOption {
 	}
 }
 
+// ExternalDocsDoc 描述路由的外部文档。
 // ExternalDocsDoc describes external documentation for a route.
 type ExternalDocsDoc struct {
 	Description string `json:"description,omitempty"`
 	URL         string `json:"url,omitempty"`
 }
 
+// ExternalDocs 为路由关联外部文档。
 // ExternalDocs links a route to external documentation.
 func ExternalDocs(description, url string) DocOption {
 	return func(d *RouteDoc) {
@@ -82,15 +92,18 @@ func ExternalDocs(description, url string) DocOption {
 	}
 }
 
+// DocMessage 描述业务级响应 code 与 message。
 // DocMessage describes a business-level response code and message.
 type DocMessage struct {
 	Code    *int   `json:"code,omitempty"`
 	Message string `json:"message,omitempty"`
 }
 
+// DocMessageOption 配置 DocMessage。
 // DocMessageOption configures a DocMessage.
 type DocMessageOption func(*DocMessage)
 
+// Code 设置文档元数据的业务级 code。
 // Code sets a business-level code for documentation metadata.
 func Code(code int) DocMessageOption {
 	return func(m *DocMessage) {
@@ -98,6 +111,7 @@ func Code(code int) DocMessageOption {
 	}
 }
 
+// Message 设置文档元数据的业务级 message。
 // Message sets a business-level message for documentation metadata.
 func Message(message string) DocMessageOption {
 	return func(m *DocMessage) {
@@ -105,6 +119,7 @@ func Message(message string) DocMessageOption {
 	}
 }
 
+// Success 记录成功的业务响应。
 // Success documents the successful business response.
 func Success(opts ...DocMessageOption) DocOption {
 	return func(d *RouteDoc) {
@@ -118,6 +133,7 @@ func Success(opts ...DocMessageOption) DocOption {
 	}
 }
 
+// Errors 记录路由可能返回的业务级错误。
 // Errors documents business-level errors a route can return.
 func Errors(errs ...error) DocOption {
 	return func(d *RouteDoc) {

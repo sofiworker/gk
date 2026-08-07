@@ -11,6 +11,7 @@ import (
 
 var ErrWebSocketConnNotInitialized = errors.New("websocket connection is not initialized")
 
+// WebSocketMessageType 标识 WebSocket 数据帧类型。
 // WebSocketMessageType identifies a WebSocket data frame type.
 type WebSocketMessageType int
 
@@ -19,6 +20,7 @@ const (
 	BinaryMessage WebSocketMessageType = 2
 )
 
+// WebSocketConn 包装 WebSocket 连接并提供 JSON 辅助。
 // WebSocketConn wraps a WebSocket connection with JSON helpers.
 type WebSocketConn struct {
 	conn webSocketConn
@@ -58,6 +60,7 @@ func (c *WebSocketConn) Close() error {
 	return c.conn.Close()
 }
 
+// ReadMessage 读取下一条原始 WebSocket 帧。
 // ReadMessage reads the next raw WebSocket frame.
 func (c *WebSocketConn) ReadMessage() (WebSocketMessageType, []byte, error) {
 	if c == nil || c.conn == nil {
@@ -67,6 +70,7 @@ func (c *WebSocketConn) ReadMessage() (WebSocketMessageType, []byte, error) {
 	return WebSocketMessageType(messageType), data, err
 }
 
+// WriteMessage 写入原始 WebSocket 帧。
 // WriteMessage writes a raw WebSocket frame.
 func (c *WebSocketConn) WriteMessage(messageType WebSocketMessageType, data []byte) error {
 	if c == nil || c.conn == nil {
@@ -75,8 +79,8 @@ func (c *WebSocketConn) WriteMessage(messageType WebSocketMessageType, data []by
 	return c.conn.WriteMessage(int(messageType), data)
 }
 
-// Subprotocol returns the subprotocol negotiated during the handshake, or an
-// empty string when none was negotiated.
+// Subprotocol 返回握手协商的子协议，未协商时返回空字符串。
+// Subprotocol returns the negotiated subprotocol, or empty.
 func (c *WebSocketConn) Subprotocol() string {
 	if c == nil || c.conn == nil {
 		return ""
@@ -84,7 +88,8 @@ func (c *WebSocketConn) Subprotocol() string {
 	return c.conn.Subprotocol()
 }
 
-// SetReadDeadline sets the read deadline for the underlying connection.
+// SetReadDeadline 设置底层连接的读截止时间。
+// SetReadDeadline sets the read deadline.
 func (c *WebSocketConn) SetReadDeadline(t time.Time) error {
 	if c == nil || c.conn == nil {
 		return ErrWebSocketConnNotInitialized
@@ -92,7 +97,8 @@ func (c *WebSocketConn) SetReadDeadline(t time.Time) error {
 	return c.conn.SetReadDeadline(t)
 }
 
-// SetWriteDeadline sets the write deadline for the underlying connection.
+// SetWriteDeadline 设置底层连接的写截止时间。
+// SetWriteDeadline sets the write deadline.
 func (c *WebSocketConn) SetWriteDeadline(t time.Time) error {
 	if c == nil || c.conn == nil {
 		return ErrWebSocketConnNotInitialized
@@ -100,9 +106,10 @@ func (c *WebSocketConn) SetWriteDeadline(t time.Time) error {
 	return c.conn.SetWriteDeadline(t)
 }
 
-// ReadJSONContext reads one JSON message and returns ctx.Err() when the
-// context is done first. The blocking read is unblocked by a read deadline;
-// after cancellation the connection must be treated as closed.
+// ReadJSONContext 读取一条 JSON 消息，context 结束时返回 ctx.Err()。
+// ReadJSONContext reads one JSON message, returning ctx.Err() on cancel.
+// 阻塞读通过读截止时间解除；取消后连接视为已关闭。
+// the blocking read is unblocked by a deadline; treat the conn as closed after.
 func (c *WebSocketConn) ReadJSONContext(ctx context.Context, v interface{}) error {
 	if c == nil || c.conn == nil {
 		return ErrWebSocketConnNotInitialized
@@ -124,9 +131,10 @@ func (c *WebSocketConn) ReadJSONContext(ctx context.Context, v interface{}) erro
 	}
 }
 
-// WriteJSONContext writes one JSON message and returns ctx.Err() when the
-// context is done first. The blocking write is unblocked by a write deadline;
-// after cancellation the connection must be treated as closed.
+// WriteJSONContext 写入一条 JSON 消息，context 结束时返回 ctx.Err()。
+// WriteJSONContext writes one JSON message, returning ctx.Err() on cancel.
+// 阻塞写通过写截止时间解除；取消后连接视为已关闭。
+// the blocking write is unblocked by a deadline; treat the conn as closed after.
 func (c *WebSocketConn) WriteJSONContext(ctx context.Context, v interface{}) error {
 	if c == nil || c.conn == nil {
 		return ErrWebSocketConnNotInitialized
@@ -148,6 +156,7 @@ func (c *WebSocketConn) WriteJSONContext(ctx context.Context, v interface{}) err
 	}
 }
 
+// WebSocketHandler 是 WebSocket 升级的 handler 类型。
 // WebSocketHandler is the handler type for WebSocket upgrades.
 type WebSocketHandler func(ctx context.Context, params Params, conn *WebSocketConn) error
 
@@ -199,9 +208,10 @@ func buildWebSocketHandler(s *Server, handler WebSocketHandler, routeCheckOrigin
 	})
 }
 
-// startWebSocketKeepAlive sends periodic pings and refreshes the read
-// deadline on pongs. It is opt-in: both periods must be positive, otherwise
-// the returned stop function is a no-op.
+// startWebSocketKeepAlive 周期发送 ping 并在 pong 时刷新读截止时间。
+// startWebSocketKeepAlive sends pings and refreshes the read deadline on pongs.
+// 需显式开启：两个周期都必须为正，否则返回空操作。
+// opt-in: both periods must be positive, otherwise it is a no-op.
 func startWebSocketKeepAlive(c *WebSocketConn, pingPeriod, pongWait time.Duration) func() {
 	if c == nil || c.conn == nil || pingPeriod <= 0 || pongWait <= 0 {
 		return func() {}
