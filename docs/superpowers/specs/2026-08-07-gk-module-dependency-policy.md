@@ -82,10 +82,10 @@
 - `ghttp` client 重试改用 `gretry.Wait`/`gretry.NextDelay`（指数退避、上限、ctx 感知），删除内联 `waitWithContext`/`nextRetryWait`。
 - `gsd` 删除自研 `calculateDelay`/`mathPow`，`retryWithBackoff` 委托 `gretry.Do`，`RetryStrategy` 收敛为 gretry 的类型别名。
 - `glog` 核心不再 import `go.opentelemetry.io/otel/trace`，trace 字段通过 `Config.TraceExtractor` / `WithTraceExtractor` 由使用方注入。
+- `ghttp` 与 `gerr` 错误互操作：`HTTPError.Unwrap` 穿透错误链；新增 `FromGerr`/`ToGerr`/`GerrStatus` 双向转换与状态码 ↔ `gerr.Kind` 映射（ghttp 单向依赖 gerr）。
 
 ### 待收敛
 
-- `ghttp.HTTPError` ↔ `gerr` 互操作（`errors.As`/转换），短期并存但文档化边界；
 - `gotel.OTELProvider` 空壳：实现或删除/降级；
 - CI 依赖方向检查（depguard/脚本）落地。
 

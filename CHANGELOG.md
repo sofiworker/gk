@@ -14,6 +14,7 @@
 - 仓库：模块依赖三层分层原则设计文档（基础契约层 / 能力层 / 适配层）。
 - gretry：导出 `NextDelay`/`Wait` 作为仓库唯一退避/抖动实现；ghttp client 与 gsd 重试统一复用，删除各自内联实现。
 - glog：核心去除 OpenTelemetry 硬依赖，trace 字段改为可选 `WithTraceExtractor` 注入。
+- ghttp：新增与 gerr 的错误互操作——`FromGerr`/`ToGerr`/`GerrStatus` 双向转换与 HTTP 状态码 ↔ `gerr.Kind` 映射。
 
 ### Changed
 
