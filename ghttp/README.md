@@ -132,6 +132,7 @@ _, err = io.Copy(dst, streamResp.RawBody())
 | `.Consumes(contentTypes...)` | 声明可自动解析的请求 Content-Type，可在 server/group/route 上声明 |
 | `.MaxBodyBytes(n)` | 覆盖当前路由自动解析请求体的大小上限；`n <= 0` 表示不限制 |
 | `.Produces(contentTypes...)` | 自动响应编码的 Content-Type，可在 server/group/route 上声明 |
+| `.Group(prefix, mws...)` | 从 builder 分支创建子组（gin 的 `r.Group` 语义）；须在设置 method/path 之前调用，已设置的路由级选项不转移 |
 
 ### 终结方法
 
