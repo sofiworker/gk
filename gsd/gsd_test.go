@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/sofiworker/gk/gretry"
 )
 
 func TestRetryWithBackoff(t *testing.T) {
@@ -51,23 +53,32 @@ func TestCalculateDelay(t *testing.T) {
 	opts.BackoffMultiplier = 2.0
 	opts.MaxRetryDelay = 100 * time.Millisecond
 
+	gopts := gretry.ErrorHandlingOptions{
+		RetryDelay:        opts.RetryDelay,
+		BackoffMultiplier: opts.BackoffMultiplier,
+		MaxRetryDelay:     opts.MaxRetryDelay,
+	}
+
 	// Fixed
 	opts.RetryStrategy = RetryStrategyFixed
-	d := calculateDelay(0, opts)
+	gopts.RetryStrategy = gretry.RetryStrategyFixed
+	d := gretry.NextDelay(0, gopts)
 	if d < 10*time.Millisecond {
 		t.Errorf("expected >= 10ms, got %v", d)
 	}
 
 	// Linear
 	opts.RetryStrategy = RetryStrategyLinear
-	d = calculateDelay(1, opts) // 10 * 2 = 20ms
+	gopts.RetryStrategy = gretry.RetryStrategyLinear
+	d = gretry.NextDelay(1, gopts) // 10 * 2 = 20ms
 	if d < 20*time.Millisecond {
 		t.Errorf("expected >= 20ms, got %v", d)
 	}
 
 	// Exponential
 	opts.RetryStrategy = RetryStrategyExponential
-	d = calculateDelay(1, opts) // 10 * 2^1 = 20ms
+	gopts.RetryStrategy = gretry.RetryStrategyExponential
+	d = gretry.NextDelay(1, gopts) // 10 * 2^1 = 20ms
 	if d < 20*time.Millisecond {
 		t.Errorf("expected >= 20ms, got %v", d)
 	}
