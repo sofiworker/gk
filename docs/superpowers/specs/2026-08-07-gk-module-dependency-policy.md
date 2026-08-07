@@ -65,6 +65,30 @@
 
 每个迁移项按仓库惯例：先计划文档 → review → 实现 → 双工具链测试/lint → 本地提交（未经授权不推送）。
 
+## 5.1 定义归属与收敛进度（2026-08-07 更新）
+
+公共概念的**权威定义归属**：
+
+| 概念 | 权威定义 | 现状 |
+|------|----------|------|
+| 领域错误 | `gerr` | ghttp 尚未接入（下一步：`HTTPError` 与 gerr 互操作/转换） |
+| 重试/退避/抖动 | `gretry`（`Do`/`NextDelay`/`Wait`） | **已收敛**：ghttp client 与 gsd 均复用 `gretry.NextDelay/Wait`，不再各自实现 |
+| 日志接口 | 能力层各自定义小接口（如 `ghttp.Logger`） | ghttp 定义接口、用户注入；glog 核心已去除 otel 硬依赖，改为可选 `WithTraceExtractor` |
+| 反射工具 | `grx` | 保持独立基础层 |
+
+### 已完成的收敛（2026-08-07）
+
+- `gretry` 导出 `NextDelay(attempt, options)` 与 `Wait(ctx, delay)`，`Do` 内部统一使用；移除了每尝试一个 goroutine 的实现。
+- `ghttp` client 重试改用 `gretry.Wait`/`gretry.NextDelay`（指数退避、上限、ctx 感知），删除内联 `waitWithContext`/`nextRetryWait`。
+- `gsd` 删除自研 `calculateDelay`/`mathPow`，`retryWithBackoff` 委托 `gretry.Do`，`RetryStrategy` 收敛为 gretry 的类型别名。
+- `glog` 核心不再 import `go.opentelemetry.io/otel/trace`，trace 字段通过 `Config.TraceExtractor` / `WithTraceExtractor` 由使用方注入。
+
+### 待收敛
+
+- `ghttp.HTTPError` ↔ `gerr` 互操作（`errors.As`/转换），短期并存但文档化边界；
+- `gotel.OTELProvider` 空壳：实现或删除/降级；
+- CI 依赖方向检查（depguard/脚本）落地。
+
 ## 6. 例外与豁免
 
 - 只有明确标注的“适配/拼接”文件可以跨能力层依赖；
