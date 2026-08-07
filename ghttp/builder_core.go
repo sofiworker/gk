@@ -104,6 +104,7 @@ type routeBuilderCore struct {
 	responseStatus  int
 	responseHeaders []responseHeader
 	errorWriter     ErrorWriter
+	wsCheckOrigin   func(*http.Request) bool
 }
 
 func newRouteBuilderCore(target routeTarget) *routeBuilderCore {
@@ -168,6 +169,11 @@ func (c *routeBuilderCore) responseHeader(name, value string) {
 func (c *routeBuilderCore) setErrorWriter(writer ErrorWriter) {
 	c.ensureMutable()
 	c.errorWriter = writer
+}
+
+func (c *routeBuilderCore) setWebSocketCheckOrigin(check func(*http.Request) bool) {
+	c.ensureMutable()
+	c.wsCheckOrigin = check
 }
 
 func (c *routeBuilderCore) problemDetails() {
@@ -373,7 +379,7 @@ func (c *routeBuilderCore) toWebSocket(handler WebSocketHandler, reqType, respTy
 		c.beginTerminal()
 		c.panicSetupError(ErrRouteHandlerNil)
 	}
-	c.toHandler(buildWebSocketHandler(c.target.owner(), handler), true, routeTerminalWebSocket, http.StatusSwitchingProtocols, reqType, respType)
+	c.toHandler(buildWebSocketHandler(c.target.owner(), handler, c.wsCheckOrigin), true, routeTerminalWebSocket, http.StatusSwitchingProtocols, reqType, respType)
 }
 
 func (c *routeBuilderCore) writeError(w http.ResponseWriter, r *http.Request, defaultCode int, err error) {

@@ -1,10 +1,12 @@
 package ghttp
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"net"
 	"net/http"
 	"runtime/debug"
 	"strconv"
@@ -310,13 +312,14 @@ func Timeout(d time.Duration) Middleware {
 }
 
 type timeoutResponseWriter struct {
-	mu      sync.Mutex
-	stopped bool
-	header  http.Header
-	body    bytes.Buffer
-	status  int
-	wrote   bool
-	state   *responseWriteState
+	mu        sync.Mutex
+	stopped   bool
+	streaming bool
+	header    http.Header
+	body      bytes.Buffer
+	status    int
+	wrote     bool
+	state     *responseWriteState
 }
 
 func newTimeoutResponseWriter(state *responseWriteState) *timeoutResponseWriter {
@@ -366,6 +369,11 @@ func (w *timeoutResponseWriter) stop() {
 
 func (w *timeoutResponseWriter) WriteTo(dst http.ResponseWriter) {
 	w.mu.Lock()
+	if w.streaming || w.stopped {
+		w.mu.Unlock()
+		w.state.clearBuffered()
+		return
+	}
 	header := w.header.Clone()
 	body := append([]byte(nil), w.body.Bytes()...)
 	status := w.status
@@ -381,4 +389,57 @@ func (w *timeoutResponseWriter) WriteTo(dst http.ResponseWriter) {
 	}
 	dst.WriteHeader(status)
 	_, _ = dst.Write(body)
+}
+
+// Unwrap lets http.ResponseController reach the underlying writer.
+func (w *timeoutResponseWriter) Unwrap() http.ResponseWriter {
+	return w.state
+}
+
+// Flush commits buffered headers/body to the underlying writer and flushes
+// it, so streaming responses (SSE, chunked) keep working inside Timeout.
+func (w *timeoutResponseWriter) Flush() {
+	w.mu.Lock()
+	if w.stopped {
+		w.mu.Unlock()
+		return
+	}
+	if !w.wrote {
+		w.status = http.StatusOK
+		w.wrote = true
+		w.state.markBuffered()
+	}
+	header := w.header.Clone()
+	status := w.status
+	body := append([]byte(nil), w.body.Bytes()...)
+	w.body.Reset()
+	w.streaming = true
+	w.mu.Unlock()
+
+	for key, values := range header {
+		w.state.Header()[key] = append([]string(nil), values...)
+	}
+	w.state.WriteHeader(status)
+	if len(body) > 0 {
+		_, _ = w.state.Write(body)
+	}
+	if flusher, ok := w.state.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// Hijack delegates the WebSocket upgrade so connections inside Timeout work.
+func (w *timeoutResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	w.mu.Lock()
+	if w.stopped {
+		w.mu.Unlock()
+		return nil, nil, http.ErrNotSupported
+	}
+	w.stopped = true
+	w.mu.Unlock()
+	hijacker, ok := w.state.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	return hijacker.Hijack()
 }

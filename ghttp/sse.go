@@ -85,6 +85,22 @@ func (s *SSEWriter) WriteJSON(event string, data interface{}) error {
 	return s.WriteEvent(event, string(b))
 }
 
+// WriteJSONWithID writes a JSON event with an explicit id, so reconnecting
+// clients can resume from Last-Event-ID.
+func (s *SSEWriter) WriteJSONWithID(event, id string, data interface{}) error {
+	if strings.ContainsAny(id, "\r\n") {
+		return fmt.Errorf("sse: event id contains newline")
+	}
+	if _, err := fmt.Fprintf(s.w, "id: %s\n", id); err != nil {
+		return err
+	}
+	b, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	return s.WriteEvent(event, string(b))
+}
+
 // SSEStream is a client-side SSE stream.
 type SSEStream struct {
 	Events  <-chan SSEEvent

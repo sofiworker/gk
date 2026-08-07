@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -38,6 +39,49 @@ func TestSSEWriterWriteJSON(t *testing.T) {
 	output := w.buf.String()
 	assert.Contains(t, output, "event: message")
 	assert.Contains(t, output, `"key":"value"`)
+}
+
+func TestSSEWriterWriteJSONWithID(t *testing.T) {
+	w := &mockResponseWriter{header: make(http.Header)}
+	sw := &SSEWriter{w: w, flusher: &mockFlusher{}}
+
+	err := sw.WriteJSONWithID("update", "42", map[string]any{"ok": true})
+	assert.NoError(t, err)
+
+	output := w.buf.String()
+	assert.Contains(t, output, "id: 42\n")
+	assert.Contains(t, output, "event: update\n")
+	assert.Contains(t, output, "data: {\"ok\":true}\n")
+}
+
+func TestSSEStreamingUnderTimeoutMiddleware(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	app.Use(Timeout(5 * time.Second))
+
+	Route[struct{}, struct{}](app).GET("/events").ToSSE(func(ctx context.Context, params Params, stream *SSEWriter) error {
+		if err := stream.WriteJSON("tick", map[string]any{"n": 1}); err != nil {
+			return err
+		}
+		time.Sleep(50 * time.Millisecond)
+		return stream.WriteJSON("tick", map[string]any{"n": 2})
+	})
+
+	ts := httptest.NewServer(app)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/events")
+	if err != nil {
+		t.Fatalf("SSE request: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read SSE body: %v", err)
+	}
+	text := string(body)
+	if !strings.Contains(text, `"n":1`) || !strings.Contains(text, `"n":2`) {
+		t.Fatalf("SSE body = %q, want both events", text)
+	}
 }
 
 func TestSSEHandlerErrorLogged(t *testing.T) {

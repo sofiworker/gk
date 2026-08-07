@@ -227,6 +227,13 @@ func (b *RouteBuilder[Req, Resp]) ToWebSocket(handler WebSocketHandler) {
 	b.core.toWebSocket(handler, reflect.TypeFor[Req](), reflect.TypeFor[Resp]())
 }
 
+// WebSocketCheckOrigin overrides the server-level WebSocket origin check for
+// this route. It must be called before ToWebSocket.
+func (b *RouteBuilder[Req, Resp]) WebSocketCheckOrigin(check func(*http.Request) bool) *RouteBuilder[Req, Resp] {
+	b.core.setWebSocketCheckOrigin(check)
+	return b
+}
+
 // ToStatic registers a safe file server with the selected route path as its URL prefix.
 func (b *RouteBuilder[Req, Resp]) ToStatic(root ...string) {
 	b.core.beginTerminal()

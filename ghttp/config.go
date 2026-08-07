@@ -39,6 +39,11 @@ type Config struct {
 	lenientContentType        bool
 	problemDetails            bool
 	webSocketCheckOrigin      func(*http.Request) bool
+	webSocketSubprotocols     []string
+	webSocketReadBufferSize   int
+	webSocketWriteBufferSize  int
+	webSocketPingPeriod       time.Duration
+	webSocketPongWait         time.Duration
 	readTimeout               time.Duration
 	readHeaderTimeout         time.Duration
 	writeTimeout              time.Duration
@@ -216,6 +221,46 @@ func WithProblemDetails() ServerOption {
 func WithWebSocketOriginChecker(check func(*http.Request) bool) ServerOption {
 	return func(c *Config) {
 		c.webSocketCheckOrigin = check
+	}
+}
+
+// WithServerWebSocketSubprotocols sets the subprotocols the server accepts
+// during the WebSocket handshake. The negotiated one is available through
+// WebSocketConn.Subprotocol.
+func WithServerWebSocketSubprotocols(protos []string) ServerOption {
+	return func(c *Config) {
+		c.webSocketSubprotocols = append([]string(nil), protos...)
+	}
+}
+
+// WithServerWebSocketReadBufferSize sets the server WebSocket read buffer size.
+func WithServerWebSocketReadBufferSize(size int) ServerOption {
+	return func(c *Config) {
+		c.webSocketReadBufferSize = size
+	}
+}
+
+// WithServerWebSocketWriteBufferSize sets the server WebSocket write buffer size.
+func WithServerWebSocketWriteBufferSize(size int) ServerOption {
+	return func(c *Config) {
+		c.webSocketWriteBufferSize = size
+	}
+}
+
+// WithServerWebSocketPingPeriod enables server keepalive pings at the given
+// period. Requires a positive WithServerWebSocketPongWait; default is disabled.
+func WithServerWebSocketPingPeriod(period time.Duration) ServerOption {
+	return func(c *Config) {
+		c.webSocketPingPeriod = period
+	}
+}
+
+// WithServerWebSocketPongWait sets how long the server waits for a pong before
+// treating the connection as dead. It only takes effect together with
+// WithServerWebSocketPingPeriod; default is disabled.
+func WithServerWebSocketPongWait(wait time.Duration) ServerOption {
+	return func(c *Config) {
+		c.webSocketPongWait = wait
 	}
 }
 
