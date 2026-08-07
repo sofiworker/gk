@@ -1,7 +1,10 @@
 package ghttp
 
 import (
+	"bytes"
+	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -35,6 +38,26 @@ func TestSSEWriterWriteJSON(t *testing.T) {
 	output := w.buf.String()
 	assert.Contains(t, output, "event: message")
 	assert.Contains(t, output, `"key":"value"`)
+}
+
+func TestSSEHandlerErrorLogged(t *testing.T) {
+	var buf bytes.Buffer
+	app := New(
+		WithProduces(MIMEJSON),
+		WithLogger(NewSlogLogger(slog.New(slog.NewTextHandler(&buf, nil)))),
+	)
+	Route[struct{}, struct{}](app).GET("/events").ToSSE(func(ctx context.Context, params Params, stream *SSEWriter) error {
+		return fmt.Errorf("sse boom")
+	})
+
+	w := httptest.NewRecorder()
+	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/events", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if !strings.Contains(buf.String(), "sse handler error") || !strings.Contains(buf.String(), "sse boom") {
+		t.Fatalf("logger output = %q, want sse handler error with sse boom", buf.String())
+	}
 }
 
 func TestSSEWriterMultipleEvents(t *testing.T) {

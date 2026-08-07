@@ -64,7 +64,7 @@ func New(opts ...ServerOption) *Server {
 	}
 
 	s := &Server{
-		registry:     newRouteRegistry(c.strictRouting),
+		registry:     newRouteRegistry(),
 		config:       c,
 		codecMgr:     NewCodecManager(),
 		envelope:     c.envelope,
@@ -132,11 +132,6 @@ func (s *Server) writeRecoveredPanic(w http.ResponseWriter, r *http.Request, rec
 		return
 	}
 	writeErrorWithCodec(w, r, s, http.StatusInternalServerError, err, nil, nil)
-}
-
-// buildHandlerChain returns the Server handler after route compilation.
-func (s *Server) buildHandlerChain() http.Handler {
-	return s
 }
 
 func (s *Server) buildServerHandler() http.Handler {
@@ -266,12 +261,13 @@ func (s *Server) Addr() net.Addr {
 	return s.listenerAddr
 }
 
-// Use adds middleware to the server.
-func (s *Server) Use(mws ...Middleware) {
+// Use adds middleware to the server and returns the server for chaining.
+func (s *Server) Use(mws ...Middleware) *Server {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.panicIfFrozenLocked()
 	s.middlewares = append(s.middlewares, mws...)
+	return s
 }
 
 // Consumes declares the default request Content-Types for automatic body decoding.
@@ -441,7 +437,7 @@ func (s *Server) Group(prefix string, mws ...Middleware) *Group {
 	return &Group{
 		server:      s,
 		prefix:      prefix,
-		middlewares: mws,
+		middlewares: append([]Middleware(nil), mws...),
 	}
 }
 
@@ -459,7 +455,7 @@ func compileState(definitions []routeDefinition, serverMiddlewares []Middleware,
 	for _, route := range mux.routes {
 		middlewares := append([]Middleware(nil), serverMiddlewares...)
 		if route.definition.group != nil {
-			middlewares = append(middlewares, route.definition.group.currentMiddlewaresLocked()...)
+			middlewares = append(middlewares, route.definition.group.middlewares...)
 		}
 		middlewares = append(middlewares, route.definition.middlewares...)
 		terminal := route.definition.handler
@@ -483,19 +479,24 @@ func compileState(definitions []routeDefinition, serverMiddlewares []Middleware,
 
 func extractorTerminal(route *compiledRoute) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestPath, err := parseRequestPath(r.URL.EscapedPath(), route.definition.pattern.strict)
-		if err != nil {
-			writeError(w, r, serverFromRequest(r), http.StatusBadRequest, err)
-			return
-		}
-		params, err := route.extract(requestPath)
-		if err != nil {
-			writeError(w, r, serverFromRequest(r), http.StatusBadRequest, err)
-			return
+		params, ok := r.Context().Value(matchedParamsContextKey{}).(pathParamList)
+		if !ok {
+			// Defensive fallback for middlewares that replace the request
+			// context; the normal path extracts exactly once in ServeHTTP.
+			requestPath, err := parseRequestPath(r.URL.EscapedPath(), route.definition.pattern.strict)
+			if err != nil {
+				writeRouteError(w, r, serverFromRequest(r), route.definition.errorWriter, route.definition.produces, http.StatusBadRequest, err)
+				return
+			}
+			params, err = route.extract(requestPath)
+			if err != nil {
+				writeRouteError(w, r, serverFromRequest(r), route.definition.errorWriter, route.definition.produces, http.StatusBadRequest, err)
+				return
+			}
 		}
 		handler, ok := route.definition.handler.(pathParamHandler)
 		if !ok {
-			writeError(w, r, serverFromRequest(r), http.StatusInternalServerError, Err(http.StatusInternalServerError, http.StatusText(http.StatusInternalServerError)))
+			writeRouteError(w, r, serverFromRequest(r), route.definition.errorWriter, route.definition.produces, http.StatusInternalServerError, Err(http.StatusInternalServerError, http.StatusText(http.StatusInternalServerError)))
 			return
 		}
 		handler.ServeHTTPWithPathParams(w, r, params)

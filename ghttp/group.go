@@ -51,7 +51,7 @@ func (g *Group) Group(prefix string, mws ...Middleware) *Group {
 		produces:    append([]string(nil), g.produces...),
 		consumes:    append([]string(nil), g.consumes...),
 		consumesSet: g.consumesSet,
-		middlewares: append([]Middleware(nil), mws...),
+		middlewares: append(append([]Middleware(nil), g.middlewares...), mws...),
 	}
 }
 
@@ -85,16 +85,4 @@ func (g *Group) consumesContentTypes() []string {
 
 func (g *Group) owner() *Server {
 	return g.server
-}
-
-func (g *Group) currentMiddlewaresLocked() []Middleware {
-	if g == nil {
-		return nil
-	}
-	var all []Middleware
-	if g.parent != nil {
-		all = append(all, g.parent.currentMiddlewaresLocked()...)
-	}
-	all = append(all, g.middlewares...)
-	return all
 }

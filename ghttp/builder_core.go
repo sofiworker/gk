@@ -321,6 +321,7 @@ func (c *routeBuilderCore) registerHandler(handler http.Handler, needsExtractor 
 			terminal:        terminal,
 			responseStatus:  responseStatus,
 			responseHeaders: append([]responseHeader(nil), c.responseHeaders...),
+			errorWriter:     c.errorWriter,
 			doc:             c.doc.clone(),
 			reqType:         reqType,
 			respType:        respType,
@@ -376,17 +377,28 @@ func (c *routeBuilderCore) toWebSocket(handler WebSocketHandler, reqType, respTy
 }
 
 func (c *routeBuilderCore) writeError(w http.ResponseWriter, r *http.Request, defaultCode int, err error) {
-	owner := c.target.owner()
+	writeRouteError(w, r, c.target.owner(), c.errorWriter, c.produces, defaultCode, err)
+}
+
+// writeRouteError dispatches an error through the route-level error writer,
+// then the server writer, then the built-in codec writer. It is shared by the
+// typed pipeline and the path extraction terminal so route writers apply to
+// every error on the request path.
+func writeRouteError(w http.ResponseWriter, r *http.Request, owner *Server, writer ErrorWriter, produces []string, defaultCode int, err error) {
+	if owner == nil {
+		writeErrorWithCodec(w, r, nil, defaultCode, err, produces, nil)
+		return
+	}
 	if owner.dispatchError(w, r, defaultCode, err) {
 		return
 	}
-	if c.errorWriter != nil && c.errorWriter(w, r, statusCodeFromError(defaultCode, err), err) {
+	if writer != nil && writer(w, r, statusCodeFromError(defaultCode, err), err) {
 		return
 	}
 	if owner.config.errorWriter != nil && owner.config.errorWriter(w, r, statusCodeFromError(defaultCode, err), err) {
 		return
 	}
-	writeErrorWithCodec(w, r, owner, defaultCode, err, c.produces, c.codecs)
+	writeErrorWithCodec(w, r, owner, defaultCode, err, produces, nil)
 }
 
 func (c *routeBuilderCore) writeTypedResponse(w http.ResponseWriter, r *http.Request, server *Server, resp interface{}) {
@@ -833,7 +845,7 @@ func validateRequestContentType(r *http.Request, target interface{}, consumes []
 	}
 	contentType := r.Header.Get("Content-Type")
 	if strings.TrimSpace(contentType) == "" {
-		return nil
+		return Err(http.StatusUnsupportedMediaType, "missing Content-Type", WithCause(ErrUnsupportedMediaType))
 	}
 	mediaType := normalizeContentType(contentType)
 	for _, allowed := range consumes {
@@ -1072,6 +1084,10 @@ func buildSSEHandler(s *Server, handler SSEHandler) http.Handler {
 		w.WriteHeader(http.StatusOK)
 
 		stream := &SSEWriter{w: w, flusher: flusher}
-		_ = handler(r.Context(), paramsFromRequestWithPathParams(r, s.config, params), stream)
+		if err := handler(r.Context(), paramsFromRequestWithPathParams(r, s.config, params), stream); err != nil {
+			if s.logger != nil {
+				s.logger.ErrorContext(r.Context(), "sse handler error", "error", err, "path", r.URL.Path)
+			}
+		}
 	})
 }

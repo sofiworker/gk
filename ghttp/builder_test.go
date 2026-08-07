@@ -177,7 +177,33 @@ func TestRouteBuilderErrorWithoutEnvelopeUsesJSON(t *testing.T) {
 	}
 }
 
-func TestRouteBuilderConsumesAllowsEmptyContentType(t *testing.T) {
+func TestRouteBuilderConsumesRejectsMissingContentType(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+
+	type input struct {
+		Body struct {
+			Name string `json:"name"`
+		}
+	}
+
+	Route[input, struct{}](app).
+		POST("/users").
+		Consumes(MIMEJSON).
+		To(func(context.Context, input) (struct{}, error) {
+			t.Fatal("handler should not run for missing content type")
+			return struct{}{}, nil
+		})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(`{"name":"alice"}`))
+	app.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusUnsupportedMediaType, rec.Body.String())
+	}
+}
+
+func TestRouteBuilderWithoutConsumesParsesMissingContentTypeAsJSON(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 
 	type input struct {
@@ -191,7 +217,6 @@ func TestRouteBuilderConsumesAllowsEmptyContentType(t *testing.T) {
 
 	Route[input, output](app).
 		POST("/users").
-		Consumes(MIMEJSON).
 		To(func(ctx context.Context, req input) (output, error) {
 			return output{Name: req.Body.Name}, nil
 		})
@@ -203,12 +228,8 @@ func TestRouteBuilderConsumesAllowsEmptyContentType(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	var data output
-	if err := json.Unmarshal(rec.Body.Bytes(), &data); err != nil {
-		t.Fatalf("unmarshal response failed: %v; body = %s", err, rec.Body.String())
-	}
-	if data.Name != "alice" {
-		t.Fatalf("Name = %q, want alice", data.Name)
+	if !strings.Contains(rec.Body.String(), `"name":"alice"`) {
+		t.Fatalf("body = %q, want name alice", rec.Body.String())
 	}
 }
 

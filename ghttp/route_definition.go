@@ -30,6 +30,7 @@ type routeDefinition struct {
 	terminal        routeTerminalKind
 	responseStatus  int
 	responseHeaders []responseHeader
+	errorWriter     ErrorWriter
 	internal        bool
 	doc             RouteDoc
 	reqType         reflect.Type

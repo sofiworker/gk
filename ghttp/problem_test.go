@@ -158,3 +158,22 @@ func TestRouteErrorWriterCustom(t *testing.T) {
 		t.Fatalf("status/header/body = %d %q %q", w.Code, w.Header().Get("X-Custom-Error"), w.Body.String())
 	}
 }
+
+func TestWriteRouteErrorUsesRouteWriter(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/boom", nil)
+	called := false
+	writeRouteError(rec, req, app, func(w http.ResponseWriter, r *http.Request, status int, err error) bool {
+		called = true
+		w.WriteHeader(http.StatusTeapot)
+		return true
+	}, nil, http.StatusBadRequest, fmt.Errorf("extraction boom"))
+
+	if !called {
+		t.Fatal("route error writer was not called")
+	}
+	if rec.Code != http.StatusTeapot {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusTeapot)
+	}
+}

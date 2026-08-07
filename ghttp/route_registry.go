@@ -14,7 +14,7 @@ type routeRegistry struct {
 	reserved    map[string]struct{}
 }
 
-func newRouteRegistry(_ bool) *routeRegistry {
+func newRouteRegistry() *routeRegistry {
 	return &routeRegistry{
 		byMethod:   make(map[string]map[string]struct{}),
 		paramNames: make(map[string]string),

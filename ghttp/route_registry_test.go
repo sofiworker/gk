@@ -39,7 +39,7 @@ func TestRouteRegistryRejectsConflictingDefinitions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			registry := newRouteRegistry(false)
+			registry := newRouteRegistry()
 			if err := registry.register(tt.first); err != nil {
 				t.Fatalf("first registration error = %v", err)
 			}
@@ -82,7 +82,7 @@ func TestRouteRegistryAllowsDistinctRoutePrecedenceAndSharedNames(t *testing.T) 
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			registry := newRouteRegistry(false)
+			registry := newRouteRegistry()
 			if err := registry.register(tt.defs...); err != nil {
 				t.Fatalf("registration error = %v", err)
 			}
@@ -96,7 +96,7 @@ func TestRouteRegistryAllowsDistinctRoutePrecedenceAndSharedNames(t *testing.T) 
 func TestRouteRegistryTreatsTrailingSlashByRoutingMode(t *testing.T) {
 	t.Parallel()
 
-	defaultRegistry := newRouteRegistry(false)
+	defaultRegistry := newRouteRegistry()
 	if err := defaultRegistry.register(mustRouteDefinition(t, http.MethodGet, "/users")); err != nil {
 		t.Fatalf("default first registration error = %v", err)
 	}
@@ -104,7 +104,7 @@ func TestRouteRegistryTreatsTrailingSlashByRoutingMode(t *testing.T) {
 		t.Fatalf("default trailing slash error = %v, want ErrRouteConflict", err)
 	}
 
-	strictRegistry := newRouteRegistry(true)
+	strictRegistry := newRouteRegistry()
 	if err := strictRegistry.register(mustRouteDefinitionStrict(t, http.MethodGet, "/users")); err != nil {
 		t.Fatalf("strict first registration error = %v", err)
 	}
@@ -116,7 +116,7 @@ func TestRouteRegistryTreatsTrailingSlashByRoutingMode(t *testing.T) {
 func TestRouteRegistryRegistersMultipleMethodsAtomically(t *testing.T) {
 	t.Parallel()
 
-	registry := newRouteRegistry(false)
+	registry := newRouteRegistry()
 	if err := registry.register(mustRouteDefinition(t, http.MethodGet, "/users")); err != nil {
 		t.Fatalf("first registration error = %v", err)
 	}

@@ -259,7 +259,32 @@ func TestServerSuppressesHEADOutcomeBody(t *testing.T) {
 	}
 }
 
-func TestServerRoutesExtractorFailuresThroughErrorHandler(t *testing.T) {
+func TestServerRoutesMatchOnceDespiteMiddlewarePathMutation(t *testing.T) {
+	t.Parallel()
+
+	server := New(
+		WithProduces(MIMEJSON),
+	)
+	server.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.URL.Path = "/changed-after-match"
+			next.ServeHTTP(w, r)
+		})
+	})
+	Route[struct{}, struct{}](server).
+		GET("/users/{id}").
+		To(func(context.Context, struct{}) (struct{}, error) {
+			return struct{}{}, nil
+		})
+
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/users/42", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (params extracted once before middleware)", recorder.Code)
+	}
+}
+
+func TestServerRoutesExtractorFallbackFailureThroughErrorHandler(t *testing.T) {
 	t.Parallel()
 
 	server := New(
@@ -274,7 +299,8 @@ func TestServerRoutesExtractorFailuresThroughErrorHandler(t *testing.T) {
 	server.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			r.URL.Path = "/changed-after-match"
-			next.ServeHTTP(w, r)
+			ctx := context.WithValue(context.Background(), requestStateContextKey{}, requestState{server: server})
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	})
 	Route[struct{}, struct{}](server).
