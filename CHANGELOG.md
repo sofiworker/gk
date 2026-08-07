@@ -29,6 +29,7 @@
 - 仓库：注释语言规范修订为**中英双语**（中文在前、英文在后），并规定冗余注释（复述代码、无信息量标签）直接删除；首批完成 gresolver/gsql/gcache 库文件与 gretry/grx/gconfig/gresolver/gcrypt/gsd/glog 测试注释的清理。
 - 仓库：第二批复述型注释清理（gcache/gsql/gcompress 测试中的纯标签删除），进度见 `docs/language-sweep.md`。
 - 仓库：注释语言规范修订为**中英双语**（中文在前、英文在后），并规定冗余注释直接删除；已完成 ghttp/gnet/各包注释与根 README、小包 README 的双语化，gcache/ghttp README 待办。
+- 仓库：README 双语化全部完成（根 README、各包 README 均中英双语）。
 
 ### Changed
 
