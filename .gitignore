@@ -3,6 +3,7 @@
 .gocache
 .cache
 .worktrees/
+.tmp/
 *.exe
 experiments
 .junie
