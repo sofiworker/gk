@@ -5,8 +5,9 @@
 > 本仓库整体仍处于开发阶段（pre-v1.0.0）：API 可能随时破坏性变更，行为与文档尚未冻结，也未经过生产环境验证。**禁止直接用于生产开发**。如确需使用，请先与维护者确认版本与稳定性，或等待正式发布。
 
 [![Go](https://github.com/sofiworker/gk/actions/workflows/go.yml/badge.svg)](https://github.com/sofiworker/gk/actions/workflows/go.yml)
+[![golangci-lint](https://github.com/sofiworker/gk/actions/workflows/go.yml/badge.svg)](https://golangci-lint.run/)
+[![codecov](https://codecov.io/gh/sofiworker/gk/graph/badge.svg)](https://app.codecov.io/gh/sofiworker/gk)
 [![Go Reference](https://pkg.go.dev/badge/github.com/sofiworker/gk.svg)](https://pkg.go.dev/github.com/sofiworker/gk)
-[![Go Report Card](https://goreportcard.com/badge/github.com/sofiworker/gk)](https://goreportcard.com/report/github.com/sofiworker/gk)
 
 [English](README.en.md) | 中文
 
