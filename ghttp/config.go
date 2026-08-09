@@ -27,6 +27,10 @@ type Config struct {
 	produces                  []string
 	consumes                  []string
 	clientIPResolver          ClientIPResolver
+	trustedProxies            []string
+	trustedCIDRs              []*net.IPNet
+	hostResolver              HostResolver
+	hostValidator             HostValidator
 	vfsPath                   string
 	strictRouting             bool
 	exposeErrorDetails        bool
@@ -316,6 +320,44 @@ func WithExposeErrorDetails() ServerOption {
 func WithClientIPResolver(resolver ClientIPResolver) ServerOption {
 	return func(c *Config) {
 		c.clientIPResolver = resolver
+	}
+}
+
+// WithTrustedProxies 设置信任的代理网段；默认信任所有（0.0.0.0/0 与 ::/0，gin 同款默认值）。
+// WithTrustedProxies sets the trusted proxy CIDRs; defaults to trusting every
+// proxy (0.0.0.0/0 and ::/0, gin's default).
+// 信任边界决定转发头（X-Forwarded-For / X-Forwarded-Host）是否可信：
+// 仅当请求来源 IP 落在信任网段内时，TrustedHostResolver / TrustedClientIPResolver
+// 才读取转发头，防止客户端直连时伪造转发头。
+// the trust boundary decides whether forwarded headers are trusted: only when
+// the source IP falls within the trusted CIDRs do TrustedHostResolver /
+// TrustedClientIPResolver read them, preventing header forgery by direct clients.
+func WithTrustedProxies(cidrs ...string) ServerOption {
+	return func(c *Config) {
+		c.trustedProxies = append([]string(nil), cidrs...)
+		parsed, err := parseTrustedCIDRs(cidrs)
+		if err != nil {
+			panic(err)
+		}
+		c.trustedCIDRs = parsed
+	}
+}
+
+// WithHostResolver 设置主机名解析器；默认返回 r.Host（不信任转发头）。
+// WithHostResolver sets the host resolver; defaults to r.Host (no forwarded headers).
+func WithHostResolver(resolver HostResolver) ServerOption {
+	return func(c *Config) {
+		c.hostResolver = resolver
+	}
+}
+
+// WithHostValidator 启用主机名校验；默认关闭（nil 不校验）。
+// WithHostValidator enables host validation; off by default (nil disables it).
+// 校验在请求进入路由前执行，失败返回 400（防 DNS rebinding）。
+// the check runs before route dispatch; failures return 400 (DNS rebinding guard).
+func WithHostValidator(validator HostValidator) ServerOption {
+	return func(c *Config) {
+		c.hostValidator = validator
 	}
 }
 

@@ -1,5 +1,7 @@
 package ghttp
 
+import "reflect"
+
 // Group 持有共享前缀的一组路由。
 // Group holds a set of routes with a common prefix.
 type Group struct {
@@ -10,6 +12,70 @@ type Group struct {
 	consumes    []string
 	consumesSet bool
 	middlewares []Middleware
+	// skipRules 豁免指定中间件在本组路由上执行；按方法+路径模式精确匹配。
+	// skipRules exempts the named middlewares for this group's routes; matched by method+path pattern.
+	skipRules []skipRule
+}
+
+// skipRule 描述一条中间件豁免规则。
+// skipRule describes one middleware exemption rule.
+// method 为 "*" 时匹配所有方法；pattern 是路由路径模式（含 {param}）。
+// method "*" matches any method; pattern is the route path pattern (may contain {param}).
+type skipRule struct {
+	mw      Middleware
+	method  string
+	pattern string
+}
+
+// skipRuleMatches 判断路由的方法+路径模式是否命中豁免规则。
+// skipRuleMatches reports whether a route's method+pattern matches the rule.
+func (r skipRule) matches(method, pattern string) bool {
+	if r.method != "*" && r.method != method {
+		return false
+	}
+	return r.pattern == pattern
+}
+
+// SkipUse 豁免指定中间件在本组匹配路由上执行（精确路径）。
+// SkipUse exempts the middleware on this group's matching route (exact pattern).
+// 典型用途：全局鉴权中间件放行登录/健康检查路由。
+// Typical use: exempt an auth middleware for login and health routes.
+func (g *Group) SkipUse(mw Middleware, method, pattern string) *Group {
+	g.server.mu.Lock()
+	defer g.server.mu.Unlock()
+	g.server.panicIfFrozenLocked()
+	g.skipRules = append(g.skipRules, skipRule{mw: mw, method: method, pattern: pattern})
+	return g
+}
+
+// filterSkippedMiddlewares 按豁免规则剔除中间件。
+// filterSkippedMiddlewares drops middlewares matching any exemption rule.
+func filterSkippedMiddlewares(middlewares []Middleware, method, pattern string, rules []skipRule) []Middleware {
+	if len(rules) == 0 {
+		return middlewares
+	}
+	filtered := make([]Middleware, 0, len(middlewares))
+	for _, mw := range middlewares {
+		skip := false
+		for _, rule := range rules {
+			// 需用函数指针比较识别同一个中间件（buffalo 同款机制）。
+			// function pointer comparison identifies the same middleware (same as buffalo).
+			if rule.mw != nil && sameMiddleware(rule.mw, mw) && rule.matches(method, pattern) {
+				skip = true
+				break
+			}
+		}
+		if !skip {
+			filtered = append(filtered, mw)
+		}
+	}
+	return filtered
+}
+
+// sameMiddleware 判断两个中间件是否同一函数（按反射函数指针比较）。
+// sameMiddleware reports whether two middlewares are the same function (reflect pointer comparison).
+func sameMiddleware(a, b Middleware) bool {
+	return reflect.ValueOf(a).Pointer() == reflect.ValueOf(b).Pointer()
 }
 
 // Use 追加组级中间件。

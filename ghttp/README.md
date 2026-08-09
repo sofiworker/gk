@@ -148,7 +148,50 @@ _, err = io.Copy(dst, streamResp.RawBody())
 | `.Consumes(contentTypes...)` | 声明可自动解析的请求 Content-Type，可在 server/group/route 上声明 |
 | `.MaxBodyBytes(n)` | 覆盖当前路由自动解析请求体的大小上限；`n <= 0` 表示不限制 |
 | `.Produces(contentTypes...)` | 自动响应编码的 Content-Type，可在 server/group/route 上声明 |
+| `.Apply(opts...)` | 批量应用 `RouteOption` 函数式选项，等价于依次调用对应链式方法；必须在终结方法之前调用 |
 | `.Group(prefix, mws...)` | 从 builder 分支创建子组（gin 的 `r.Group` 语义）；须在设置 method/path 之前调用，已设置的路由级选项不转移 |
+
+### 路由选项（RouteOption）
+
+`RouteOption = func(*routeBuilderCore)` 是函数式配置原语，由 `.Apply(opts...)` 批量应用。与链式方法共享同一组 setter 和终结守卫：**终结后调用触发 `ErrRouteBuilderFinalized`**。`GroupOptions(opts...)` 可把多个选项打包为可复用组合选项。
+
+| 构造函数 | 等价链式方法 |
+|------|------|
+| `OptDoc(opts...)` | `.Doc(...)` |
+| `OptProduces(cts...)` | `.Produces(...)` |
+| `OptConsumes(cts...)` | `.Consumes(...)` |
+| `OptMaxBodyBytes(n)` | `.MaxBodyBytes(n)` |
+| `OptUse(mws...)` | `.Use(...)` |
+| `OptStatus(code)` | `.Status(code)` |
+| `OptResponseHeader(name, value)` | `.ResponseHeader(...)` |
+| `OptErrorWriter(w)` / `OptProblemDetails()` | `.ErrorWriter(...)` / `.ProblemDetails()` |
+| `OptValidate(fn, opts...)` / `OptSkipValidation()` | `.Validate(...)` / `.SkipValidation()` |
+
+```go
+// 定义一次，到处复用
+var userEndpoint = ghttp.GroupOptions(
+    ghttp.OptUse(authMW),
+    ghttp.OptDoc(ghttp.Summary("用户管理"), ghttp.Tags("user")),
+)
+
+s.GET("/users/{id}").Apply(userEndpoint).To[getReq, getResp](getUser)
+s.POST("/users").Apply(userEndpoint).To[createReq, createResp](createUser)
+```
+
+### 中间件豁免（SkipUse）
+
+`SkipUse` 豁免指定中间件在匹配路由上执行（按方法 + 最终路径精确匹配），典型场景是全局鉴权中间件放行登录/健康检查路由。中间件按函数指针识别，豁免只剔除指定的那个，其余中间件不受影响。Server 与 Group 均支持：
+
+```go
+// 服务器级：放行 GET /ping
+s.Use(authMW)
+s.SkipUse(authMW, http.MethodGet, "/ping")
+
+// 组级：豁免匹配组内最终注册路径（含组前缀）
+api := s.Group("/api")
+api.Use(authMW)
+api.SkipUse(authMW, http.MethodGet, "/api/login")
+```
 
 ### 终结方法
 
@@ -560,6 +603,27 @@ server 级 validator **默认关闭**：`New()` 不自动安装任何 validator�
     ghttp.WithBaseContext(baseContext),                      // 底层 Server BaseContext
     ghttp.WithConnContext(connContext),                      // 连接级 Context
     ghttp.WithErrorLog(errorLog),                            // 底层 Server 错误日志
+    ghttp.WithTrustedProxies("10.0.0.0/8", "192.168.0.0/16"), // 信任代理网段（反代场景）
+    ghttp.WithHostValidator(ghttp.AllowedHosts("api.example.com", "*.example.com")), // Host 白名单（DNS rebinding 防护）
+)
+```
+
+### 信任边界与 Host 校验
+
+`Host` 头与 `ClientIP` 一样可被伪造，尤其反代后更不可靠。gk 提供与 `ClientIPResolver` 对称的信任模型：
+
+- **`WithTrustedProxies(cidrs...)`** — 设置信任代理网段。**默认信任所有**（`0.0.0.0/0` 与 `::/0`，gin 同款默认），此时转发头（`X-Forwarded-For` / `X-Forwarded-Host`）被视为可信；覆盖所有 IP 时启动时输出 unsafe 警告，直连公网场景应显式收窄。
+- **`WithHostResolver(resolver)`** — 设置主机名解析器；默认返回 `r.Host`（不信任任何转发头）。`TrustedHostResolver(cidrs, headers)` 提供信任感知版：仅当来源是信任代理时才读取 `X-Forwarded-Host`，否则回退 `r.Host`，防止直连客户端伪造转发头绕过校验。
+- **`WithClientIPResolver`** — 配合 `TrustedClientIPResolver(cidrs, headers)`：仅信任代理时读取 `X-Forwarded-For` 首个 IP，否则回退 `RemoteAddr`。
+- **`WithHostValidator(validator)`** — 启用 Host 白名单校验，**默认关闭**。校验在路由分发前执行，失败返回 400（防 DNS rebinding）。`AllowedHosts(patterns...)` 支持精确匹配与通配子域（`*.example.com` 匹配 `foo.example.com` 但不匹配 `example.com` 本身），比较前自动剥离端口。
+
+```go
+s := ghttp.New(
+    ghttp.WithTrustedProxies("10.0.0.0/8"),
+    ghttp.WithHostValidator(ghttp.AllowedHosts("api.example.com", "*.example.com")),
+    // 反代场景：信任代理才读取转发头
+    ghttp.WithHostResolver(ghttp.TrustedHostResolver(trustedCIDRs, []string{"X-Forwarded-Host"})),
+    ghttp.WithClientIPResolver(ghttp.TrustedClientIPResolver(trustedCIDRs, []string{"X-Forwarded-For"})),
 )
 ```
 

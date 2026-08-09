@@ -32,6 +32,19 @@ func newRouteBuilder(target routeTarget) *RouteBuilder {
 	return &RouteBuilder{core: newRouteBuilderCore(target)}
 }
 
+// Apply 批量应用路由选项，等价于依次调用对应链式方法。
+// Apply applies route options in bulk, equivalent to the chained calls.
+// 必须在终结方法之前调用；终结后调用触发 ErrRouteBuilderFinalized。
+// It must be called before a terminal; calls after finalizing panic with ErrRouteBuilderFinalized.
+func (b *RouteBuilder) Apply(opts ...RouteOption) *RouteBuilder {
+	for _, opt := range opts {
+		if opt != nil {
+			opt(b.core)
+		}
+	}
+	return b
+}
+
 // GET 在服务器上开启 GET 路由链（类似 gin 根组）。
 // GET starts a GET route chain on the server.
 func (s *Server) GET(path string) *RouteBuilder {

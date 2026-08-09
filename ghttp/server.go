@@ -43,6 +43,7 @@ type Server struct {
 	consumes     []string
 
 	middlewares []Middleware
+	skipRules   []skipRule
 
 	httpServer   *http.Server
 	listenerAddr net.Addr
@@ -61,6 +62,15 @@ func New(opts ...ServerOption) *Server {
 	}
 	for _, opt := range opts {
 		opt(c)
+	}
+	// 信任代理默认信任所有 IP（gin 同款）；覆盖所有 IP 时输出 unsafe 警告。
+	// trusted proxies default to trusting every IP (same as gin); an unsafe
+	// warning is emitted when the boundary covers all IPs.
+	if c.trustedCIDRs == nil {
+		c.trustedCIDRs = defaultTrustedCIDRs
+	}
+	if isUnsafeTrustedProxies(c.trustedCIDRs) {
+		warnUnsafeTrustedProxies(c)
 	}
 	if c.openAPIEnabled && !c.openAPIPathSet {
 		c.openAPIPath = "/openapi.json"
@@ -106,7 +116,30 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.writeRecoveredPanic(w, r, recovered)
 		}
 	}()
+	if !s.validateHost(w, r) {
+		return
+	}
 	state.ServeHTTP(w, r)
+}
+
+// validateHost 在路由分发前校验 Host 头（DNS rebinding 防护）。
+// validateHost checks the Host header before route dispatch (DNS rebinding guard).
+// 未配置 hostValidator 时直接放行；失败返回 400。
+// passes through when no hostValidator is configured; failures return 400.
+func (s *Server) validateHost(w http.ResponseWriter, r *http.Request) bool {
+	validator := s.config.hostValidator
+	if validator == nil {
+		return true
+	}
+	host := s.config.resolveHost(r)
+	if validator(host) {
+		return true
+	}
+	if s.logger != nil {
+		s.logger.WarnContext(r.Context(), "request host rejected", "host", host)
+	}
+	http.Error(w, "invalid host", http.StatusBadRequest)
+	return false
 }
 
 func (s *Server) writeRecoveredPanic(w http.ResponseWriter, r *http.Request, recovered any) {
@@ -282,6 +315,18 @@ func (s *Server) Use(mws ...Middleware) *Server {
 	return s
 }
 
+// SkipUse 豁免服务器级中间件在匹配路由上执行（精确路径模式）。
+// SkipUse exempts a server-level middleware on the matching route (exact pattern).
+// 典型用途：全局鉴权中间件放行登录/健康检查路由。
+// Typical use: exempt an auth middleware for login and health routes.
+func (s *Server) SkipUse(mw Middleware, method, pattern string) *Server {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.panicIfFrozenLocked()
+	s.skipRules = append(s.skipRules, skipRule{mw: mw, method: method, pattern: pattern})
+	return s
+}
+
 // Consumes 声明自动解码的默认请求 Content-Type。
 // Consumes declares default request Content-Types for body decoding.
 func (s *Server) Consumes(contentTypes ...string) *Server {
@@ -440,7 +485,7 @@ func (s *Server) finalizeRoutes() {
 			panic(recovered)
 		}
 	}()
-	state := compileState(s.registry.snapshot(), s.middlewares, s.config.strictRouting, s.errorHandler)
+	state := compileState(s.registry.snapshot(), s.middlewares, s.skipRules, s.config.strictRouting, s.errorHandler)
 	s.compiled.Store(state)
 }
 
@@ -466,14 +511,18 @@ type compiledState struct {
 	notAllowed   http.Handler
 }
 
-func compileState(definitions []routeDefinition, serverMiddlewares []Middleware, strict bool, errorHandler ErrorHandler) *compiledState {
+func compileState(definitions []routeDefinition, serverMiddlewares []Middleware, serverSkips []skipRule, strict bool, errorHandler ErrorHandler) *compiledState {
 	mux := newRouteMux(definitions)
 	for _, route := range mux.routes {
 		middlewares := append([]Middleware(nil), serverMiddlewares...)
+		var skips []skipRule
 		if route.definition.group != nil {
 			middlewares = append(middlewares, route.definition.group.middlewares...)
+			skips = route.definition.group.skipRules
 		}
 		middlewares = append(middlewares, route.definition.middlewares...)
+		skips = append(append([]skipRule(nil), serverSkips...), skips...)
+		middlewares = filterSkippedMiddlewares(middlewares, route.definition.method, route.definition.pattern.path, skips)
 		terminal := route.definition.handler
 		if route.definition.needsExtractor {
 			terminal = extractorTerminal(route)

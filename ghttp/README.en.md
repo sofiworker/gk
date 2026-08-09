@@ -149,7 +149,50 @@ Client capabilities (inspired by go-resty / imroc/req):
 | `.Consumes(contentTypes...)` | Declare accepted request Content-Types. |
 | `.MaxBodyBytes(n)` | Override body size limit; <= 0 disables it. |
 | `.Produces(contentTypes...)` | Declare response Content-Types. |
+| `.Apply(opts...)` | Apply `RouteOption` functional options in bulk; must be called before a terminal. |
 | `.Group(prefix, mws...)` | Branch into a sub-group; call before setting method/path. |
+
+### Route Options (RouteOption)
+
+`RouteOption = func(*routeBuilderCore)` is the functional configuration primitive, applied via `.Apply(opts...)`. It shares the same setters and the finalized guard as the chain methods: **calling after a terminal panics with `ErrRouteBuilderFinalized`**. `GroupOptions(opts...)` bundles options into one reusable option.
+
+| Constructor | Equivalent chained method |
+|------|------|
+| `OptDoc(opts...)` | `.Doc(...)` |
+| `OptProduces(cts...)` | `.Produces(...)` |
+| `OptConsumes(cts...)` | `.Consumes(...)` |
+| `OptMaxBodyBytes(n)` | `.MaxBodyBytes(n)` |
+| `OptUse(mws...)` | `.Use(...)` |
+| `OptStatus(code)` | `.Status(code)` |
+| `OptResponseHeader(name, value)` | `.ResponseHeader(...)` |
+| `OptErrorWriter(w)` / `OptProblemDetails()` | `.ErrorWriter(...)` / `.ProblemDetails()` |
+| `OptValidate(fn, opts...)` / `OptSkipValidation()` | `.Validate(...)` / `.SkipValidation()` |
+
+```go
+// Define once, reuse everywhere.
+var userEndpoint = ghttp.GroupOptions(
+    ghttp.OptUse(authMW),
+    ghttp.OptDoc(ghttp.Summary("User management"), ghttp.Tags("user")),
+)
+
+s.GET("/users/{id}").Apply(userEndpoint).To[getReq, getResp](getUser)
+s.POST("/users").Apply(userEndpoint).To[createReq, createResp](createUser)
+```
+
+### Middleware Exemption (SkipUse)
+
+`SkipUse` exempts a middleware on matching routes (exact match by method + final path pattern). The typical use is letting a global auth middleware pass through login and health routes. Middlewares are identified by function pointer, so only the specified one is dropped; other middlewares are unaffected. Both Server and Group support it:
+
+```go
+// Server-level: exempt GET /ping.
+s.Use(authMW)
+s.SkipUse(authMW, http.MethodGet, "/ping")
+
+// Group-level: match the final registered path (including the group prefix).
+api := s.Group("/api")
+api.Use(authMW)
+api.SkipUse(authMW, http.MethodGet, "/api/login")
+```
 
 ### Terminal Methods
 
@@ -571,6 +614,27 @@ server 级 validator **默认关闭**：`New()` 不自动安装任何 validator�
     ghttp.WithBaseContext(baseContext),                      // 底层 Server BaseContext；underlying BaseContext.
     ghttp.WithConnContext(connContext),                      // 连接级 Context；per-connection context.
     ghttp.WithErrorLog(errorLog),                            // 底层 Server 错误日志；underlying server error log.
+    ghttp.WithTrustedProxies("10.0.0.0/8", "192.168.0.0/16"), // trusted proxy CIDRs (reverse-proxy setups).
+    ghttp.WithHostValidator(ghttp.AllowedHosts("api.example.com", "*.example.com")), // host allow-list (DNS rebinding guard).
+)
+```
+
+### Trust Boundary and Host Validation
+
+The `Host` header is as forgeable as `ClientIP`, and even less reliable behind a reverse proxy. gk provides a trust model symmetric to `ClientIPResolver`:
+
+- **`WithTrustedProxies(cidrs...)`** — sets the trusted proxy CIDRs. **Trusts all by default** (`0.0.0.0/0` and `::/0`, gin's default); forwarded headers (`X-Forwarded-For` / `X-Forwarded-Host`) are then considered trusted. An unsafe warning is emitted at startup when the boundary covers all IPs; narrow it explicitly when the server is directly reachable.
+- **`WithHostResolver(resolver)`** — sets the host resolver; defaults to `r.Host` (never trusting forwarded headers). `TrustedHostResolver(cidrs, headers)` provides the trust-aware variant: it reads `X-Forwarded-Host` only when the source is a trusted proxy, otherwise falls back to `r.Host`, preventing direct clients from forging the header to bypass validation.
+- **`WithClientIPResolver`** — pair with `TrustedClientIPResolver(cidrs, headers)`: reads the first `X-Forwarded-For` IP only from trusted proxies, otherwise falls back to `RemoteAddr`.
+- **`WithHostValidator(validator)`** — enables host allow-list validation, **off by default**. The check runs before route dispatch; failures return 400 (DNS rebinding guard). `AllowedHosts(patterns...)` supports exact matches and wildcard subdomains (`*.example.com` matches `foo.example.com` but not `example.com` itself); ports are stripped before comparison.
+
+```go
+s := ghttp.New(
+    ghttp.WithTrustedProxies("10.0.0.0/8"),
+    ghttp.WithHostValidator(ghttp.AllowedHosts("api.example.com", "*.example.com")),
+    // Reverse-proxy setups: read forwarded headers only from trusted proxies.
+    ghttp.WithHostResolver(ghttp.TrustedHostResolver(trustedCIDRs, []string{"X-Forwarded-Host"})),
+    ghttp.WithClientIPResolver(ghttp.TrustedClientIPResolver(trustedCIDRs, []string{"X-Forwarded-For"})),
 )
 ```
 

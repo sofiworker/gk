@@ -86,6 +86,19 @@ func (b *RouteBuilder[Req, Resp]) CUSTOM(method, path string) *RouteBuilder[Req,
 	return b
 }
 
+// Apply 批量应用路由选项，等价于依次调用对应链式方法。
+// Apply applies route options in bulk, equivalent to the chained calls.
+// 必须在终结方法之前调用；终结后调用触发 ErrRouteBuilderFinalized。
+// It must be called before a terminal; calls after finalizing panic with ErrRouteBuilderFinalized.
+func (b *RouteBuilder[Req, Resp]) Apply(opts ...RouteOption) *RouteBuilder[Req, Resp] {
+	for _, opt := range opts {
+		if opt != nil {
+			opt(b.core)
+		}
+	}
+	return b
+}
+
 // Doc 配置路由文档元数据。
 // Doc configures route documentation metadata.
 func (b *RouteBuilder[Req, Resp]) Doc(opts ...DocOption) *RouteBuilder[Req, Resp] {
