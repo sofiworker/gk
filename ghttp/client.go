@@ -187,6 +187,16 @@ func (c *Client) R() *Request {
 	for k, v := range c.pathParams {
 		r.PathParams[k] = v
 	}
+	// 客户端级认证继承到请求；与 headers/queryParams 的默认值传播一致。
+	// client-level auth is inherited by the request, consistent with header and
+	// query param default propagation. A request-level SetAuthToken overrides it.
+	if c.authToken != "" {
+		r.AuthToken = c.authToken
+		r.AuthScheme = c.authScheme
+		if r.AuthScheme == "" {
+			r.AuthScheme = "Bearer"
+		}
+	}
 	return r
 }
 

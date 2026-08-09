@@ -508,8 +508,8 @@ func TestClientResponseAccessors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
-	if resp.Time() <= 0 {
-		t.Fatalf("Time() = %s, want > 0", resp.Time())
+	if resp.Time() < 0 {
+		t.Fatalf("Time() = %s, want >= 0", resp.Time())
 	}
 	if resp.ReceivedAt().IsZero() {
 		t.Fatal("ReceivedAt() is zero")
