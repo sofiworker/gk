@@ -17,6 +17,11 @@ type responseWriteState struct {
 	errorHandled bool
 }
 
+// responseWriteStatePool 复用响应写入状态;hijack 后的长连接状态不回收。
+// responseWriteStatePool reuses response write state; hijacked connections are
+// never recycled.
+var responseWriteStatePool = sync.Pool{New: func() any { return &responseWriteState{} }}
+
 func responseErrorWriteBlocked(r *http.Request) bool {
 	state := responseWriteStateFromRequest(r)
 	return state != nil && state.errorWriteBlocked()
@@ -64,8 +69,23 @@ func beginResponseErrorHandler(r *http.Request) bool {
 }
 
 func newResponseWriteState(w http.ResponseWriter, suppressBody bool) (*responseWriteState, http.ResponseWriter) {
-	state := &responseWriteState{ResponseWriter: w, suppressBody: suppressBody}
+	state := responseWriteStatePool.Get().(*responseWriteState)
+	state.ResponseWriter = w
+	state.mu = sync.Mutex{}
+	state.committed = false
+	state.buffered = false
+	state.hijacked = false
+	state.suppressBody = suppressBody
+	state.errorHandled = false
 	return state, state
+}
+
+func releaseResponseWriteState(state *responseWriteState) {
+	if state == nil || state.hijacked {
+		return
+	}
+	state.ResponseWriter = nil
+	responseWriteStatePool.Put(state)
 }
 
 func (w *responseWriteState) WriteHeader(code int) {

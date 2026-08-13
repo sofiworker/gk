@@ -104,27 +104,33 @@ func MultipartForm(r *http.Request, maxMemory int64) (*multipart.Form, error) {
 		}
 		return r.MultipartForm, nil
 	}
-	st.multipartOnce.Do(func() {
-		req := st.req
-		if req == nil {
-			req = r
-		}
-		if maxMemory <= 0 {
-			maxMemory = defaultMaxMemory
-		}
-		if st.body != nil && st.body.drained() {
-			st.multipartErr = fmt.Errorf("%w: multipart body must be parsed before the raw bytes are drained", ErrInvalidBody)
-			return
-		}
-		if err := req.ParseMultipartForm(maxMemory); err != nil {
-			st.multipartErr = err
-			return
-		}
-		st.multipart = req.MultipartForm
-		if err := st.bodyLimitErr(); err != nil {
-			st.multipartErr = err
-		}
-	})
+	st.multipartMu.Lock()
+	defer st.multipartMu.Unlock()
+	if st.multipartParsed {
+		return st.multipart, st.multipartErr
+	}
+	req := st.req
+	if req == nil {
+		req = r
+	}
+	if maxMemory <= 0 {
+		maxMemory = defaultMaxMemory
+	}
+	if st.body != nil && st.body.drained() {
+		st.multipartErr = fmt.Errorf("%w: multipart body must be parsed before the raw bytes are drained", ErrInvalidBody)
+		st.multipartParsed = true
+		return nil, st.multipartErr
+	}
+	if err := req.ParseMultipartForm(maxMemory); err != nil {
+		st.multipartErr = err
+		st.multipartParsed = true
+		return nil, st.multipartErr
+	}
+	st.multipart = req.MultipartForm
+	if err := st.bodyLimitErr(); err != nil {
+		st.multipartErr = err
+	}
+	st.multipartParsed = true
 	return st.multipart, st.multipartErr
 }
 
@@ -141,41 +147,48 @@ func formValuesFromRequest(r *http.Request) (url.Values, url.Values, error) {
 		}
 		return r.Form, r.PostForm, nil
 	}
-	st.formOnce.Do(func() {
-		req := st.req
-		if req == nil {
-			req = r
-		}
-		// 字节尚未被整读:走 stdlib 解析,流经 memo 时被记录。
-		// stream not yet drained: use stdlib parsing; bytes are recorded via memo.
-		if st.body == nil || !st.body.drained() {
-			if err := req.ParseForm(); err != nil {
-				st.formErr = err
-				return
-			}
-			st.form, st.postForm = req.Form, req.PostForm
-		} else {
-			// 已被 RawBody/middleware 整读:从共享字节回填,并回写 stdlib 视图。
-			// already drained: backfill from shared bytes and restore the stdlib view.
-			raw, err := st.body.bytes()
-			if err != nil {
-				st.formErr = err
-				return
-			}
-			post, perr := url.ParseQuery(string(raw))
-			if perr != nil {
-				st.formErr = perr
-				return
-			}
-			form := mergeURLValues(req.URL.Query(), post)
-			st.form, st.postForm = form, post
-			req.PostForm = post
-			req.Form = form
-		}
-		if err := st.bodyLimitErr(); err != nil {
+	st.formMu.Lock()
+	defer st.formMu.Unlock()
+	if st.formParsed {
+		return st.form, st.postForm, st.formErr
+	}
+	req := st.req
+	if req == nil {
+		req = r
+	}
+	// 字节尚未被整读:走 stdlib 解析,流经 memo 时被记录。
+	// stream not yet drained: use stdlib parsing; bytes are recorded via memo.
+	if st.body == nil || !st.body.drained() {
+		if err := req.ParseForm(); err != nil {
 			st.formErr = err
+			st.formParsed = true
+			return st.form, st.postForm, st.formErr
 		}
-	})
+		st.form, st.postForm = req.Form, req.PostForm
+	} else {
+		// 已被 RawBody/middleware 整读:从共享字节回填,并回写 stdlib 视图。
+		// already drained: backfill from shared bytes and restore the stdlib view.
+		raw, err := st.body.bytes()
+		if err != nil {
+			st.formErr = err
+			st.formParsed = true
+			return st.form, st.postForm, st.formErr
+		}
+		post, perr := url.ParseQuery(string(raw))
+		if perr != nil {
+			st.formErr = perr
+			st.formParsed = true
+			return st.form, st.postForm, st.formErr
+		}
+		form := mergeURLValues(req.URL.Query(), post)
+		st.form, st.postForm = form, post
+		req.PostForm = post
+		req.Form = form
+	}
+	if err := st.bodyLimitErr(); err != nil {
+		st.formErr = err
+	}
+	st.formParsed = true
 	return st.form, st.postForm, st.formErr
 }
 

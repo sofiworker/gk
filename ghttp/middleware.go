@@ -325,9 +325,17 @@ func Timeout(d time.Duration) Middleware {
 				rec.state.clearBuffered()
 				if server := serverFromRequest(r); server != nil {
 					writeError(w, r, server, http.StatusGatewayTimeout, Err(http.StatusGatewayTimeout, http.StatusText(http.StatusGatewayTimeout)))
-					return
+				} else {
+					http.Error(w, http.StatusText(http.StatusGatewayTimeout), http.StatusGatewayTimeout)
 				}
-				http.Error(w, http.StatusText(http.StatusGatewayTimeout), http.StatusGatewayTimeout)
+				// 响应已写出;等待尾部 goroutine 退出,避免其继续读写请求状态。
+				// response sent; wait for the tail goroutine so it stops touching
+				// request state (mirrors gin-contrib/timeout's drain).
+				select {
+				case <-done:
+				case <-panicCh: // 超时后 panic 已被 504 覆盖,直接吞掉。
+					// a post-timeout panic is superseded by the 504; swallow it.
+				}
 			}
 		})
 	}

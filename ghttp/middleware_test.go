@@ -6,9 +6,30 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestBuiltinMiddlewareTimeoutDrainsTailHandler(t *testing.T) {
+	var finished atomic.Bool
+	app := New(WithProduces(MIMEJSON))
+	app.Use(Timeout(10 * time.Millisecond))
+	Route[struct{}, struct{}](app).GET("/slow").ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		defer finished.Store(true)
+		time.Sleep(100 * time.Millisecond)
+	}))
+
+	w := httptest.NewRecorder()
+	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/slow", nil))
+
+	if w.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusGatewayTimeout)
+	}
+	if !finished.Load() {
+		t.Fatal("handler tail was not drained before ServeHTTP returned")
+	}
+}
 
 func TestMiddlewareOrder(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))

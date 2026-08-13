@@ -29,14 +29,16 @@ type requestState struct {
 	// body memoizes the request body bytes for RawBody/Body[T] sharing.
 	body *memoBody
 
-	formOnce sync.Once
-	form     url.Values
-	postForm url.Values
-	formErr  error
+	formMu     sync.Mutex
+	formParsed bool
+	form       url.Values
+	postForm   url.Values
+	formErr    error
 
-	multipartOnce sync.Once
-	multipart     *multipart.Form
-	multipartErr  error
+	multipartMu     sync.Mutex
+	multipartParsed bool
+	multipart       *multipart.Form
+	multipartErr    error
 }
 
 func requestStateFromRequest(r *http.Request) *requestState {
@@ -45,6 +47,48 @@ func requestStateFromRequest(r *http.Request) *requestState {
 	}
 	state, _ := r.Context().Value(requestStateContextKey{}).(*requestState)
 	return state
+}
+
+// requestStatePool 复用每请求状态;reset 语义见 acquireRequestState。
+// requestStatePool reuses per-request state; see acquireRequestState for reset.
+var requestStatePool = sync.Pool{New: func() any { return &requestState{} }}
+
+func acquireRequestState(server *Server, responseState *responseWriteState) *requestState {
+	st := requestStatePool.Get().(*requestState)
+	st.server = server
+	st.responseState = responseState
+	st.req = nil
+	st.matched = nil
+	st.body = nil
+	st.formMu = sync.Mutex{}
+	st.formParsed = false
+	st.form = nil
+	st.postForm = nil
+	st.formErr = nil
+	st.multipartMu = sync.Mutex{}
+	st.multipartParsed = false
+	st.multipart = nil
+	st.multipartErr = nil
+	return st
+}
+
+// releaseRequestState 回收请求状态;hijack 的长连接状态不回收。
+// releaseRequestState recycles request state; hijacked connections are kept.
+func releaseRequestState(st *requestState) {
+	if st == nil {
+		return
+	}
+	rs := st.responseState
+	if rs != nil && rs.hijacked {
+		return
+	}
+	st.server = nil
+	st.responseState = nil
+	st.req = nil
+	st.matched = nil
+	st.body = nil
+	releaseResponseWriteState(rs)
+	requestStatePool.Put(st)
 }
 
 // Server 是核心 HTTP 服务器。
@@ -611,14 +655,19 @@ func extractorTerminal(route *compiledRoute) http.Handler {
 }
 
 func (s *compiledState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	var reqSt *requestState
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			s.server.writeRecoveredPanic(w, r, recovered)
 		}
+		// 释放必须在 recover 之后:错误处理还需要读取状态。
+		// release must follow recover: error handling still reads the state.
+		releaseRequestState(reqSt)
 	}()
 	requestPath, err := parseRequestPath(r.URL.EscapedPath(), s.strict)
 	if err != nil {
 		w, r = s.installState(w, r)
+		reqSt = requestStateFromRequest(r)
 		s.badRequest.ServeHTTP(w, r)
 		return
 	}
@@ -633,6 +682,7 @@ func (s *compiledState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w, r = s.installState(w, r)
+		reqSt = requestStateFromRequest(r)
 		var pooled *lazyPathParams
 		if route.definition.needsExtractor {
 			if reqState := requestStateFromRequest(r); reqState != nil {
@@ -652,9 +702,11 @@ func (s *compiledState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case routeMatchMethodNotAllowed:
 		w.Header().Set("Allow", strings.Join(result.allow, ", "))
 		w, r = s.installState(w, r)
+		reqSt = requestStateFromRequest(r)
 		s.notAllowed.ServeHTTP(w, r)
 	default:
 		w, r = s.installState(w, r)
+		reqSt = requestStateFromRequest(r)
 		s.notFound.ServeHTTP(w, r)
 	}
 }
@@ -663,7 +715,7 @@ func (s *compiledState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // installState injects requestState and wraps the writer for stateful paths.
 func (s *compiledState) installState(w http.ResponseWriter, r *http.Request) (http.ResponseWriter, *http.Request) {
 	responseState, w := newResponseWriteState(w, r.Method == http.MethodHead)
-	st := &requestState{server: s.server, responseState: responseState}
+	st := acquireRequestState(s.server, responseState)
 	ctx := context.WithValue(r.Context(), requestStateContextKey{}, st)
 	if r.Body != nil && r.Body != http.NoBody {
 		// 只在有 body 时克隆请求再挂 memo,避免改写调用方的 *http.Request。
