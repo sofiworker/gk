@@ -26,6 +26,9 @@ type routeMatchResult struct {
 type compiledRoute struct {
 	definition routeDefinition
 	handler    http.Handler
+	// fast 表示该 raw 路由无需 requestState 注入即可安全执行。
+	// fast marks a raw route that can run without requestState injection.
+	fast bool
 	// paramPos 记录参数名到模式段索引的映射,供惰性解码按 key 定位。
 	// paramPos maps a param name to its pattern segment index for lazy decoding.
 	paramPos map[string]int

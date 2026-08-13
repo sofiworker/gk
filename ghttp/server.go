@@ -130,27 +130,6 @@ func New(opts ...ServerOption) *Server {
 // ServeHTTP 实现 http.Handler。
 // ServeHTTP implements http.Handler.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	responseState, w := newResponseWriteState(w, r.Method == http.MethodHead)
-	reqState := &requestState{server: s, responseState: responseState}
-	ctx := context.WithValue(r.Context(), requestStateContextKey{}, reqState)
-	if r.Body != nil && r.Body != http.NoBody {
-		// 只在有 body 时克隆请求再挂 memo,避免改写调用方的 *http.Request;
-		// 复用同一请求对象(如基准 harness、自建循环)时也不会串状态。
-		// clone the request only when wrapping the body, so the caller's
-		// *http.Request is never mutated; reused requests (bench harnesses,
-		// custom loops) cannot leak state between iterations.
-		memo := &memoBody{src: r.Body}
-		reqState.body = memo
-		r = r.Clone(ctx)
-		r.Body = memo
-	} else {
-		r = r.WithContext(ctx)
-	}
-	// req 记录 WithContext 之后的请求;下游 handler/表单解析都拿这个指针,
-	// 避免 ParseForm/ParseMultipartForm 的缓存落在旧请求拷贝上。
-	// req records the post-WithContext request, so form parsing caches land on
-	// the same *http.Request the handlers see.
-	reqState.req = r
 	s.finalizeRoutes()
 	state := s.compiled.Load()
 	if state == nil {
@@ -527,7 +506,7 @@ func (s *Server) finalizeRoutes() {
 			panic(recovered)
 		}
 	}()
-	state := compileState(s.registry.snapshot(), s.middlewares, s.skipRules, s.config.strictRouting, s.errorHandler)
+	state := compileState(s, s.registry.snapshot(), s.middlewares, s.skipRules, s.config.strictRouting, s.errorHandler)
 	s.compiled.Store(state)
 }
 
@@ -545,6 +524,7 @@ func (s *Server) Group(prefix string, mws ...Middleware) *Group {
 }
 
 type compiledState struct {
+	server       *Server
 	mux          *routeMux
 	strict       bool
 	errorHandler ErrorHandler
@@ -553,7 +533,7 @@ type compiledState struct {
 	notAllowed   http.Handler
 }
 
-func compileState(definitions []routeDefinition, serverMiddlewares []Middleware, serverSkips []skipRule, strict bool, errorHandler ErrorHandler) *compiledState {
+func compileState(server *Server, definitions []routeDefinition, serverMiddlewares []Middleware, serverSkips []skipRule, strict bool, errorHandler ErrorHandler) *compiledState {
 	mux := newRouteMux(definitions)
 	for _, route := range mux.routes {
 		middlewares := append([]Middleware(nil), serverMiddlewares...)
@@ -570,8 +550,15 @@ func compileState(definitions []routeDefinition, serverMiddlewares []Middleware,
 			terminal = extractorTerminal(route)
 		}
 		route.handler = Wrap(terminal, middlewares...)
+		// 快路径:raw 终结器、无中间件、无错误模型、无固定状态码。
+		// fast path: raw terminal, no middleware, no error model, no fixed status.
+		route.fast = route.definition.terminal == routeTerminalRaw &&
+			route.definition.errorWriter == nil &&
+			errorHandler == nil &&
+			route.definition.responseStatus == 0 &&
+			len(middlewares) == 0
 	}
-	state := &compiledState{mux: mux, strict: strict, errorHandler: errorHandler}
+	state := &compiledState{server: server, mux: mux, strict: strict, errorHandler: errorHandler}
 	state.badRequest = Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state.writeOutcomeError(w, r, http.StatusBadRequest, Err(http.StatusBadRequest, ErrInvalidRequestPath.Error()))
 	}), serverMiddlewares...)
@@ -624,19 +611,33 @@ func extractorTerminal(route *compiledRoute) http.Handler {
 }
 
 func (s *compiledState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			s.server.writeRecoveredPanic(w, r, recovered)
+		}
+	}()
 	requestPath, err := parseRequestPath(r.URL.EscapedPath(), s.strict)
 	if err != nil {
+		w, r = s.installState(w, r)
 		s.badRequest.ServeHTTP(w, r)
 		return
 	}
 	result := s.mux.match(r.Method, requestPath)
 	switch result.kind {
 	case routeMatchFound:
+		route := result.route
+		// 无 body、非 HEAD 的快路径直接执行,零状态注入。
+		// run body-less non-HEAD fast routes directly with zero state injection.
+		if route.fast && r.Method != http.MethodHead && (r.Body == nil || r.Body == http.NoBody) {
+			route.handler.ServeHTTP(w, r)
+			return
+		}
+		w, r = s.installState(w, r)
 		var pooled *lazyPathParams
-		if result.route.definition.needsExtractor {
+		if route.definition.needsExtractor {
 			if reqState := requestStateFromRequest(r); reqState != nil {
 				pooled = lazyPathParamsPool.Get().(*lazyPathParams)
-				pooled.route = result.route
+				pooled.route = route
 				pooled.path = requestPath
 				reqState.matched = pooled
 			}
@@ -647,13 +648,38 @@ func (s *compiledState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				lazyPathParamsPool.Put(pooled)
 			}
 		}()
-		result.route.handler.ServeHTTP(w, r)
+		route.handler.ServeHTTP(w, r)
 	case routeMatchMethodNotAllowed:
 		w.Header().Set("Allow", strings.Join(result.allow, ", "))
+		w, r = s.installState(w, r)
 		s.notAllowed.ServeHTTP(w, r)
 	default:
+		w, r = s.installState(w, r)
 		s.notFound.ServeHTTP(w, r)
 	}
+}
+
+// installState 为需要状态的路径注入 requestState 并包装 writer。
+// installState injects requestState and wraps the writer for stateful paths.
+func (s *compiledState) installState(w http.ResponseWriter, r *http.Request) (http.ResponseWriter, *http.Request) {
+	responseState, w := newResponseWriteState(w, r.Method == http.MethodHead)
+	st := &requestState{server: s.server, responseState: responseState}
+	ctx := context.WithValue(r.Context(), requestStateContextKey{}, st)
+	if r.Body != nil && r.Body != http.NoBody {
+		// 只在有 body 时克隆请求再挂 memo,避免改写调用方的 *http.Request。
+		// clone the request only when wrapping the body, so the caller's
+		// *http.Request is never mutated.
+		memo := &memoBody{src: r.Body}
+		st.body = memo
+		r = r.Clone(ctx)
+		r.Body = memo
+	} else {
+		r = r.WithContext(ctx)
+	}
+	// req 记录最终的请求;下游 handler/表单解析都拿这个指针。
+	// req records the final request; handlers and form parsing share it.
+	st.req = r
+	return w, r
 }
 
 func (s *compiledState) writeOutcomeError(w http.ResponseWriter, r *http.Request, code int, err error) {
