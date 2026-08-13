@@ -912,10 +912,8 @@ func inputTargetHasBody(target interface{}) bool {
 	if t.Kind() != reflect.Struct || t == reflect.TypeOf(Params{}) {
 		return false
 	}
-	if t.Implements(bodyFieldMarkerType) {
-		return true
-	}
-	return getStructInfo(t).hasBody
+	info := getStructInfo(t)
+	return info.isLazyBody || info.hasBody
 }
 
 func normalizeContentTypes(contentTypes []string) []string {

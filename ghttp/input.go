@@ -17,6 +17,7 @@ type structInfo struct {
 	paramsIdx  int
 	hasBody    bool
 	bodyLazy   bool
+	isLazyBody bool
 	usesParams bool
 	err        error
 }
@@ -31,6 +32,7 @@ func getStructInfo(t reflect.Type) *structInfo {
 	}
 
 	info := &structInfo{bodyIdx: -1, paramsIdx: -1}
+	info.isLazyBody = t.Implements(bodyFieldMarkerType)
 	paramsType := reflect.TypeOf(Params{})
 	paramsPtrType := reflect.TypeOf((*Params)(nil))
 	info.usesParams = structHasBindingTags(t)
@@ -187,7 +189,7 @@ func parseInputWithConfigAndPathParams(r *http.Request, input interface{}, c *Co
 	// 顶层简写:Req 本身就是 Body[T] 时直接装句柄,不走结构体扫描。
 	// top-level shorthand: when Req itself is Body[T], install the handle
 	// directly instead of scanning the struct.
-	if t := v.Type().Elem(); t.Kind() == reflect.Struct && t.Implements(bodyFieldMarkerType) {
+	if t := v.Type().Elem(); t.Kind() == reflect.Struct && getStructInfo(t).isLazyBody {
 		if setter, ok := input.(bodySourceSetter); ok {
 			setter.setBodySource(newBodySource(r, c, codecMgr))
 			return nil

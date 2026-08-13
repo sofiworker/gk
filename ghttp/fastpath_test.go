@@ -169,3 +169,33 @@ func TestTypedInputReuseDoesNotLeakAcrossRequests(t *testing.T) {
 		t.Fatalf("empty request leaked previous input: %q", body)
 	}
 }
+
+func TestWriteOutcomeErrorWithoutRequestState(t *testing.T) {
+	server := New(WithProduces(MIMEJSON))
+	state := compileState(server, nil, nil, nil, false, nil)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/nope", nil)
+	state.writeOutcomeError(rec, req, http.StatusNotFound, Err(http.StatusNotFound, http.StatusText(http.StatusNotFound)))
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+	if !strings.Contains(rec.Body.String(), `"code":404`) {
+		t.Fatalf("body = %q, want error envelope", rec.Body.String())
+	}
+}
+
+func TestNotFoundHeadSuppressesBody(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, httptest.NewRequest(http.MethodHead, "/nope", nil))
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("HEAD 404 body = %q, want empty", rec.Body.String())
+	}
+}

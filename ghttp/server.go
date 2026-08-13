@@ -579,9 +579,13 @@ type compiledState struct {
 	mux          *routeMux
 	strict       bool
 	errorHandler ErrorHandler
-	badRequest   http.Handler
-	notFound     http.Handler
-	notAllowed   http.Handler
+	// outcomeFast 表示 400/404/405 分支可无状态执行(无中间件、无错误模型)。
+	// outcomeFast marks the 400/404/405 branches as stateless (no middleware,
+	// no error model).
+	outcomeFast bool
+	badRequest  http.Handler
+	notFound    http.Handler
+	notAllowed  http.Handler
 }
 
 func compileState(server *Server, definitions []routeDefinition, serverMiddlewares []Middleware, serverSkips []skipRule, strict bool, errorHandler ErrorHandler) *compiledState {
@@ -609,7 +613,13 @@ func compileState(server *Server, definitions []routeDefinition, serverMiddlewar
 			route.definition.responseStatus == 0 &&
 			len(middlewares) == 0
 	}
-	state := &compiledState{server: server, mux: mux, strict: strict, errorHandler: errorHandler}
+	state := &compiledState{
+		server:       server,
+		mux:          mux,
+		strict:       strict,
+		errorHandler: errorHandler,
+		outcomeFast:  len(serverMiddlewares) == 0 && errorHandler == nil && server.config.errorWriter == nil,
+	}
 	state.badRequest = Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state.writeOutcomeError(w, r, http.StatusBadRequest, Err(http.StatusBadRequest, ErrInvalidRequestPath.Error()))
 	}), serverMiddlewares...)
@@ -673,6 +683,10 @@ func (s *compiledState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 	requestPath, err := parseRequestPath(r.URL.EscapedPath(), s.strict)
 	if err != nil {
+		if s.outcomeFast && r.Method != http.MethodHead {
+			s.writeOutcomeError(w, r, http.StatusBadRequest, Err(http.StatusBadRequest, ErrInvalidRequestPath.Error()))
+			return
+		}
 		w, r = s.installState(w, r)
 		reqSt = requestStateFromRequest(r)
 		s.badRequest.ServeHTTP(w, r)
@@ -708,10 +722,18 @@ func (s *compiledState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		route.handler.ServeHTTP(w, r)
 	case routeMatchMethodNotAllowed:
 		w.Header().Set("Allow", strings.Join(result.allow, ", "))
+		if s.outcomeFast && r.Method != http.MethodHead {
+			s.writeOutcomeError(w, r, http.StatusMethodNotAllowed, Err(http.StatusMethodNotAllowed, http.StatusText(http.StatusMethodNotAllowed)))
+			return
+		}
 		w, r = s.installState(w, r)
 		reqSt = requestStateFromRequest(r)
 		s.notAllowed.ServeHTTP(w, r)
 	default:
+		if s.outcomeFast && r.Method != http.MethodHead {
+			s.writeOutcomeError(w, r, http.StatusNotFound, Err(http.StatusNotFound, http.StatusText(http.StatusNotFound)))
+			return
+		}
 		w, r = s.installState(w, r)
 		reqSt = requestStateFromRequest(r)
 		s.notFound.ServeHTTP(w, r)
@@ -742,7 +764,7 @@ func (s *compiledState) installState(w http.ResponseWriter, r *http.Request) (ht
 }
 
 func (s *compiledState) writeOutcomeError(w http.ResponseWriter, r *http.Request, code int, err error) {
-	writeError(w, r, serverFromRequest(r), code, err)
+	writeError(w, r, s.server, code, err)
 }
 
 func listenerAddress(ln net.Listener) string {
