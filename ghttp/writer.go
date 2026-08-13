@@ -26,7 +26,10 @@ func responseWriteStateFromRequest(r *http.Request) *responseWriteState {
 	if r == nil {
 		return nil
 	}
-	reqState, _ := r.Context().Value(requestStateContextKey{}).(requestState)
+	reqState := requestStateFromRequest(r)
+	if reqState == nil {
+		return nil
+	}
 	return reqState.responseState
 }
 

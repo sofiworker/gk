@@ -13,10 +13,12 @@ import (
 // structInfo 缓存输入结构体的反射元数据。
 // structInfo caches reflection metadata for input struct types.
 type structInfo struct {
-	bodyIdx   int
-	paramsIdx int
-	hasBody   bool
-	err       error
+	bodyIdx    int
+	paramsIdx  int
+	hasBody    bool
+	bodyLazy   bool
+	usesParams bool
+	err        error
 }
 
 var (
@@ -31,6 +33,7 @@ func getStructInfo(t reflect.Type) *structInfo {
 	info := &structInfo{bodyIdx: -1, paramsIdx: -1}
 	paramsType := reflect.TypeOf(Params{})
 	paramsPtrType := reflect.TypeOf((*Params)(nil))
+	info.usesParams = structHasBindingTags(t)
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
 		if f.Anonymous && f.Type == paramsType {
@@ -49,14 +52,50 @@ func getStructInfo(t reflect.Type) *structInfo {
 			info.err = invalidParamsUsageError(t, f, "must not embed a struct that contains Params")
 			break
 		}
-		if f.Name == "Body" {
+		if f.Name == "Body" && !isLazyBodyFieldType(f.Type) && !isLazyBodyPointerType(f.Type) {
+			if info.hasBody {
+				info.err = ErrMultipleBodyFields
+				break
+			}
 			info.bodyIdx = i
 			info.hasBody = true
+			continue
 		}
+		if isLazyBodyFieldType(f.Type) {
+			if info.hasBody {
+				info.err = ErrMultipleBodyFields
+				break
+			}
+			info.bodyIdx = i
+			info.hasBody = true
+			info.bodyLazy = true
+			continue
+		}
+		if isLazyBodyPointerType(f.Type) {
+			info.err = ErrBodyFieldMustBeValue
+			break
+		}
+	}
+	if info.paramsIdx >= 0 {
+		info.usesParams = true
 	}
 
 	structCache.Store(t, info)
 	return info
+}
+
+// structHasBindingTags 报告结构体是否有 path/query/header/cookie 绑定 tag。
+// structHasBindingTags reports whether the struct carries any binding tag.
+func structHasBindingTags(t reflect.Type) bool {
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		for _, tag := range []string{"path", "query", "header", "cookie"} {
+			if name, ok := bindingName(f.Tag.Get(tag)); ok && name != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func invalidParamsUsageError(t reflect.Type, f reflect.StructField, reason string) error {
@@ -145,6 +184,15 @@ func parseInputWithConfigAndPathParams(r *http.Request, input interface{}, c *Co
 	if v.Type().Elem() == reflect.TypeOf((*Params)(nil)) {
 		return directPointerParamsUsageError(v.Type().Elem())
 	}
+	// 顶层简写:Req 本身就是 Body[T] 时直接装句柄,不走结构体扫描。
+	// top-level shorthand: when Req itself is Body[T], install the handle
+	// directly instead of scanning the struct.
+	if t := v.Type().Elem(); t.Kind() == reflect.Struct && t.Implements(bodyFieldMarkerType) {
+		if setter, ok := input.(bodySourceSetter); ok {
+			setter.setBodySource(newBodySource(r, c, codecMgr))
+			return nil
+		}
+	}
 	v = v.Elem()
 	if v.Kind() != reflect.Struct {
 		return nil
@@ -159,16 +207,23 @@ func parseInputWithConfigAndPathParams(r *http.Request, input interface{}, c *Co
 	if info.err != nil {
 		return info.err
 	}
-	params := paramsFromRequestWithPathParams(r, c, routeParams)
-	if info.paramsIdx >= 0 {
-		v.Field(info.paramsIdx).Set(reflect.ValueOf(params))
-	}
-	if err := bindTaggedParams(v, info, params); err != nil {
-		return err
+	// 结构体既无 Params 嵌入也无绑定 tag 时,完全跳过 Params 视图。
+	// skip the Params view entirely when the struct uses neither.
+	if info.usesParams {
+		params := paramsFromRequestWithPathParams(r, c, routeParams)
+		if info.paramsIdx >= 0 {
+			v.Field(info.paramsIdx).Set(reflect.ValueOf(params))
+		}
+		if err := bindTaggedParams(v, info, params); err != nil {
+			return err
+		}
 	}
 
 	// 解析请求体；parse body.
-	if info.hasBody {
+	if info.hasBody && info.bodyLazy {
+		setter := v.Field(info.bodyIdx).Addr().Interface().(bodySourceSetter)
+		setter.setBodySource(newBodySource(r, c, codecMgr))
+	} else if info.hasBody {
 		bodyField := v.Field(info.bodyIdx)
 
 		// 先解析 form 以判断是否 multipart；parse the form first to detect multipart.
@@ -177,7 +232,7 @@ func parseInputWithConfigAndPathParams(r *http.Request, input interface{}, c *Co
 			if err := r.ParseMultipartForm(defaultMaxMemory); err != nil {
 				return err
 			}
-			if err := fillMultipartBody(bodyField, r); err != nil {
+			if err := fillMultipartBody(bodyField, r.MultipartForm); err != nil {
 				return err
 			}
 		} else if r.Body != nil && r.Body != http.NoBody {

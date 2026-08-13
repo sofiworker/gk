@@ -808,7 +808,13 @@ func TestRouteBuilderDirectParamsPassesPointerToCustomValidator(t *testing.T) {
 	app := New(
 		WithProduces(MIMEJSON),
 		WithValidator(serverValidatorFunc(func(_ context.Context, input interface{}) error {
-			validated = input
+			// Params 仅在 handler 生命周期内有效;跨请求检查先 Detach。
+			// Params is valid only during the handler lifetime; Detach before retaining.
+			if params, ok := input.(*Params); ok {
+				validated = params.Detach()
+			} else {
+				validated = input
+			}
 			return nil
 		})),
 	)
@@ -825,9 +831,9 @@ func TestRouteBuilderDirectParamsPassesPointerToCustomValidator(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	params, ok := validated.(*Params)
+	params, ok := validated.(Params)
 	if !ok {
-		t.Fatalf("validator input type = %T, want *Params", validated)
+		t.Fatalf("validator input type = %T, want Params (detached)", validated)
 	}
 	if got, want := params.Path("id"), "42"; got != want {
 		t.Fatalf("validator path id = %q, want %q", got, want)

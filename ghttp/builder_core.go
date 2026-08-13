@@ -318,6 +318,10 @@ func (c *routeBuilderCore) registerHandler(handler http.Handler, needsExtractor 
 	if err != nil {
 		c.panicSetupError(err)
 	}
+	// 惰性路径参数只对含参数的路由有意义;无参数路由不建惰性源。
+	// the lazy path source matters only for routes with params; param-less
+	// routes skip the extractor entirely.
+	needsExtractor = needsExtractor && pattern.hasParams()
 	definitions := make([]routeDefinition, 0, len(c.methods))
 	for _, method := range c.methods {
 		definitions = append(definitions, routeDefinition{
@@ -763,6 +767,9 @@ func parseAndValidateParamsWithPathParams(core *routeBuilderCore, w http.Respons
 	server := core.target.owner()
 	if maxBodyBytes := core.effectiveMaxBodyBytes(server); maxBodyBytes > 0 {
 		r = requestWithMaxBodyBytes(w, r, maxBodyBytes)
+		if st := requestStateFromRequest(r); st != nil && st.body != nil {
+			st.body.setLimit(maxBodyBytes)
+		}
 	}
 	input := paramsFromRequestWithPathParams(r, server.config, params)
 	if validator != nil {
@@ -786,6 +793,9 @@ func parseAndValidateRouteInput[Req any](core *routeBuilderCore, input compiledI
 	server := core.target.owner()
 	if maxBodyBytes := core.effectiveMaxBodyBytes(server); maxBodyBytes > 0 {
 		r = requestWithMaxBodyBytes(w, r, maxBodyBytes)
+		if st := requestStateFromRequest(r); st != nil && st.body != nil {
+			st.body.setLimit(maxBodyBytes)
+		}
 	}
 	var (
 		target any
@@ -878,6 +888,9 @@ func inputTargetHasBody(target interface{}) bool {
 	}
 	if t.Kind() != reflect.Struct || t == reflect.TypeOf(Params{}) {
 		return false
+	}
+	if t.Implements(bodyFieldMarkerType) {
+		return true
 	}
 	return getStructInfo(t).hasBody
 }

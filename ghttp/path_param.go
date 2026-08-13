@@ -1,6 +1,10 @@
 package ghttp
 
-import "net/http"
+import (
+	"net/http"
+	"net/url"
+	"sync"
+)
 
 const maxStackPathParams = 16
 
@@ -85,4 +89,62 @@ func (f pathParamHandlerFunc) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 func (f pathParamHandlerFunc) ServeHTTPWithPathParams(w http.ResponseWriter, r *http.Request, params pathParamList) {
 	f(w, r, params)
+}
+
+// lazyPathParams 是路径参数的惰性视图:首次按 key 访问时才解码对应段并缓存。
+// lazyPathParams is a lazy view of path params: a segment is decoded and cached
+// only when its key is first accessed.
+// 生命周期与单 goroutine 使用约定同 Params。
+// lifetime and single-goroutine contract match Params.
+type lazyPathParams struct {
+	route *compiledRoute
+	path  requestPath
+}
+
+// lazyPathParamsPool 复用惰性路径参数源,避免每个参数路由分配一次。
+// lazyPathParamsPool reuses lazy path sources instead of allocating per request.
+// 生命周期受 Params 的 handler 生命周期契约约束。
+// lifetime is bounded by the Params handler-lifetime contract.
+var lazyPathParamsPool = sync.Pool{New: func() any { return &lazyPathParams{} }}
+
+// Get 返回并缓存 key 对应参数的解码值;不存在或解码失败返回空。
+// Get decodes and caches the param for key; it returns empty when missing or invalid.
+// 缓存放在调用方提供的 *pathParamList 上,保持 lazyPathParams 自身小而廉价。
+// the cache lives on the caller-provided list, keeping lazyPathParams small.
+func (l *lazyPathParams) get(key string, cache *pathParamList) string {
+	if l == nil || l.route == nil {
+		return ""
+	}
+	if value := cache.Get(key); value != "" {
+		return value
+	}
+	segmentIndex, ok := l.route.paramPos[key]
+	if !ok {
+		return ""
+	}
+	segment := l.route.definition.pattern.segments[segmentIndex]
+	raw := l.path.RawAt(segmentIndex)
+	if segment.kind == routeSegmentCatchAll {
+		raw = l.path.RawJoinFrom(segmentIndex)
+	}
+	value, err := url.PathUnescape(raw)
+	if err != nil {
+		return ""
+	}
+	cache.Add(key, value)
+	return value
+}
+
+// materialize 解码全部参数并返回深拷贝快照(Detach 语义)。
+// materialize decodes all params and returns a detached copy (Detach semantics).
+func (l *lazyPathParams) materialize(cache *pathParamList) pathParamList {
+	if l == nil || l.route == nil {
+		return pathParamList{}
+	}
+	for _, segment := range l.route.definition.pattern.segments {
+		if segment.kind == routeSegmentParameter || segment.kind == routeSegmentCatchAll {
+			l.get(segment.value, cache)
+		}
+	}
+	return cache.Clone()
 }
