@@ -212,7 +212,10 @@ func parseInputWithConfigAndPathParams(r *http.Request, input interface{}, c *Co
 	if info.usesParams {
 		params := paramsFromRequestWithPathParams(r, c, routeParams)
 		if info.paramsIdx >= 0 {
-			v.Field(info.paramsIdx).Set(reflect.ValueOf(params))
+			// 按具体类型赋值,避免 reflect.Set 经 copyVal 为整个 Params 再分配。
+			// assign by concrete type to avoid reflect.Set allocating a copy of
+			// the whole Params via copyVal.
+			*(v.Field(info.paramsIdx).Addr().Interface().(*Params)) = params
 		}
 		if err := bindTaggedParams(v, info, params); err != nil {
 			return err

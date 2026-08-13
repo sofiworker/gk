@@ -85,18 +85,31 @@ func paramsFromRequestWithPathParams(r *http.Request, c *Config, routeParams pat
 	if c != nil && c.clientIPResolver != nil {
 		resolver = c.clientIPResolver
 	}
-	p := Params{state: &paramsState{
-		req:      r,
-		header:   r.Header,
-		resolver: resolver,
-	}}
+	// 同一请求的多个 Params 视图共享 requestState 上的 paramsState,避免逐视图
+	// 分配;无 requestState(独立 ParseInput/非派发链)时才新建。
+	// multiple Params views of one request share the paramsState on requestState
+	// to avoid per-view allocation; a fresh one is built only outside the
+	// dispatch chain.
+	var state *paramsState
+	if st := requestStateFromRequest(r); st != nil {
+		st.paramsMu.Lock()
+		if !st.paramsBuilt {
+			st.params = paramsState{req: r, header: r.Header, resolver: resolver}
+			st.paramsBuilt = true
+		}
+		state = &st.params
+		st.paramsMu.Unlock()
+	} else {
+		state = &paramsState{req: r, header: r.Header, resolver: resolver}
+	}
+	p := Params{state: state}
 	if routeParams.Len() > 0 {
 		p.path = routeParams
 	}
 	// 匹配后惰性参数源挂在 requestState 上;这里引用它,Params.Path 走惰性解码。
 	// the lazy source is stored on requestState after matching; reference it here
 	// so Params.Path resolves through lazy decoding.
-	if reqState := requestStateFromRequest(r); reqState != nil && reqState.matched != nil {
+	if reqState := requestStateFromRequest(r); reqState != nil && reqState.matched != nil && p.state.lazyPath == nil {
 		p.state.lazyPath = reqState.matched
 	}
 	return p

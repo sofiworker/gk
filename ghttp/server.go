@@ -39,6 +39,10 @@ type requestState struct {
 	multipartParsed bool
 	multipart       *multipart.Form
 	multipartErr    error
+
+	paramsMu    sync.Mutex
+	paramsBuilt bool
+	params      paramsState
 }
 
 func requestStateFromRequest(r *http.Request) *requestState {
@@ -69,6 +73,9 @@ func acquireRequestState(server *Server, responseState *responseWriteState) *req
 	st.multipartParsed = false
 	st.multipart = nil
 	st.multipartErr = nil
+	st.paramsMu = sync.Mutex{}
+	st.paramsBuilt = false
+	st.params = paramsState{}
 	return st
 }
 
