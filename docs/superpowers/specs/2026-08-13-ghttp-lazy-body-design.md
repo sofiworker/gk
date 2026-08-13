@@ -236,14 +236,15 @@ err = path.Unmarshal(raw, &dst)                         // extract+goccy 解码�
 
 | 场景 | ns/op | B/op | allocs |
 | --- | --- | --- | --- |
-| Body[T] 从不读取 | 3.8µs | 6.6KB | 23 |
-| Body[T] 仅 Raw | 169µs | 580KB | 29 |
-| Body[T] Decode 一次(goccy) | 370µs | 869KB | 737 |
-| middleware Raw 后再 Decode | 380µs | 868KB | 737 |
-| eager stdlib 解码(对照) | 1301µs | 1136KB | 2865 |
+| Body[T] 从不读取 | 5.2µs | 7.3KB | 27 |
+| Body[T] 仅 Raw | 175µs | 581KB | 33 |
+| Body[T] Decode 一次(goccy) | 398µs | 871KB | 741 |
+| middleware Raw 后再 Decode | 400µs | 874KB | 741 |
+| eager stdlib 解码(对照) | 1326µs | 1137KB | 2869 |
 
-结论:不读 body 的请求比 eager 快 ~340×、分配少 ~172×;middleware 先读后
-handler 解码只比单独解码多 ~10µs,共享字节成立;goccy 解码比 stdlib eager
-路径快 ~3.5×。既有七框架 harness 复跑,静态/参数路由与惰性 path 版本持平,
-memo 包装只让读 body 的路由增加少量分配(JSONBind raw +16%),不读 body 的路由
-无影响。
+结论:不读 body 的请求比 eager 快 ~255×、分配少 ~156×;middleware 先读后
+handler 解码只比单独解码多 ~2µs,共享字节成立;goccy 解码比 stdlib eager
+路径快 ~3.3×。修复“复用请求对象时 memo 串状态”bug 后,`ServeHTTP` 改为仅在有
+body 时克隆请求(不再改写调用方请求),从不读场景因此多付一次 Request 拷贝
+(+1.1µs/+~700B);类型化 JSONBind 从修复前的虚假 1060µs/2.2MB 恢复为真实的
+5.5µs/4.3KB。
