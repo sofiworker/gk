@@ -132,13 +132,20 @@ func New(opts ...ServerOption) *Server {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	responseState, w := newResponseWriteState(w, r.Method == http.MethodHead)
 	reqState := &requestState{server: s, responseState: responseState}
+	ctx := context.WithValue(r.Context(), requestStateContextKey{}, reqState)
 	if r.Body != nil && r.Body != http.NoBody {
+		// 只在有 body 时克隆请求再挂 memo,避免改写调用方的 *http.Request;
+		// 复用同一请求对象(如基准 harness、自建循环)时也不会串状态。
+		// clone the request only when wrapping the body, so the caller's
+		// *http.Request is never mutated; reused requests (bench harnesses,
+		// custom loops) cannot leak state between iterations.
 		memo := &memoBody{src: r.Body}
 		reqState.body = memo
+		r = r.Clone(ctx)
 		r.Body = memo
+	} else {
+		r = r.WithContext(ctx)
 	}
-	ctx := context.WithValue(r.Context(), requestStateContextKey{}, reqState)
-	r = r.WithContext(ctx)
 	// req 记录 WithContext 之后的请求;下游 handler/表单解析都拿这个指针,
 	// 避免 ParseForm/ParseMultipartForm 的缓存落在旧请求拷贝上。
 	// req records the post-WithContext request, so form parsing caches land on
