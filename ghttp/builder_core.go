@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync"
 )
 
 var (
@@ -43,6 +44,10 @@ type compiledInput[Req any] struct {
 	directParams bool
 	newTarget    func() any
 	finish       func(any) Req
+	// release 归还 newTarget 分配的复用目标;nil 表示不可池化(指针 Req)。
+	// release returns the target allocated by newTarget; nil means the target
+	// is not poolable (pointer Req).
+	release func(any)
 }
 
 func compileInput[Req any]() compiledInput[Req] {
@@ -57,10 +62,25 @@ func compileInput[Req any]() compiledInput[Req] {
 			finish:    func(target any) Req { return target.(Req) },
 		}
 	}
+	pool := newInputPool[Req]()
 	return compiledInput[Req]{
-		newTarget: func() any { return new(Req) },
-		finish:    func(target any) Req { return *target.(*Req) },
+		// value 形态 Req:目标可池化;取用时 SetZero 防止跨请求脏数据。
+		// value Req: the target is poolable; SetZero on acquire prevents stale
+		// data leaking across requests.
+		newTarget: func() any {
+			target := pool.Get()
+			reflect.ValueOf(target).Elem().SetZero()
+			return target
+		},
+		finish:  func(target any) Req { return *target.(*Req) },
+		release: func(target any) { pool.Put(target) },
 	}
+}
+
+// newInputPool 为 value 结构体 Req 建立解析目标池。
+// newInputPool builds a parse-target pool for value-struct Req.
+func newInputPool[Req any]() *sync.Pool {
+	return &sync.Pool{New: func() any { return new(Req) }}
 }
 
 type routeTarget interface {
@@ -806,6 +826,9 @@ func parseAndValidateRouteInput[Req any](core *routeBuilderCore, input compiledI
 		target = parsed
 	} else {
 		target = input.newTarget()
+		if input.release != nil {
+			defer func() { input.release(target) }()
+		}
 	}
 	if err := validateRequestContentType(r, target, core.consumes); err != nil {
 		core.writeError(w, r, http.StatusUnsupportedMediaType, err)

@@ -139,3 +139,33 @@ func TestTypedRouteKeepsRequestState(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 }
+
+func TestTypedInputReuseDoesNotLeakAcrossRequests(t *testing.T) {
+	type in struct {
+		Q string `query:"q"`
+	}
+	app := New(WithProduces(MIMEJSON))
+	Route[in, map[string]string](app).GET("/r").To(func(_ context.Context, req in) (map[string]string, error) {
+		return map[string]string{"q": req.Q}, nil
+	})
+
+	get := func(query string) string {
+		rec := httptest.NewRecorder()
+		u := "/r"
+		if query != "" {
+			u += "?q=" + query
+		}
+		app.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, u, nil))
+		return rec.Body.String()
+	}
+
+	if body := get("first"); !strings.Contains(body, "first") {
+		t.Fatalf("first request body = %q", body)
+	}
+	if body := get("second"); !strings.Contains(body, "second") {
+		t.Fatalf("second request body = %q", body)
+	}
+	if body := get(""); strings.Contains(body, "first") || strings.Contains(body, "second") {
+		t.Fatalf("empty request leaked previous input: %q", body)
+	}
+}
