@@ -63,12 +63,29 @@ func extractBodySchema(t reflect.Type) interface{} {
 	if t.Kind() != reflect.Struct {
 		return nil
 	}
+	// Body[T] 顶层简写:解包为 T 的 schema。
+	// top-level Body[T]: unwrap to the schema of T.
+	if t.Implements(bodyFieldMarkerType) {
+		return generateSchema(lazyBodyTypeArg(t))
+	}
 	for i := 0; i < t.NumField(); i++ {
+		if isLazyBodyFieldType(t.Field(i).Type) {
+			return generateSchema(lazyBodyTypeArg(t.Field(i).Type))
+		}
 		if t.Field(i).Name == "Body" {
 			return generateSchema(t.Field(i).Type)
 		}
 	}
 	return nil
+}
+
+// lazyBodyTypeArg 从 Body[T] 还原类型参数 T(经由内部 typ 字段)。
+// lazyBodyTypeArg recovers T from Body[T] via its internal typ field.
+func lazyBodyTypeArg(t reflect.Type) reflect.Type {
+	if f, ok := t.FieldByName("typ"); ok && f.Type.Kind() == reflect.Ptr {
+		return f.Type.Elem()
+	}
+	return t
 }
 
 func derefType(t reflect.Type) reflect.Type {

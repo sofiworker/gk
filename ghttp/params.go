@@ -1,6 +1,8 @@
 package ghttp
 
 import (
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -30,9 +32,11 @@ type Params struct {
 // Detach 后的状态持有所有输入的深拷贝，不再引用请求。
 // a detached state owns deep copies and holds no request.
 type paramsState struct {
-	req      *http.Request
-	header   http.Header
-	resolver ClientIPResolver
+	req       *http.Request
+	header    http.Header
+	resolver  ClientIPResolver
+	lazyPath  *lazyPathParams
+	pathCache *pathParamList
 
 	query         url.Values
 	queryParsed   bool
@@ -88,6 +92,12 @@ func paramsFromRequestWithPathParams(r *http.Request, c *Config, routeParams pat
 	}}
 	if routeParams.Len() > 0 {
 		p.path = routeParams
+	}
+	// 匹配后惰性参数源挂在 requestState 上;这里引用它,Params.Path 走惰性解码。
+	// the lazy source is stored on requestState after matching; reference it here
+	// so Params.Path resolves through lazy decoding.
+	if reqState := requestStateFromRequest(r); reqState != nil && reqState.matched != nil {
+		p.state.lazyPath = reqState.matched
 	}
 	return p
 }
@@ -164,8 +174,17 @@ func (p Params) Detach() Params {
 	if s == nil {
 		return Params{path: p.path.Clone()}
 	}
+	var path pathParamList
+	if s.lazyPath != nil {
+		if s.pathCache == nil {
+			s.pathCache = new(pathParamList)
+		}
+		path = s.lazyPath.materialize(s.pathCache)
+	} else {
+		path = p.path.Clone()
+	}
 	return Params{
-		path: p.path.Clone(),
+		path: path,
 		state: &paramsState{
 			header:        s.header.Clone(),
 			query:         cloneQueryParams(p.queryValues()),
@@ -181,7 +200,16 @@ func (p Params) Detach() Params {
 // Path 返回路径参数值。
 // Path returns a path parameter value.
 func (p Params) Path(key string) string {
-	return p.path.Get(key)
+	if value := p.path.Get(key); value != "" {
+		return value
+	}
+	if p.state != nil && p.state.lazyPath != nil {
+		if p.state.pathCache == nil {
+			p.state.pathCache = new(pathParamList)
+		}
+		return p.state.lazyPath.get(key, p.state.pathCache)
+	}
+	return ""
 }
 
 // DefaultPath 返回路径参数值，为空时返回 defaultValue。
@@ -373,4 +401,101 @@ func (p Params) ClientIP() string {
 		s.clientIPSet = true
 	}
 	return s.clientIP
+}
+
+// Request 返回底层 *http.Request。
+// Request returns the underlying *http.Request.
+// 零值与 Detach 后的视图返回 nil。
+// the zero value and detached views return nil.
+func (p Params) Request() *http.Request {
+	if p.state == nil {
+		return nil
+	}
+	return p.state.req
+}
+
+// Method 返回请求方法。
+// Method returns the request method.
+func (p Params) Method() string {
+	r := p.Request()
+	if r == nil {
+		return ""
+	}
+	return r.Method
+}
+
+// URL 返回请求 URL。
+// URL returns the request URL.
+func (p Params) URL() *url.URL {
+	r := p.Request()
+	if r == nil {
+		return nil
+	}
+	return r.URL
+}
+
+// ContentType 返回原始 Content-Type 头值,不做媒体类型归一化。
+// ContentType returns the raw Content-Type header value without normalization.
+func (p Params) ContentType() string {
+	r := p.Request()
+	if r == nil {
+		return ""
+	}
+	return r.Header.Get("Content-Type")
+}
+
+// RawBody 返回请求体原始字节;首次访问读流并缓存,与 RawBody(r) 及
+// Body[T].Raw/Decode 共享同一份。Detach 后的视图不持有 body,返回 (nil, nil)。
+// RawBody returns the raw body bytes, buffered on first access and shared with
+// RawBody(r) and Body[T].Raw/Decode. Detached views hold no body and return
+// (nil, nil).
+func (p Params) RawBody() ([]byte, error) {
+	r := p.Request()
+	if r == nil || r.Body == nil || r.Body == http.NoBody {
+		return nil, nil
+	}
+	if st := requestStateFromRequest(r); st != nil && st.body != nil {
+		return st.body.bytes()
+	}
+	return io.ReadAll(r.Body)
+}
+
+// Form 返回合并 query 与表单体的第一个值(静默忽略解析错误)。
+// Form returns the first query-merged form value (parse errors are silent).
+func (p Params) Form(key string) string {
+	values, _ := p.FormValues()
+	if values == nil {
+		return ""
+	}
+	return values.Get(key)
+}
+
+// PostForm 返回仅来自请求体的表单值(静默忽略解析错误)。
+// PostForm returns a body-only form value (parse errors are silent).
+func (p Params) PostForm(key string) string {
+	values, _ := p.PostFormValues()
+	if values == nil {
+		return ""
+	}
+	return values.Get(key)
+}
+
+// FormValues 返回合并 query 与表单体的缓存视图。
+// FormValues returns the cached query-merged form view.
+func (p Params) FormValues() (url.Values, error) {
+	form, _, err := formValuesFromRequest(p.Request())
+	return form, err
+}
+
+// PostFormValues 返回仅来自请求体的缓存视图。
+// PostFormValues returns the cached body-only form view.
+func (p Params) PostFormValues() (url.Values, error) {
+	_, post, err := formValuesFromRequest(p.Request())
+	return post, err
+}
+
+// MultipartForm 解析并缓存 multipart 表单,见 MultipartForm(r, maxMemory)。
+// MultipartForm parses and caches the multipart form; see MultipartForm(r, maxMemory).
+func (p Params) MultipartForm(maxMemory int64) (*multipart.Form, error) {
+	return MultipartForm(p.Request(), maxMemory)
 }

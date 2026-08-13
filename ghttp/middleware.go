@@ -284,7 +284,10 @@ func serverFromRequest(r *http.Request) *Server {
 	if r == nil {
 		return nil
 	}
-	state, _ := r.Context().Value(requestStateContextKey{}).(requestState)
+	state := requestStateFromRequest(r)
+	if state == nil {
+		return nil
+	}
 	return state.server
 }
 

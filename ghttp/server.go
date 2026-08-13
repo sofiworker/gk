@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"mime/multipart"
 	"net"
 	"net/http"
+	"net/url"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -13,11 +15,36 @@ import (
 )
 
 type requestStateContextKey struct{}
-type matchedParamsContextKey struct{}
 
 type requestState struct {
 	server        *Server
 	responseState *responseWriteState
+	// req 是派发入口的原始请求;表单缓存解析都在它上面进行。
+	// req is the original request at dispatch entry; form parsing runs on it.
+	req *http.Request
+	// matched 在路由匹配成功后保存惰性路径参数源。
+	// matched holds the lazy path-param source after a successful route match.
+	matched *lazyPathParams
+	// body 缓存请求体字节,供 RawBody/Body[T] 共享。
+	// body memoizes the request body bytes for RawBody/Body[T] sharing.
+	body *memoBody
+
+	formOnce sync.Once
+	form     url.Values
+	postForm url.Values
+	formErr  error
+
+	multipartOnce sync.Once
+	multipart     *multipart.Form
+	multipartErr  error
+}
+
+func requestStateFromRequest(r *http.Request) *requestState {
+	if r == nil {
+		return nil
+	}
+	state, _ := r.Context().Value(requestStateContextKey{}).(*requestState)
+	return state
 }
 
 // Server 是核心 HTTP 服务器。
@@ -104,8 +131,19 @@ func New(opts ...ServerOption) *Server {
 // ServeHTTP implements http.Handler.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	responseState, w := newResponseWriteState(w, r.Method == http.MethodHead)
-	ctx := context.WithValue(r.Context(), requestStateContextKey{}, requestState{server: s, responseState: responseState})
+	reqState := &requestState{server: s, responseState: responseState}
+	if r.Body != nil && r.Body != http.NoBody {
+		memo := &memoBody{src: r.Body}
+		reqState.body = memo
+		r.Body = memo
+	}
+	ctx := context.WithValue(r.Context(), requestStateContextKey{}, reqState)
 	r = r.WithContext(ctx)
+	// req 记录 WithContext 之后的请求;下游 handler/表单解析都拿这个指针,
+	// 避免 ParseForm/ParseMultipartForm 的缓存落在旧请求拷贝上。
+	// req records the post-WithContext request, so form parsing caches land on
+	// the same *http.Request the handlers see.
+	reqState.req = r
 	s.finalizeRoutes()
 	state := s.compiled.Load()
 	if state == nil {
@@ -452,9 +490,6 @@ func (s *Server) MatchedParams(r *http.Request) Params {
 	if r == nil {
 		return Params{}
 	}
-	if list, ok := r.Context().Value(matchedParamsContextKey{}).(pathParamList); ok {
-		return paramsFromRequestWithPathParams(r, s.config, list)
-	}
 	return paramsFromRequest(r, s.config)
 }
 
@@ -544,29 +579,40 @@ func compileState(definitions []routeDefinition, serverMiddlewares []Middleware,
 
 func extractorTerminal(route *compiledRoute) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		params, ok := r.Context().Value(matchedParamsContextKey{}).(pathParamList)
-		if !ok {
-			// 防御性回退：中间件替换请求 context 时使用；
-			// Defensive fallback when middlewares replace the request context.
-			// 正常路径在 ServeHTTP 中只提取一次。
-			// the normal path extracts exactly once in ServeHTTP.
-			requestPath, err := parseRequestPath(r.URL.EscapedPath(), route.definition.pattern.strict)
-			if err != nil {
-				writeRouteError(w, r, serverFromRequest(r), route.definition.errorWriter, route.definition.produces, http.StatusBadRequest, err)
-				return
-			}
-			params, err = route.extract(requestPath)
-			if err != nil {
-				writeRouteError(w, r, serverFromRequest(r), route.definition.errorWriter, route.definition.produces, http.StatusBadRequest, err)
-				return
-			}
-		}
 		handler, ok := route.definition.handler.(pathParamHandler)
 		if !ok {
 			writeRouteError(w, r, serverFromRequest(r), route.definition.errorWriter, route.definition.produces, http.StatusInternalServerError, Err(http.StatusInternalServerError, http.StatusText(http.StatusInternalServerError)))
 			return
 		}
-		handler.ServeHTTPWithPathParams(w, r, params)
+		// 防御性回退:中间件替换请求 context 导致 requestState 丢失时现场重建惰性源。
+		// defensive fallback: rebuild the lazy source when a middleware replaced the
+		// request context and dropped requestState.
+		reqState := requestStateFromRequest(r)
+		var fallback pathParamList
+		if reqState == nil {
+			requestPath, err := parseRequestPath(r.URL.EscapedPath(), route.definition.pattern.strict)
+			if err != nil {
+				writeRouteError(w, r, serverFromRequest(r), route.definition.errorWriter, route.definition.produces, http.StatusBadRequest, err)
+				return
+			}
+			fallback, err = route.extract(requestPath)
+			if err != nil {
+				writeRouteError(w, r, serverFromRequest(r), route.definition.errorWriter, route.definition.produces, http.StatusBadRequest, err)
+				return
+			}
+		} else if reqState.matched == nil {
+			requestPath, err := parseRequestPath(r.URL.EscapedPath(), route.definition.pattern.strict)
+			if err != nil {
+				writeRouteError(w, r, serverFromRequest(r), route.definition.errorWriter, route.definition.produces, http.StatusBadRequest, err)
+				return
+			}
+			if err := route.validate(requestPath); err != nil {
+				writeRouteError(w, r, serverFromRequest(r), route.definition.errorWriter, route.definition.produces, http.StatusBadRequest, err)
+				return
+			}
+			reqState.matched = &lazyPathParams{route: route, path: requestPath}
+		}
+		handler.ServeHTTPWithPathParams(w, r, fallback)
 	})
 }
 
@@ -579,14 +625,21 @@ func (s *compiledState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	result := s.mux.match(r.Method, requestPath)
 	switch result.kind {
 	case routeMatchFound:
+		var pooled *lazyPathParams
 		if result.route.definition.needsExtractor {
-			params, err := result.route.extract(requestPath)
-			if err != nil {
-				s.badRequest.ServeHTTP(w, r)
-				return
+			if reqState := requestStateFromRequest(r); reqState != nil {
+				pooled = lazyPathParamsPool.Get().(*lazyPathParams)
+				pooled.route = result.route
+				pooled.path = requestPath
+				reqState.matched = pooled
 			}
-			r = r.WithContext(context.WithValue(r.Context(), matchedParamsContextKey{}, params))
 		}
+		defer func() {
+			if pooled != nil {
+				pooled.route = nil
+				lazyPathParamsPool.Put(pooled)
+			}
+		}()
 		result.route.handler.ServeHTTP(w, r)
 	case routeMatchMethodNotAllowed:
 		w.Header().Set("Allow", strings.Join(result.allow, ", "))

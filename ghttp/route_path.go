@@ -18,6 +18,9 @@ const (
 type routeSegment struct {
 	kind  routeSegmentKind
 	value string
+	// rawValue 是注册时段的原始(转义)文本,仅用于静态匹配。
+	// rawValue is the raw escaped text as registered, used only for static matching.
+	rawValue string
 }
 
 type routePattern struct {
@@ -28,17 +31,25 @@ type routePattern struct {
 }
 
 type requestPath struct {
+	raw      string
 	segments pathSegmentList
 	trailing bool
 }
 
+// pathSegment 记录原始路径中一段的字节偏移。
+// pathSegment records the byte offsets of one raw path segment.
+type pathSegment struct {
+	start int
+	end   int
+}
+
 type pathSegmentList struct {
-	values   [maxStackPathParams]string
-	overflow []string
+	values   [maxStackPathParams]pathSegment
+	overflow []pathSegment
 	len      int
 }
 
-func (s *pathSegmentList) Add(value string) {
+func (s *pathSegmentList) Add(value pathSegment) {
 	if s.len < len(s.values) {
 		s.values[s.len] = value
 		s.len++
@@ -51,28 +62,41 @@ func (s pathSegmentList) Len() int {
 	return s.len + len(s.overflow)
 }
 
-func (s pathSegmentList) At(index int) string {
+func (s pathSegmentList) At(index int) pathSegment {
 	if index < s.len {
 		return s.values[index]
 	}
 	return s.overflow[index-s.len]
 }
 
-func (s pathSegmentList) JoinFrom(index int) string {
-	if index >= s.Len() {
+// RawAt 返回第 index 段的原始(未解码)字节。
+// RawAt returns the raw, undecoded bytes of segment index.
+func (p requestPath) RawAt(index int) string {
+	segment := p.segments.At(index)
+	if segment.start < 0 || segment.start > segment.end || segment.end > len(p.raw) {
 		return ""
 	}
-	if index == s.Len()-1 {
-		return s.At(index)
+	return p.raw[segment.start:segment.end]
+}
+
+// DecodeAt 按需解码第 index 段。
+// DecodeAt decodes segment index on demand.
+func (p requestPath) DecodeAt(index int) (string, error) {
+	return url.PathUnescape(p.RawAt(index))
+}
+
+// RawJoinFrom 返回自 index 起的原始段连接(保留 `/` 分隔,未解码)。
+// RawJoinFrom joins raw segments from index onward, keeping '/' separators.
+func (p requestPath) RawJoinFrom(index int) string {
+	if index >= p.segments.Len() {
+		return ""
 	}
-	var builder strings.Builder
-	for current := index; current < s.Len(); current++ {
-		if current > index {
-			builder.WriteByte('/')
-		}
-		builder.WriteString(s.At(current))
+	first := p.segments.At(index)
+	last := p.segments.At(p.segments.Len() - 1)
+	if first.start < 0 || first.start > last.end || last.end > len(p.raw) {
+		return ""
 	}
-	return builder.String()
+	return p.raw[first.start:last.end]
 }
 
 func parseRoutePattern(rawPath string, strict bool) (routePattern, error) {
@@ -117,6 +141,7 @@ func parseRequestPath(rawPath string, strict bool) (requestPath, error) {
 	}
 
 	var result requestPath
+	result.raw = path
 	result.trailing = strict && trailing
 	for start := 0; start < len(path); {
 		end := strings.IndexByte(path[start:], '/')
@@ -129,20 +154,107 @@ func parseRequestPath(rawPath string, strict bool) (requestPath, error) {
 		if rawSegment == "" {
 			return requestPath{}, fmt.Errorf("%w: %q contains an empty segment", ErrInvalidRequestPath, rawPath)
 		}
-		segment, err := url.PathUnescape(rawSegment)
-		if err != nil {
-			return requestPath{}, fmt.Errorf("%w: %q: %v", ErrInvalidRequestPath, rawPath, err)
+		if err := validateRawSegment(rawSegment); err != nil {
+			return requestPath{}, err
 		}
-		if segment == "." || segment == ".." {
-			return requestPath{}, fmt.Errorf("%w: %q contains dot segment", ErrInvalidRequestPath, rawPath)
-		}
-		result.segments.Add(segment)
+		result.segments.Add(pathSegment{start: start, end: end})
 		if end == len(path) {
 			break
 		}
 		start = end + 1
 	}
 	return result, nil
+}
+
+// validateRawSegment 校验一段原始路径:转义合法、非 dot 段(含百分号编码形态)。
+// validateRawSegment validates one raw segment: valid escapes and no dot segment
+// (including percent-encoded forms).
+// 语义与旧实现“逐段 PathUnescape 后判定”一致,但不分配。
+// semantics match the previous per-segment PathUnescape checks without allocating.
+func validateRawSegment(raw string) error {
+	var decoded [2]byte
+	decodedLen := 0
+	dotCandidate := true
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '%' {
+			if dotCandidate {
+				if decodedLen < 2 {
+					decoded[decodedLen] = raw[i]
+					decodedLen++
+				} else {
+					dotCandidate = false
+				}
+			}
+			continue
+		}
+		if i+2 >= len(raw) {
+			return fmt.Errorf("%w: %q contains invalid escape", ErrInvalidRequestPath, raw)
+		}
+		hi, okHi := unhex(raw[i+1])
+		lo, okLo := unhex(raw[i+2])
+		if !okHi || !okLo {
+			return fmt.Errorf("%w: %q contains invalid escape", ErrInvalidRequestPath, raw)
+		}
+		if dotCandidate {
+			if decodedLen < 2 {
+				decoded[decodedLen] = byte(hi<<4 | lo)
+				decodedLen++
+			} else {
+				dotCandidate = false
+			}
+		}
+		i += 2
+	}
+	if dotCandidate &&
+		((decodedLen == 1 && decoded[0] == '.') ||
+			(decodedLen == 2 && decoded[0] == '.' && decoded[1] == '.')) {
+		return fmt.Errorf("%w: %q contains dot segment", ErrInvalidRequestPath, raw)
+	}
+	return nil
+}
+
+// rawSegmentMatches 判断原始段解码后是否等于期望值,不分配。
+// rawSegmentMatches reports whether the raw segment decodes to expected without allocating.
+func rawSegmentMatches(raw, expected string) bool {
+	rawIndex := 0
+	for expectedIndex := 0; expectedIndex < len(expected); expectedIndex++ {
+		if rawIndex >= len(raw) {
+			return false
+		}
+		var decoded byte
+		if raw[rawIndex] == '%' {
+			if rawIndex+2 >= len(raw) {
+				return false
+			}
+			hi, okHi := unhex(raw[rawIndex+1])
+			lo, okLo := unhex(raw[rawIndex+2])
+			if !okHi || !okLo {
+				return false
+			}
+			decoded = byte(hi<<4 | lo)
+			rawIndex += 3
+		} else {
+			decoded = raw[rawIndex]
+			rawIndex++
+		}
+		if decoded != expected[expectedIndex] {
+			return false
+		}
+	}
+	return rawIndex == len(raw)
+}
+
+func unhex(c byte) (byte, bool) {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0', true
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10, true
+	case c >= 'A' && c <= 'F':
+		return c - 'A' + 10, true
+	default:
+		return 0, false
+	}
 }
 
 func splitEscapedPath(rawPath string, sentinel error) ([]string, bool, error) {
@@ -208,7 +320,7 @@ func parseRouteSegment(rawSegment string, last bool, seen map[string]struct{}) (
 	if decoded == "." || decoded == ".." {
 		return routeSegment{}, fmt.Errorf("dot segment %q", rawSegment)
 	}
-	return routeSegment{kind: routeSegmentStatic, value: decoded}, nil
+	return routeSegment{kind: routeSegmentStatic, value: decoded, rawValue: rawSegment}, nil
 }
 
 func (p routePattern) displayPath() string {
@@ -232,6 +344,17 @@ func (p routePattern) displayPath() string {
 		return path + "/"
 	}
 	return path
+}
+
+// hasParams 报告模式是否包含参数或 catch-all 段。
+// hasParams reports whether the pattern contains param or catch-all segments.
+func (p routePattern) hasParams() bool {
+	for _, segment := range p.segments {
+		if segment.kind == routeSegmentParameter || segment.kind == routeSegmentCatchAll {
+			return true
+		}
+	}
+	return false
 }
 
 func routeDisplayStaticSegment(segment string) string {

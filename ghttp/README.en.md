@@ -294,6 +294,51 @@ ghttp.Route[CreateUserInput, UserOutput](s).
 
 `application/x-www-form-urlencoded` forms bind via explicit `form:"name"` tags; a bindable struct without any `form` tag returns 400 instead of silently binding nothing.
 
+### Lazy Request Body `Body[T]`
+
+Use `ghttp.Body[T]` at the field level (any field name; detected by type, with the
+top-level shorthand `Route[ghttp.Body[T], Resp]`). Binding installs a handle
+without reading the stream or decoding; the first `Decode()` decodes and caches.
+JSON uses goccy/go-json; other Content-Types dispatch through CodecManager.
+
+```go
+type CreateUserReq struct {
+    TenantID string                   `path:"tenantID"`
+    Payload  ghttp.Body[CreateUserPayload]
+    ghttp.Params                      // dynamic access: Path/Query/Header/Cookie/ClientIP/RawBody/Request
+}
+
+func create(ctx context.Context, req CreateUserReq) (UserOutput, error) {
+    payload, err := req.Payload.Decode() // first call decodes and caches
+    if err != nil {
+        return UserOutput{}, ghttp.Err(http.StatusBadRequest, err.Error(), ghttp.WithCause(err))
+    }
+    raw, _ := req.Payload.Raw() // raw bytes, shared with middleware RawBody
+    id, _ := req.PathInt("tenantID")
+    _ = raw
+    return save(id, payload)
+}
+```
+
+- `Body[T].Raw()/Decode()`, `ghttp.RawBody(r)` and `Params.RawBody()` share the same
+  bytes; the stream is read once, and requests that never touch the body pay nothing.
+- Missing `Content-Type` falls back to JSON; XML/plain use the registered codec.
+- `application/x-www-form-urlencoded` fills from the shared postForm cache (same
+  `form`-tag requirement as eager forms); `multipart/form-data` fills from the shared
+  multipart cache (value fields and `FileHeader`), but must be parsed before `RawBody`
+  drains the stream.
+- Middleware can call `ghttp.PostFormValues(r)` / `ghttp.MultipartForm(r, maxMemory)`
+  first and the handler `Decode()` later; both share one parse and one stream read.
+- `MaxBodyBytes` applies on first access (JSON/form/multipart alike) and returns
+  `*http.MaxBytesError` when exceeded.
+- On-demand access: `path, _ := ghttp.CompileJSONPath("$.items[0].title")`, then
+  `path.Extract(raw)` / `path.Unmarshal(raw, &dst)`.
+- Decode errors satisfy `errors.Is(err, ghttp.ErrInvalidBody)`; map the status code
+  yourself in the handler.
+
+> pre-v1.0 breaking change: the eager multipart `Body` field now binds form values
+> only (query values are no longer merged), matching the lazy `Body[T]` semantics.
+
 ### Defaults at a Glance
 
 | Scenario | Default | Override |

@@ -290,6 +290,48 @@ ghttp.Route[CreateUserInput, UserOutput](s).
 
 `application/x-www-form-urlencoded` 表单支持显式 `form:"name"` tag 绑定到 `Body` 结构体字段（标量类型；重复 key 取第一个值）。目标 struct 有可绑定字段但完全没有 `form` tag 时返回 `400 Bad Request`，避免静默空值。
 
+### 惰性请求体 `Body[T]`
+
+字段级使用 `ghttp.Body[T]`（字段名任意，按类型识别；顶层简写为
+`Route[ghttp.Body[T], Resp]`）。绑定期不读流、不反序列化，首次 `Decode()` 才解码并
+缓存；JSON 使用 goccy/go-json，其余 Content-Type 经 CodecManager 派发。
+
+```go
+type CreateUserReq struct {
+    TenantID string                   `path:"tenantID"`
+    Payload  ghttp.Body[CreateUserPayload]
+    ghttp.Params                      // 动态访问:Path/Query/Header/Cookie/ClientIP/RawBody/Request
+}
+
+func create(ctx context.Context, req CreateUserReq) (UserOutput, error) {
+    payload, err := req.Payload.Decode() // 首次调用解码并缓存
+    if err != nil {
+        return UserOutput{}, ghttp.Err(http.StatusBadRequest, err.Error(), ghttp.WithCause(err))
+    }
+    raw, _ := req.Payload.Raw() // 原始字节,与中间件 RawBody 共享同一份
+    id, _ := req.PathInt("tenantID")
+    _ = raw
+    return save(id, payload)
+}
+```
+
+- `Body[T].Raw()/Decode()` 与 `ghttp.RawBody(r)`、`Params.RawBody()` 共享同一份字节，
+  底层流只读一次；从不读 body 的请求零成本。
+- 缺失 `Content-Type` 按 JSON 处理（文档化便利）；XML/plain 等经已注册 codec 解码。
+- `application/x-www-form-urlencoded` 从共享 postForm 缓存填充（与 eager 表单同样
+  要求 `form` tag）；`multipart/form-data` 从共享 multipart 缓存填充（值字段与
+  `FileHeader` 都支持），但必须在 `RawBody` 整读之前解析。
+- middleware 可先 `ghttp.PostFormValues(r)` / `ghttp.MultipartForm(r, maxMemory)`
+  取字段，handler 再 `Decode()`，两者共享同一份解析结果，底层流只读一次。
+- `MaxBodyBytes` 在首次访问时生效（JSON/表单/multipart 一致），超限返回
+  `*http.MaxBytesError`。
+- 按需取值：`path, _ := ghttp.CompileJSONPath("$.items[0].title")`，再
+  `path.Extract(raw)` / `path.Unmarshal(raw, &dst)`。
+- 解码错误可用 `errors.Is(err, ghttp.ErrInvalidBody)` 判断；状态码由 handler 自行映射。
+
+> pre-v1.0 破坏性变更：eager multipart `Body` 字段改为仅绑定表单体（不再合并
+> query 值），与惰性 `Body[T]` 语义一致。
+
 ### 默认值速查
 
 | 场景 | 默认行为 | 显式覆盖 |

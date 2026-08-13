@@ -3,7 +3,9 @@ package ghttp
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
+	"strings"
 )
 
 type routeMatchKind uint8
@@ -24,6 +26,9 @@ type routeMatchResult struct {
 type compiledRoute struct {
 	definition routeDefinition
 	handler    http.Handler
+	// paramPos 记录参数名到模式段索引的映射,供惰性解码按 key 定位。
+	// paramPos maps a param name to its pattern segment index for lazy decoding.
+	paramPos map[string]int
 }
 
 func (r *compiledRoute) extract(path requestPath) (pathParamList, error) {
@@ -40,7 +45,7 @@ func (r *compiledRoute) extract(path requestPath) (pathParamList, error) {
 	for _, segment := range pattern.segments {
 		switch segment.kind {
 		case routeSegmentStatic:
-			if segmentIndex >= path.segments.Len() || path.segments.At(segmentIndex) != segment.value {
+			if segmentIndex >= path.segments.Len() || !rawSegmentMatches(path.RawAt(segmentIndex), segment.value) {
 				return pathParamList{}, fmt.Errorf("%w: path does not match %s", ErrInvalidRequestPath, pattern.path)
 			}
 			segmentIndex++
@@ -48,10 +53,18 @@ func (r *compiledRoute) extract(path requestPath) (pathParamList, error) {
 			if segmentIndex >= path.segments.Len() {
 				return pathParamList{}, fmt.Errorf("%w: path does not match %s", ErrInvalidRequestPath, pattern.path)
 			}
-			params.Add(segment.value, path.segments.At(segmentIndex))
+			value, err := path.DecodeAt(segmentIndex)
+			if err != nil {
+				return pathParamList{}, fmt.Errorf("%w: path does not match %s", ErrInvalidRequestPath, pattern.path)
+			}
+			params.Add(segment.value, value)
 			segmentIndex++
 		case routeSegmentCatchAll:
-			params.Add(segment.value, path.segments.JoinFrom(segmentIndex))
+			value, err := url.PathUnescape(path.RawJoinFrom(segmentIndex))
+			if err != nil {
+				return pathParamList{}, fmt.Errorf("%w: path does not match %s", ErrInvalidRequestPath, pattern.path)
+			}
+			params.Add(segment.value, value)
 			segmentIndex = path.segments.Len()
 		}
 	}
@@ -59,6 +72,41 @@ func (r *compiledRoute) extract(path requestPath) (pathParamList, error) {
 		return pathParamList{}, fmt.Errorf("%w: path does not match %s", ErrInvalidRequestPath, pattern.path)
 	}
 	return params, nil
+}
+
+// validate 校验请求路径是否仍匹配路由结构,不解码参数值。
+// validate checks the request path against the route structure without decoding values.
+// 用于 extractorTerminal 的防御性回退:中间件替换 context 后重新校验已匹配路径。
+// used by the extractorTerminal defensive fallback to re-check the matched path.
+func (r *compiledRoute) validate(path requestPath) error {
+	if r == nil {
+		return fmt.Errorf("%w: route is nil", ErrInvalidRequestPath)
+	}
+	pattern := r.definition.pattern
+	if pattern.trailing != path.trailing {
+		return fmt.Errorf("%w: trailing slash does not match %s", ErrInvalidRequestPath, pattern.path)
+	}
+	segmentIndex := 0
+	for _, segment := range pattern.segments {
+		switch segment.kind {
+		case routeSegmentStatic:
+			if segmentIndex >= path.segments.Len() || !rawSegmentMatches(path.RawAt(segmentIndex), segment.value) {
+				return fmt.Errorf("%w: path does not match %s", ErrInvalidRequestPath, pattern.path)
+			}
+			segmentIndex++
+		case routeSegmentParameter:
+			if segmentIndex >= path.segments.Len() {
+				return fmt.Errorf("%w: path does not match %s", ErrInvalidRequestPath, pattern.path)
+			}
+			segmentIndex++
+		case routeSegmentCatchAll:
+			segmentIndex = path.segments.Len()
+		}
+	}
+	if segmentIndex != path.segments.Len() {
+		return fmt.Errorf("%w: path does not match %s", ErrInvalidRequestPath, pattern.path)
+	}
+	return nil
 }
 
 type routeMux struct {
@@ -87,6 +135,12 @@ func newRouteMux(definitions []routeDefinition) *routeMux {
 			mux.methods[definition.method] = tree
 		}
 		route := &compiledRoute{definition: definition.clone()}
+		route.paramPos = make(map[string]int, len(definition.pattern.segments))
+		for index, segment := range definition.pattern.segments {
+			if segment.kind == routeSegmentParameter || segment.kind == routeSegmentCatchAll {
+				route.paramPos[segment.value] = index
+			}
+		}
 		mux.routes = append(mux.routes, route)
 		tree.insert(route)
 	}
@@ -198,7 +252,19 @@ func (n *routeMuxNode) lookup(path requestPath, index int) *compiledRoute {
 		return nil
 	}
 
-	if child := n.static[path.segments.At(index)]; child != nil {
+	// 静态节点按解码值建索引;请求段通常不含转义,直接用作键。
+	// static nodes are indexed by decoded value; request segments usually carry
+	// no escapes and can be used as keys directly.
+	raw := path.RawAt(index)
+	key := raw
+	if strings.ContainsRune(raw, '%') {
+		decoded, err := url.PathUnescape(raw)
+		if err != nil {
+			return nil
+		}
+		key = decoded
+	}
+	if child := n.static[key]; child != nil {
 		if route := child.lookup(path, index+1); route != nil {
 			return route
 		}

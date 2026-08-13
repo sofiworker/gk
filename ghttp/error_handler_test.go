@@ -299,7 +299,7 @@ func TestServerRoutesExtractorFallbackFailureThroughErrorHandler(t *testing.T) {
 	server.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			r.URL.Path = "/changed-after-match"
-			ctx := context.WithValue(context.Background(), requestStateContextKey{}, requestState{server: server})
+			ctx := context.WithValue(context.Background(), requestStateContextKey{}, &requestState{server: server})
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	})
