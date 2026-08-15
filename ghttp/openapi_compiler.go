@@ -249,7 +249,7 @@ func openAPIResponsesForTerminal(definition routeDefinition, envelope bool) map[
 		if definition.respType != nil && len(definition.produces) > 0 {
 			content := make(map[string]any, len(definition.produces))
 			for _, contentType := range definition.produces {
-				schema := generateSchema(definition.respType)
+				schema := generateSchema(renderTypeArg(definition.respType))
 				if envelope {
 					schema = map[string]any{
 						"type": "object",

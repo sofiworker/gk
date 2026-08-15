@@ -301,6 +301,12 @@ top-level shorthand `Route[ghttp.Body[T], Resp]`). Binding installs a handle
 without reading the stream or decoding; the first `Decode()` decodes and caches.
 JSON uses goccy/go-json; other Content-Types dispatch through CodecManager.
 
+`Decode()` dispatches by Content-Type (the convenience path). For an explicit
+format use `DecodeJSON()` / `DecodeXML()` / `DecodeForm()`, which force their
+format and ignore Content-Type (`DecodeForm` parses multipart as multipart and
+everything else as urlencoded). All methods share one cache; the first call
+(whichever) fixes the format and the result.
+
 ```go
 type CreateUserReq struct {
     TenantID string                   `path:"tenantID"`
@@ -338,6 +344,38 @@ func create(ctx context.Context, req CreateUserReq) (UserOutput, error) {
 
 > pre-v1.0 breaking change: the eager multipart `Body` field now binds form values
 > only (query values are no longer merged), matching the lazy `Body[T]` semantics.
+
+### Explicit Response Format `Render[T]`
+
+By default the response format is negotiated from the `Accept` header and
+`Produces`. To pin the format explicitly, return `ghttp.Render[T]` (an optional
+wrapper; the handler signature shape is unchanged):
+
+```go
+type UserOutput struct {
+    ID   int    `json:"id"`
+    Name string `json:"name"`
+}
+
+func get(ctx context.Context, req Req) (ghttp.Render[UserOutput], error) {
+    u, err := load(req.Path("id"))
+    if err != nil {
+        return ghttp.Render[UserOutput]{}, err
+    }
+    return ghttp.RenderJSON(u), nil // force JSON
+}
+```
+
+- `RenderJSON(data)` forces JSON (goccy); `RenderXML(data)` forces XML;
+  `RenderBytes(data, contentType)` writes raw bytes verbatim (no serialization,
+  for file downloads or custom formats).
+- Explicit formats still **honor the Accept constraint**: a client that
+  explicitly excludes the format gets `406`.
+- `Render[T]` is optional: the zero value behaves like a bare Data (Accept
+  negotiation), and `StatusCoder` / `ResponseHeaderWriter` / Envelope / OpenAPI
+  all apply to the unwrapped Data (not the wrapper).
+- Envelope and Render are orthogonal: Render fixes the format, Envelope fixes
+  the shape — `RenderJSON` + Envelope emits `{"code":0,"msg":"success","data":{...}}`.
 
 ### Defaults at a Glance
 

@@ -296,6 +296,11 @@ ghttp.Route[CreateUserInput, UserOutput](s).
 `Route[ghttp.Body[T], Resp]`）。绑定期不读流、不反序列化，首次 `Decode()` 才解码并
 缓存；JSON 使用 goccy/go-json，其余 Content-Type 经 CodecManager 派发。
 
+`Decode()` 按 Content-Type 自动派发（便捷层）；需要显式声明格式时用
+`DecodeJSON()` / `DecodeXML()` / `DecodeForm()`，它们无视 Content-Type 强制按
+对应格式解码（`DecodeForm` 对 multipart 走 multipart 解析，其余按 urlencoded）。
+所有方法共享同一份缓存，首次调用（无论哪个）决定解码格式与结果。
+
 ```go
 type CreateUserReq struct {
     TenantID string                   `path:"tenantID"`
@@ -331,6 +336,34 @@ func create(ctx context.Context, req CreateUserReq) (UserOutput, error) {
 
 > pre-v1.0 破坏性变更：eager multipart `Body` 字段改为仅绑定表单体（不再合并
 > query 值），与惰性 `Body[T]` 语义一致。
+
+### 显式响应格式 `Render[T]`
+
+默认响应格式由 `Accept` 头与 `Produces` 协商。需要显式钉死格式时，让 handler
+返回 `ghttp.Render[T]`（可选包装，不改变 handler 签名骨架）：
+
+```go
+type UserOutput struct {
+    ID   int    `json:"id"`
+    Name string `json:"name"`
+}
+
+func get(ctx context.Context, req Req) (ghttp.Render[UserOutput], error) {
+    u, err := load(req.Path("id"))
+    if err != nil {
+        return ghttp.Render[UserOutput]{}, err
+    }
+    return ghttp.RenderJSON(u), nil // 强制 JSON
+}
+```
+
+- `RenderJSON(data)` 强制 JSON（goccy）；`RenderXML(data)` 强制 XML；
+  `RenderBytes(data, contentType)` 原始字节直出（不序列化，用于文件下载/自定义格式）。
+- 显式格式仍**尊重 Accept 硬约束**：客户端 `Accept` 明确排除该格式时返回 406。
+- `Render[T]` 是可选包装：零值等价返回裸 Data（走 Accept 协商），`StatusCoder` /
+  `ResponseHeaderWriter` / Envelope / OpenAPI 都作用于解包后的 Data（不是包装本身）。
+- Envelope 与 Render 正交：Render 定「格式」、Envelope 定「形状」，`RenderJSON` +
+  Envelope 输出 `{"code":0,"msg":"success","data":{...}}`。
 
 ### 默认值速查
 

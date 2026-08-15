@@ -88,6 +88,27 @@ func lazyBodyTypeArg(t reflect.Type) reflect.Type {
 	return t
 }
 
+var renderUnwrapperType = reflect.TypeOf((*renderUnwrapper)(nil)).Elem()
+
+// renderTypeArg 从 Render[T] 还原类型参数 T(经由 Data 字段);非 Render[T]
+// 原样返回。
+// renderTypeArg recovers T from Render[T] via its Data field; non-Render types
+// are returned unchanged.
+func renderTypeArg(t reflect.Type) reflect.Type {
+	if t == nil {
+		return nil
+	}
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() == reflect.Struct && t.Implements(renderUnwrapperType) {
+		if f, ok := t.FieldByName("Data"); ok {
+			return f.Type
+		}
+	}
+	return t
+}
+
 func derefType(t reflect.Type) reflect.Type {
 	for t.Kind() == reflect.Ptr {
 		t = t.Elem()

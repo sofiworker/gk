@@ -117,18 +117,58 @@ func (b Body[T]) ContentType() string {
 	return b.src.contentType()
 }
 
-// Decode 按 Content-Type 解码请求体;首次调用执行解码并缓存结果。
+// bodyDecodeKind 表示 Body[T] 的解码格式策略。
+// bodyDecodeKind is the decode-format strategy of Body[T].
+type bodyDecodeKind uint8
+
+const (
+	// bodyDecodeAuto 按 Content-Type 自动派发(便捷层)。
+	// bodyDecodeAuto dispatches by Content-Type (the convenience path).
+	bodyDecodeAuto bodyDecodeKind = iota
+	// bodyDecodeJSON 强制 JSON(goccy),无视 Content-Type。
+	// bodyDecodeJSON forces JSON (goccy), ignoring Content-Type.
+	bodyDecodeJSON
+	// bodyDecodeXML 强制 XML,无视 Content-Type。
+	// bodyDecodeXML forces XML, ignoring Content-Type.
+	bodyDecodeXML
+	// bodyDecodeForm 强制表单:multipart 按 multipart 解析,否则按 urlencoded。
+	// bodyDecodeForm forces a form: multipart parses as multipart, otherwise urlencoded.
+	bodyDecodeForm
+)
+
+// Decode 按 Content-Type 自动派发解码请求体;首次调用执行解码并缓存结果。
 // Decode decodes the body by Content-Type; the first call decodes and caches.
-// JSON 走 goccy,其余类型经 CodecManager 派发;见设计文档“非 JSON body 处理”。
-// JSON uses goccy, other types dispatch through CodecManager; see the design doc.
-func (b Body[T]) Decode() (T, error) {
+// 这是便捷层:JSON 走 goccy,其余类型经 CodecManager 派发,缺失回退 JSON。
+// This is the convenience path: JSON uses goccy, other types dispatch through
+// CodecManager, and a missing Content-Type falls back to JSON.
+// 显式声明格式请用 DecodeJSON/DecodeXML/DecodeForm。所有方法共享同一份缓存,
+// 首次调用(无论哪个方法)决定解码格式与结果。
+// Prefer DecodeJSON/DecodeXML/DecodeForm for an explicit format. All methods
+// share one cache; the first call (whichever) fixes the format and result.
+func (b Body[T]) Decode() (T, error) { return b.decodeWith(bodyDecodeAuto) }
+
+// DecodeJSON 强制按 JSON 解码(goccy),无视 Content-Type;首次调用缓存结果。
+// DecodeJSON forces JSON decoding (goccy), ignoring Content-Type; the first call caches.
+func (b Body[T]) DecodeJSON() (T, error) { return b.decodeWith(bodyDecodeJSON) }
+
+// DecodeXML 强制按 XML 解码,无视 Content-Type;首次调用缓存结果。
+// DecodeXML forces XML decoding, ignoring Content-Type; the first call caches.
+func (b Body[T]) DecodeXML() (T, error) { return b.decodeWith(bodyDecodeXML) }
+
+// DecodeForm 强制按表单解码:multipart 按 multipart 解析,否则按 urlencoded;
+// 首次调用缓存结果。
+// DecodeForm forces form decoding: multipart parses as multipart, otherwise
+// urlencoded; the first call caches.
+func (b Body[T]) DecodeForm() (T, error) { return b.decodeWith(bodyDecodeForm) }
+
+func (b Body[T]) decodeWith(kind bodyDecodeKind) (T, error) {
 	var zero T
 	if b.src == nil {
 		return zero, fmt.Errorf("%w: body is not bound to a request", ErrInvalidBody)
 	}
 	b.src.decodeOnce.Do(func() {
 		var v T
-		if err := b.src.decode(&v); err != nil {
+		if err := b.src.decode(&v, kind); err != nil {
 			b.src.decodeErr = err
 			return
 		}
@@ -140,7 +180,7 @@ func (b Body[T]) Decode() (T, error) {
 	return b.src.decoded.(T), nil
 }
 
-func (s *bodySource) decode(v any) error {
+func (s *bodySource) decode(v any, kind bodyDecodeKind) error {
 	if s.cfg != nil && s.cfg.bodyDecoder != nil {
 		raw, err := s.rawBytes()
 		if err != nil {
@@ -148,6 +188,30 @@ func (s *bodySource) decode(v any) error {
 		}
 		return wrapBodyError(s.cfg.bodyDecoder(bytes.NewReader(raw), s.contentType(), v))
 	}
+	switch kind {
+	case bodyDecodeJSON:
+		raw, err := s.rawBytes()
+		if err != nil {
+			return wrapBodyError(err)
+		}
+		return wrapBodyError(jsonx.Unmarshal(raw, v))
+	case bodyDecodeXML:
+		raw, err := s.rawBytes()
+		if err != nil {
+			return wrapBodyError(err)
+		}
+		return wrapBodyError((&XMLCodec{}).Unmarshal(bytes.NewReader(raw), v))
+	case bodyDecodeForm:
+		if normalizeContentType(s.contentType()) == MIMEMultipartPOSTForm {
+			return s.decodeMultipart(v)
+		}
+		return s.decodeURLEncodedForce(v)
+	default:
+		return s.decodeAuto(v)
+	}
+}
+
+func (s *bodySource) decodeAuto(v any) error {
 	ct := normalizeContentType(s.contentType())
 	switch ct {
 	case MIMEPOSTForm:
@@ -190,6 +254,17 @@ func (s *bodySource) decodeURLEncoded(v any) error {
 	if rv.Kind() == reflect.Ptr && !rv.IsNil() && rv.Elem().Kind() == reflect.Struct {
 		return wrapBodyError(fillFormStruct(post, rv.Elem()))
 	}
+	raw, err := s.rawBytes()
+	if err != nil {
+		return wrapBodyError(err)
+	}
+	return wrapBodyError((&FormCodec{}).Unmarshal(bytes.NewReader(raw), v))
+}
+
+// decodeURLEncodedForce 无条件把 body 字节按 urlencoded 解析,不依赖 Content-Type。
+// decodeURLEncodedForce parses body bytes as urlencoded unconditionally,
+// ignoring Content-Type.
+func (s *bodySource) decodeURLEncodedForce(v any) error {
 	raw, err := s.rawBytes()
 	if err != nil {
 		return wrapBodyError(err)

@@ -160,10 +160,16 @@ err = path.Unmarshal(raw, &dst)                         // extract+goccy 解码�
   handler/validator 映射(文档给示例),框架无法像 eager 一样在绑定期自动写 400。
 - 超过 `MaxBodyBytes` 返回 `*http.MaxBytesError`。
 
-## 非 JSON body 处理
+## 非 JSON body 处理与显式格式
 
 `Body[T].Decode()` 在首次访问时按 Content-Type 派发,规则与现有 eager
 `parseBody` 对齐:
+
+显式声明格式用 `DecodeJSON()` / `DecodeXML()` / `DecodeForm()`,无视
+Content-Type 强制按对应格式解码(`DecodeForm` 对 multipart 走 multipart
+解析,其余按 urlencoded)。所有方法共享 `decodeOnce` 单槽缓存,首次调用
+(无论哪个方法)决定解码格式与结果;`WithBodyDecoder` 逃生口仍对所有方法
+一票否决。
 
 | Content-Type | 行为 |
 | --- | --- |

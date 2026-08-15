@@ -439,7 +439,19 @@ func (c *routeBuilderCore) writeTypedResponse(w http.ResponseWriter, r *http.Req
 	if status == 0 {
 		status = http.StatusOK
 	}
-	if sc, ok := resp.(StatusCoder); ok {
+
+	// 解包 Render[T]:显式格式与 StatusCoder/ResponseHeaderWriter 都作用在
+	// 解包后的 data 上。
+	// unwrap Render[T]: the explicit format and StatusCoder/ResponseHeaderWriter
+	// apply to the unwrapped data.
+	data := resp
+	var rfmt renderFormat
+	var rct string
+	if ru, ok := resp.(renderUnwrapper); ok {
+		data, rfmt, rct = ru.unwrapRender()
+	}
+
+	if sc, ok := data.(StatusCoder); ok {
 		if code := sc.StatusCode(); code != 0 {
 			status = code
 		}
@@ -448,14 +460,31 @@ func (c *routeBuilderCore) writeTypedResponse(w http.ResponseWriter, r *http.Req
 		c.writeError(w, r, http.StatusInternalServerError, Err(http.StatusInternalServerError, "invalid response status"))
 		return
 	}
-	if hw, ok := resp.(ResponseHeaderWriter); ok {
+	if hw, ok := data.(ResponseHeaderWriter); ok {
 		hw.WriteResponseHeaders(w.Header())
 	}
 	for _, h := range c.responseHeaders {
 		w.Header().Set(h.name, h.value)
 	}
-	contentType, codec, ok := negotiateRouteCodec(w, r, server, c.produces, c.codecs)
+
+	// 显式格式:renderRaw 直出字节;renderJSON/XML 限定候选后仍尊重 Accept。
+	// explicit format: renderRaw writes bytes verbatim; renderJSON/XML narrow
+	// the candidate set but still honor Accept.
+	var contentType string
+	var codec Codec
+	var ok bool
+	if rfmt != renderAuto {
+		contentType, codec, ok = c.resolveExplicitFormat(w, r, server, rfmt, rct)
+	} else {
+		contentType, codec, ok = negotiateRouteCodec(w, r, server, c.produces, c.codecs)
+	}
 	if !ok {
+		return
+	}
+	if rfmt == renderRaw {
+		w.Header().Set("Content-Type", contentType)
+		w.WriteHeader(status)
+		_, _ = w.Write(data.([]byte))
 		return
 	}
 	if !responseHasBody(status) {
@@ -463,12 +492,42 @@ func (c *routeBuilderCore) writeTypedResponse(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if server.envelope != nil {
-		server.envelope(w, r, status, resp, nil, contentType, codec)
+		server.envelope(w, r, status, data, nil, contentType, codec)
 		return
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(status)
-	_ = codec.Marshal(w, resp)
+	_ = codec.Marshal(w, data)
+}
+
+// resolveExplicitFormat 按 Render[T] 的显式格式决定 Content-Type 与 codec,
+// 仍尊重 Accept 硬约束(客户端明确排除该格式时写 406 并返回 !ok)。
+// resolveExplicitFormat picks the Content-Type and codec for Render[T]'s
+// explicit format, still honoring Accept (a client that explicitly excludes
+// the format gets a 406 written and !ok returned).
+func (c *routeBuilderCore) resolveExplicitFormat(w http.ResponseWriter, r *http.Request, server *Server, rfmt renderFormat, rct string) (string, Codec, bool) {
+	switch rfmt {
+	case renderRaw:
+		ct := rct
+		if ct == "" {
+			ct = MIMEPlain
+		}
+		return ct, nil, true
+	case renderJSON:
+		ct, codec, ok := selectResponseCodec(server, r.Header.Get("Accept"), []string{MIMEJSON}, nil)
+		if !ok {
+			writeError(w, r, server, http.StatusNotAcceptable, Err(http.StatusNotAcceptable, http.StatusText(http.StatusNotAcceptable)))
+		}
+		return ct, codec, ok
+	case renderXML:
+		ct, codec, ok := selectResponseCodec(server, r.Header.Get("Accept"), []string{MIMEXML}, nil)
+		if !ok {
+			writeError(w, r, server, http.StatusNotAcceptable, Err(http.StatusNotAcceptable, http.StatusText(http.StatusNotAcceptable)))
+		}
+		return ct, codec, ok
+	default:
+		return negotiateRouteCodec(w, r, server, c.produces, c.codecs)
+	}
 }
 
 // coerceRouteValidator 将 core 上的未类型化 validator 收敛为具体 Req 类型。
@@ -512,7 +571,13 @@ func registerTypedHandler[Req, Resp any](core *routeBuilderCore, input compiledI
 		core.panicSetupError(err)
 	}
 	if err := core.resolveProduces(); err != nil {
-		core.panicSetupError(err)
+		// Render[T] 显式声明格式,不依赖 produces 列表;仅豁免 produces 缺失,
+		// produces 含未注册类型仍报错。
+		// Render[T] declares its format explicitly, so an empty produces is
+		// allowed; a produces with unknown types still errors.
+		if err != ErrRouteProducesRequired || !reflect.TypeFor[Resp]().Implements(renderUnwrapperType) {
+			core.panicSetupError(err)
+		}
 	}
 	core.resolveConsumes()
 	validator, err := coerceRouteValidator[Req](core.validator)
@@ -550,7 +615,13 @@ func registerNoInputHandler[Resp any](core *routeBuilderCore, handler NoInputHan
 		core.panicSetupError(err)
 	}
 	if err := core.resolveProduces(); err != nil {
-		core.panicSetupError(err)
+		// Render[T] 显式声明格式,不依赖 produces 列表;仅豁免 produces 缺失,
+		// produces 含未注册类型仍报错。
+		// Render[T] declares its format explicitly, so an empty produces is
+		// allowed; a produces with unknown types still errors.
+		if err != ErrRouteProducesRequired || !reflect.TypeFor[Resp]().Implements(renderUnwrapperType) {
+			core.panicSetupError(err)
+		}
 	}
 	core.resolveConsumes()
 	h := buildNoInputHandler(core, handler)

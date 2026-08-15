@@ -992,3 +992,111 @@ func TestBodyNeverReadDoesNotTriggerLimit(t *testing.T) {
 		t.Errorf("body stream was read %d bytes before any access", n)
 	}
 }
+
+func TestBodyDecodeJSONIgnoresContentType(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	Route[Body[bodyPayload], testOutput](app).
+		POST("/p").
+		To(func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
+			p, err := b.DecodeJSON()
+			if err != nil {
+				return testOutput{}, err
+			}
+			if p.Name != "alice" {
+				t.Errorf("name = %q", p.Name)
+			}
+			return testOutput{}, nil
+		})
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/p", strings.NewReader(`{"name":"alice"}`))
+	r.Header.Set("Content-Type", MIMEXML)
+	app.ServeHTTP(rec, r)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestBodyDecodeXMLIgnoresContentType(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	Route[Body[bodyPayload], testOutput](app).
+		POST("/p").
+		To(func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
+			p, err := b.DecodeXML()
+			if err != nil {
+				return testOutput{}, err
+			}
+			if p.Name != "alice" {
+				t.Errorf("name = %q", p.Name)
+			}
+			return testOutput{}, nil
+		})
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/p", strings.NewReader(`<bodyPayload><Name>alice</Name></bodyPayload>`))
+	r.Header.Set("Content-Type", MIMEJSON)
+	app.ServeHTTP(rec, r)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestBodyDecodeFormIgnoresContentType(t *testing.T) {
+	app := New(WithProduces(MIMEJSON))
+	Route[Body[formPayload], testOutput](app).
+		POST("/p").
+		To(func(ctx context.Context, b Body[formPayload]) (testOutput, error) {
+			p, err := b.DecodeForm()
+			if err != nil {
+				return testOutput{}, err
+			}
+			if p.Name != "alice" || p.Age != 7 {
+				t.Errorf("payload = %+v", p)
+			}
+			return testOutput{}, nil
+		})
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/p", strings.NewReader("name=alice&age=7"))
+	r.Header.Set("Content-Type", MIMEJSON)
+	app.ServeHTTP(rec, r)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestBodyDecodeSharesCacheAcrossKinds(t *testing.T) {
+	// 首次 DecodeJSON 决定格式与结果;后续 Decode() 命中缓存,不会按
+	// Content-Type(XML)重新解码而失败。
+	// the first DecodeJSON fixes the format and result; a later Decode() hits
+	// the cache instead of re-decoding by Content-Type (XML) and failing.
+	app := New(WithProduces(MIMEJSON))
+	Route[Body[bodyPayload], testOutput](app).
+		POST("/p").
+		To(func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
+			a, err := b.DecodeJSON()
+			if err != nil {
+				return testOutput{}, err
+			}
+			c, err := b.Decode()
+			if err != nil {
+				return testOutput{}, err
+			}
+			if a != c || a.Name != "alice" {
+				t.Errorf("DecodeJSON = %+v, Decode = %+v", a, c)
+			}
+			return testOutput{}, nil
+		})
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/p", strings.NewReader(`{"name":"alice"}`))
+	r.Header.Set("Content-Type", MIMEXML)
+	app.ServeHTTP(rec, r)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
