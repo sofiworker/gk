@@ -17,7 +17,8 @@
 
 | 层 | 职责 | 包含（现状） | 依赖规则 |
 |----|------|--------------|----------|
-| **基础契约层** | 跨包复用的最小公共概念：错误、重试、反射工具、编解码原语 | `gerr`、`gretry`、`grx`、`gcompress`、`gcrypt` | 不依赖任何 `g*` 包（只依赖标准库/第三方）；**允许被上层包引用** |
+| **基础契约层·契约组** | 跨包复用的最小公共概念：错误、重试、反射工具、编解码原语 | `gerr`、`gretry`、`grx`、`gcompress`、`gcrypt` | 不依赖任何 `g*` 包（只依赖标准库/第三方）；**允许被上层包引用** |
+| **基础契约层·运行时原语组** | 跨能力层复用的网络事件运行时：事件引擎、时间轮、缓冲原语 | `gpoller` | 仅依赖标准库 + `x/sys`；不含网络语义；**允许被上层包引用** |
 | **能力层** | 面向使用者的独立能力：HTTP、日志、缓存、配置、服务发现、DNS、SQL | `ghttp`、`glog`、`gcache`、`gconfig`、`gsd`、`gresolver`、`gsql`、`gnet/*`、`gotel` | 只依赖基础契约层 + 标准库/第三方；**能力层之间禁止互相 import** |
 | **适配/拼接层** | 显式胶水：把多个能力层组合起来，或适配第三方实现 | 子包形式（如未来的 `ghttp/adapters/*`）、用户业务代码 | 可以依赖多个能力层；不得反向污染能力层核心 |
 
@@ -77,6 +78,7 @@
 | 重试/退避/抖动 | `gretry`（`Do`/`NextDelay`/`Wait`） | **已收敛**：ghttp client 与 gsd 均复用 `gretry.NextDelay/Wait`，不再各自实现 |
 | 日志接口 | 能力层各自定义小接口（如 `ghttp.Logger`） | ghttp 定义接口、用户注入；glog 核心已去除 otel 硬依赖，改为可选 `WithTraceExtractor` |
 | 反射工具 | `grx` | 保持独立基础层 |
+| 网络事件运行时原语 | `gpoller` | 新增（2026-08-16 修订）；ghttp 与 gnet 均须依赖复用，不得各自实现 epoll/kqueue 循环 |
 
 ### 已完成的收敛（2026-08-07）
 
@@ -88,6 +90,7 @@
 - `gsql` 核心不再依赖 glog：默认日志改用标准库实现，保留 `Logger` 接口由用户注入 glog 适配器。
 - `gotel` 移除未实现的 `OTELProvider` 空壳与死代码，收敛为纯可观测性抽象（不依赖 OpenTelemetry）。
 - CI 依赖方向检查落地：`scripts/check-deps.sh`（能力层互引即失败，gnet 族内允许），接入 Makefile `check-deps` 与 GitHub Actions。
+- `gpoller` 入基础契约层「运行时原语组」（2026-08-16 修订，提案见 `2026-08-16-gk-module-dependency-policy-gpoller-amendment.md`），check-deps.sh 同步其依赖面约束。
 
 ### 待收敛
 
