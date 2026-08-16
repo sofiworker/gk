@@ -21,7 +21,7 @@ A collection of Go libraries for building robust applications; packages are inde
 - [gerr](gerr/README.en.md) - Errors
 - [ghttp](ghttp/README.en.md) - HTTP Client & Server
 - [glog](glog/README.en.md) - Logging
-- [gnet](gnet/README.en.md) - Networking & Packet Analysis
+- [gnet](gnet/README.en.md) - Networking foundation: reactor server, capture, packet analysis & forwarding
 - [gotel](gotel/README.en.md) - Observability abstractions
 - [gresolver](gresolver/README.en.md) - DNS Resolver
 - [gretry](gretry/README.en.md) - Retry Logic

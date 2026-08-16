@@ -22,7 +22,7 @@
 - [gerr](gerr/README.md) - 错误
 - [ghttp](ghttp/README.md) - HTTP 客户端与服务端
 - [glog](glog/README.md) - 日志
-- [gnet](gnet/README.md) - 网络与报文分析
+- [gnet](gnet/README.md) - 网络底座：reactor 服务器、抓包、报文解析与转发
 - [gotel](gotel/README.md) - OpenTelemetry 抽象
 - [gresolver](gresolver/README.md) - DNS 解析
 - [gretry](gretry/README.md) - 重试逻辑
