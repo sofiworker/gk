@@ -2,6 +2,7 @@ package capture
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -35,6 +36,8 @@ type Config struct {
 	Filter      Filter        // BPF 过滤器配置
 
 	LinkType uint32 // pcap 网络类型/pcapng 接口 link type，默认 1(ETHERNET)
+
+	expr string // tcpdump 表达式（WithExpr 设置，New 时编译）
 
 	// Linux 性能选项
 	TPacketV3 bool // 启用 PACKET_RX_RING
@@ -76,6 +79,13 @@ var (
 // New 创建捕获器，未启动读取，需调用 Run。
 func New(cfg Config) (*Capture, error) {
 	cfg = normalizeConfig(cfg)
+	if cfg.expr != "" {
+		insns, err := CompileExpr(cfg.expr, int(cfg.LinkType))
+		if err != nil {
+			return nil, err
+		}
+		cfg.Filter.Instructions = append(cfg.Filter.Instructions, insns...)
+	}
 
 	if len(cfg.Interfaces) == 0 {
 		return nil, fmt.Errorf("capture: at least one interface required")
@@ -146,6 +156,28 @@ func (c *Capture) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// ctx 取消：关闭全部 handle 与 writer，使阻塞的 ReadPacket 返回
+	//（ErrHandleClosed/写错误），循环随之退出。
+	// ctx 取消：仅关闭捕获 handle（使阻塞读退出），writer 由 Run 收尾
+	// 统一关闭，避免写路径与提前关闭的竞态。
+	stop := make(chan struct{})
+	var stopOnce sync.Once
+	stopHandles := func() {
+		stopOnce.Do(func() {
+			for _, src := range c.sources {
+				_ = src.handle.Close()
+			}
+			close(stop)
+		})
+	}
+	go func() {
+		select {
+		case <-ctx.Done():
+			stopHandles()
+		case <-stop:
+		}
+	}()
+
 	errCh := make(chan error, len(c.sources))
 	var wg sync.WaitGroup
 
@@ -166,6 +198,7 @@ func (c *Capture) Run(ctx context.Context) error {
 
 	wg.Wait()
 	close(errCh)
+	stopHandles()
 
 	for err := range errCh {
 		if err != nil {
@@ -189,6 +222,9 @@ func (c *Capture) captureLoop(ctx context.Context, src source) error {
 		if err != nil {
 			if err == rawcap.ErrHandleClosed {
 				return nil
+			}
+			if errors.Is(err, rawcap.ErrReadTimeout) {
+				continue // 读超时：可重试
 			}
 			return fmt.Errorf("capture: read %s: %w", src.name, err)
 		}

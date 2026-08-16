@@ -48,6 +48,16 @@ func WithFilterInstructions(instructions []bpf.Instruction) func(*Config) {
 	}
 }
 
+// WithExpr 用 tcpdump 表达式设置过滤器（如 "tcp port 80"），
+// New 时编译为 BPF 指令。仅支持 EN10MB 链路类型。
+//
+// WithExpr sets the filter from a tcpdump expression (e.g. "tcp port 80"),
+// compiled into BPF instructions by New. Only EN10MB link types are
+// supported.
+func WithExpr(expr string) func(*Config) {
+	return func(c *Config) { c.expr = expr }
+}
+
 // WithWriter 指定自定义 writer。
 func WithWriter(w io.Writer) func(*Config) {
 	return func(c *Config) {
