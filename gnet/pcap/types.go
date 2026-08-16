@@ -62,10 +62,6 @@ func (h *FileHeader) TimestampResolution() time.Duration {
 	}
 }
 
-func (h *PacketHeader) GetTimestamp() time.Time {
-	return time.Unix(int64(h.TsSec), int64(h.TsUsec)*1000).UTC()
-}
-
 func (h *PacketHeader) SetTimestamp(ts time.Time, resolution time.Duration) {
 	h.TsSec = uint32(ts.Unix())
 	switch resolution {
@@ -86,3 +82,9 @@ func (p *Packet) OriginalLength() int {
 	}
 	return int(p.Header.OrigLen)
 }
+
+// maxCapturedLength 是单包捕获长度的分配上限（远超真实 snaplen，
+// 防恶意文件头触发巨额分配）。
+// maxCapturedLength caps the per-packet captured length for allocation
+// (far beyond real snaplens; guards hostile headers).
+const maxCapturedLength = 256 << 20

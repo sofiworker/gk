@@ -7,9 +7,12 @@ import (
 )
 
 // ErrNotSupported 表示当前平台未实现地址操作。
+// ErrNotSupported means address operations are not implemented on this
+// platform.
 var ErrNotSupported = errors.New("addr: not supported on this platform")
 
 // Address 描述接口上的一个 IP 地址。
+// Address describes one IP address on an interface.
 type Address struct {
 	IfIndex int
 	IfName  string
@@ -21,6 +24,7 @@ type Address struct {
 }
 
 // List 列出指定网卡的地址（空字符串表示全部）。
+// List lists the addresses of an interface (empty string means all).
 func List(iface string) ([]Address, error) {
 	addrs, err := list(iface)
 	if err != nil {
@@ -30,6 +34,7 @@ func List(iface string) ([]Address, error) {
 }
 
 // Add 在指定接口上添加地址。
+// Add adds an address to an interface.
 func Add(a Address) error {
 	if a.IPNet == nil {
 		return fmt.Errorf("addr: IPNet is required")
@@ -38,6 +43,7 @@ func Add(a Address) error {
 }
 
 // Delete 删除指定接口上的地址。
+// Delete removes an address from an interface.
 func Delete(a Address) error {
 	if a.IPNet == nil {
 		return fmt.Errorf("addr: IPNet is required")

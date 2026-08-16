@@ -51,13 +51,13 @@ type tcpDecoder struct{}
 
 func (tcpDecoder) Decode(data []byte) (Layer, error) {
 	if len(data) < 20 {
-		return nil, fmt.Errorf("layers: tcp segment too short: %d", len(data))
+		return nil, fmt.Errorf("%w: tcp segment too short: %d", ErrTruncated, len(data))
 	}
 
 	dataOffset := data[12] >> 4
 	headerLen := int(dataOffset) * 4
 	if headerLen < 20 || len(data) < headerLen {
-		return nil, fmt.Errorf("layers: invalid tcp header length %d", headerLen)
+		return nil, fmt.Errorf("%w: invalid tcp header length %d", ErrTruncated, headerLen)
 	}
 
 	nsFlag := uint16(data[12] & 0x01)

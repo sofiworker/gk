@@ -40,7 +40,7 @@ type ethernetDecoder struct{}
 
 func (ethernetDecoder) Decode(data []byte) (Layer, error) {
 	if len(data) < 14 {
-		return nil, fmt.Errorf("layers: ethernet frame too short: %d", len(data))
+		return nil, fmt.Errorf("%w: ethernet frame too short: %d", ErrTruncated, len(data))
 	}
 
 	dst := make(net.HardwareAddr, 6)

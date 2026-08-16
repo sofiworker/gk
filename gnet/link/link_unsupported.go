@@ -2,10 +2,11 @@
 
 package link
 
-import (
-	"fmt"
-)
+import "errors"
+
+// ErrNotSupported 表示当前平台未实现链路操作。
+var ErrNotSupported = errors.New("link: not supported on this platform")
 
 func listLinks() ([]Link, error) {
-	return nil, fmt.Errorf("link: platform not supported")
+	return nil, ErrNotSupported
 }

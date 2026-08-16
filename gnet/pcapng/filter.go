@@ -1,6 +1,7 @@
 package pcapng
 
 import (
+	"errors"
 	"io"
 	"time"
 
@@ -8,7 +9,11 @@ import (
 )
 
 // FilterCopy 读取 pcapng 数据，按 BPF 过滤 EPB 后写入新的 pcapng，返回保留的包数。
-// 仅处理单 Section 的常见用法；遇到新的 SectionHeaderBlock 会重置接口映射。
+// 仅支持单 Section 文件；多 Section 输入请按 section 分段处理（writer
+// 不提供多 Section 输出）。
+// FilterCopy reads pcapng, filters EPBs by BPF, writes a new pcapng, and
+// returns the kept packet count. Single-section files only; split
+// multi-section inputs per section (the writer has no multi-section output).
 func FilterCopy(r io.Reader, w io.Writer, prog []bpf.Instruction) (int, error) {
 	reader := NewReader(r)
 	writer, err := NewWriter(w)
@@ -28,7 +33,7 @@ func FilterCopy(r io.Reader, w io.Writer, prog []bpf.Instruction) (int, error) {
 	for {
 		pkt, err := reader.ReadPacket()
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				return count, nil
 			}
 			return count, err

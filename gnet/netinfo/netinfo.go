@@ -3,6 +3,7 @@ package netinfo
 import (
 	"fmt"
 	"net"
+	"strconv"
 
 	"github.com/sofiworker/gk/gnet/addr"
 	"github.com/sofiworker/gk/gnet/link"
@@ -45,7 +46,11 @@ func Interfaces() ([]Interface, error) {
 	}
 	addrByIf := groupAddrByIf(addrList)
 
-	routes, _ := route.List(0)
+	// 路由失败不致命：网关缺失但其余视图仍可用。
+	routes, err := route.List(0)
+	if err != nil {
+		routes = nil
+	}
 	routeByIf := groupRouteByIf(routes)
 
 	var out []Interface
@@ -74,7 +79,9 @@ func Interfaces() ([]Interface, error) {
 			iface.BusInfo = l.Ethtool.BusInfo
 		}
 
-		if addrs := addrByIf[l.Name]; len(addrs) > 0 {
+		if addrs := addrByIf[strconv.Itoa(l.Index)]; len(addrs) > 0 {
+			iface.Addresses, iface.IPv4Addrs, iface.IPv6Addrs, iface.Subnets = convertAddrs(addrs)
+		} else if addrs := addrByIf[l.Name]; len(addrs) > 0 {
 			iface.Addresses, iface.IPv4Addrs, iface.IPv6Addrs, iface.Subnets = convertAddrs(addrs)
 		}
 
@@ -93,7 +100,13 @@ func groupAddrByIf(addrs []addr.Address) map[string][]addr.Address {
 		if a.IfName == "" {
 			continue
 		}
-		m[a.IfName] = append(m[a.IfName], a)
+		// addr 的 IfName 与 link 的 Name 在 Windows 下分别是 GUID 与友好名，
+		// 匹配改用 IfIndex（link 侧提供 Index）。
+		if a.IfIndex != 0 {
+			m[strconv.Itoa(a.IfIndex)] = append(m[strconv.Itoa(a.IfIndex)], a)
+		} else {
+			m[a.IfName] = append(m[a.IfName], a)
+		}
 	}
 	return m
 }

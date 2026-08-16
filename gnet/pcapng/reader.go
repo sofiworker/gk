@@ -148,10 +148,13 @@ func (r *Reader) NextBlock() (Block, error) {
 
 	default:
 		totalLength := r.order.Uint32(hdr[4:8])
-		if _, err := r.readBody(totalLength, nil); err != nil {
+		body, err := r.readBody(totalLength, nil)
+		if err != nil {
 			return nil, err
 		}
-		return nil, fmt.Errorf("pcapng: unsupported block type %d", blockType)
+		// 未识别的标准块（NRB/ISB/SPB/PB/DSB 等）与自定义块：
+		// 原样返回供调用方跳过/透传，不中断遍历。
+		return &UnknownBlock{Type: blockType, Body: body}, nil
 	}
 }
 
@@ -192,6 +195,10 @@ func (r *Reader) readBody(totalLength uint32, prefix []byte) ([]byte, error) {
 	bodyLen := int(totalLength) - 8
 	if bodyLen < len(prefix) {
 		return nil, ErrInvalidBlockLength
+	}
+	// 恶意/损坏块防护：分配前拦截超大块长。
+	if bodyLen > maxBlockLength {
+		return nil, fmt.Errorf("%w: block length %d exceeds limit", ErrInvalidBlockLength, bodyLen)
 	}
 	body := make([]byte, bodyLen)
 	copy(body, prefix)

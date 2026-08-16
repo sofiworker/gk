@@ -25,7 +25,7 @@ type icmpDecoder struct{}
 
 func (icmpDecoder) Decode(data []byte) (Layer, error) {
 	if len(data) < 4 {
-		return nil, fmt.Errorf("layers: icmp packet too short: %d", len(data))
+		return nil, fmt.Errorf("%w: icmp packet too short: %d", ErrTruncated, len(data))
 	}
 	rest := append([]byte(nil), data[4:]...)
 	return &ICMP{

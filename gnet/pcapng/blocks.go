@@ -12,10 +12,29 @@ const (
 	EnhancedPacketBlockType       BlockType = 0x00000006
 )
 
+// pcapng 规范：SHB 的 Byte-Order Magic 字段字节序列固定，
+// 1A 2B 3C 4D 表示后续字段为大端，4D 3C 2B 1A 表示小端。
 const (
-	ByteOrderMagicLittle uint32 = 0x1A2B3C4D
-	ByteOrderMagicBig    uint32 = 0x4D3C2B1A
+	ByteOrderMagicBig    uint32 = 0x1A2B3C4D
+	ByteOrderMagicLittle uint32 = 0x4D3C2B1A
 )
+
+// maxBlockLength 是单块分配上限（远超真实捕获块，防恶意文件）。
+// maxBlockLength caps per-block allocation (far beyond real captures;
+// guards hostile files).
+const maxBlockLength = 256 << 20
+
+// UnknownBlock 是未识别的块类型（原样保留，供跳过或透传）。
+// UnknownBlock is an unrecognized block type (kept raw for skipping or
+// passthrough).
+type UnknownBlock struct {
+	Type BlockType
+	Body []byte
+}
+
+// BlockType 实现 Block。
+// BlockType implements Block.
+func (u *UnknownBlock) BlockType() BlockType { return u.Type }
 
 type Option struct {
 	Code  uint16

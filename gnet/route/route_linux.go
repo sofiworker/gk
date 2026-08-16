@@ -40,6 +40,13 @@ func familyOrAll(fam int) int {
 }
 
 func convertRoutes(routes []netlink.Route) []Route {
+	// 一次性建立 index→name 映射填充 IfName。
+	nameByIndex := map[int]string{}
+	if links, err := netlink.LinkList(); err == nil {
+		for _, l := range links {
+			nameByIndex[l.Attrs().Index] = l.Attrs().Name
+		}
+	}
 	out := make([]Route, 0, len(routes))
 	for _, r := range routes {
 		out = append(out, Route{
@@ -47,6 +54,7 @@ func convertRoutes(routes []netlink.Route) []Route {
 			Src:      r.Src,
 			Gw:       r.Gw,
 			IfIndex:  r.LinkIndex,
+			IfName:   nameByIndex[r.LinkIndex],
 			Table:    r.Table,
 			Priority: r.Priority,
 			Protocol: int(r.Protocol),

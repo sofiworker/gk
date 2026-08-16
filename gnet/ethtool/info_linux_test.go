@@ -2,7 +2,10 @@
 
 package ethtool
 
-import "testing"
+import (
+	"testing"
+	"unsafe"
+)
 
 func TestParseSpeed(t *testing.T) {
 	cases := []struct {
@@ -24,6 +27,11 @@ func TestParseSpeed(t *testing.T) {
 			name:     "unknown low",
 			cmd:      ethtoolCmd{Speed: speedUnknown, SpeedHi: 0},
 			expected: unknownSpeedMbps,
+		},
+		{
+			name:     "valid high ffff",
+			cmd:      ethtoolCmd{Speed: 1000, SpeedHi: speedUnknown},
+			expected: int64(uint32(speedUnknown)<<16 | 1000),
 		},
 		{
 			name:     "zero",
@@ -62,5 +70,16 @@ func TestParseDuplex(t *testing.T) {
 				t.Fatalf("parseDuplex() = %s, want %s", got, tc.expected)
 			}
 		})
+	}
+}
+
+// TestStructLayouts 断言与内核结构体的布局不变量（防字段漂移）。
+// TestStructLayouts pins the kernel struct layouts against drift.
+func TestStructLayouts(t *testing.T) {
+	if sz := unsafe.Sizeof(ifreqData{}); sz != 40 {
+		t.Fatalf("ifreqData size = %d, want 40", sz)
+	}
+	if sz := unsafe.Sizeof(ethtoolCmd{}); sz != 44 {
+		t.Fatalf("ethtoolCmd size = %d, want 44", sz)
 	}
 }

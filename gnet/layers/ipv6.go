@@ -39,7 +39,7 @@ type ipv6Decoder struct{}
 
 func (ipv6Decoder) Decode(data []byte) (Layer, error) {
 	if len(data) < IPv6HeaderLen {
-		return nil, ErrHeaderTooShort
+		return nil, fmt.Errorf("%w: %w", ErrTruncated, ErrHeaderTooShort)
 	}
 
 	version := data[0] >> 4

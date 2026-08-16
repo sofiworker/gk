@@ -13,13 +13,13 @@ func list(iface string) ([]Address, error) {
 	if iface != "" {
 		link, err := netlink.LinkByName(iface)
 		if err != nil {
-			return nil, fmt.Errorf("link by name: %w", err)
+			return nil, fmt.Errorf("addr: link by name: %w", err)
 		}
 		links = []netlink.Link{link}
 	} else {
 		all, err := netlink.LinkList()
 		if err != nil {
-			return nil, fmt.Errorf("link list: %w", err)
+			return nil, fmt.Errorf("addr: link list: %w", err)
 		}
 		links = all
 	}
@@ -28,7 +28,7 @@ func list(iface string) ([]Address, error) {
 	for _, l := range links {
 		addrs, err := netlink.AddrList(l, netlink.FAMILY_ALL)
 		if err != nil {
-			return nil, fmt.Errorf("addr list: %w", err)
+			return nil, fmt.Errorf("addr: addr list: %w", err)
 		}
 		for _, na := range addrs {
 			out = append(out, fromNetlinkAddr(l.Attrs(), na))
@@ -65,7 +65,7 @@ func linkByAddr(a Address) (netlink.Link, error) {
 	if a.IfName != "" {
 		link, err := netlink.LinkByName(a.IfName)
 		if err != nil {
-			return nil, fmt.Errorf("link by name: %w", err)
+			return nil, fmt.Errorf("addr: link by name: %w", err)
 		}
 		return link, nil
 	}

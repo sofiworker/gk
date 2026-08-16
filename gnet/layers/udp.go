@@ -25,7 +25,7 @@ type udpDecoder struct{}
 
 func (udpDecoder) Decode(data []byte) (Layer, error) {
 	if len(data) < 8 {
-		return nil, fmt.Errorf("layers: udp datagram too short: %d", len(data))
+		return nil, fmt.Errorf("%w: udp datagram too short: %d", ErrTruncated, len(data))
 	}
 
 	length := binary.BigEndian.Uint16(data[4:6])

@@ -16,5 +16,7 @@ func NewFileWriter(path string, opts ...WriterOption) (*Writer, func() error, er
 		_ = f.Close()
 		return nil, nil, err
 	}
-	return w, f.Close, nil
+	// closer 走 Writer.Close：先 Flush 缓冲再关文件。
+	// The closer goes through Writer.Close: flush buffers before closing.
+	return w, w.Close, nil
 }

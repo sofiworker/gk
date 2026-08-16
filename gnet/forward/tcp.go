@@ -20,15 +20,14 @@ type ProtocolAwareBridge struct {
 	closed     bool
 
 	// 协议处理相关字段
-	byteOrder       binary.ByteOrder // 字节序配置
-	protocolHandler ProtocolHandler  // 协议处理器
+	protocolHandler ProtocolHandler // 协议处理器
 }
 
 // TCPConfig 桥接配置
 type TCPConfig struct {
 	BufferSize int           // 缓冲区大小
 	Logger     *log.Logger   // 日志记录器
-	Timeout    time.Duration // 超时时间
+	Timeout    time.Duration // 读空闲超时：超时后断开该方向
 }
 
 // ProtocolHandler 协议处理器接口
@@ -47,10 +46,14 @@ const (
 	RemoteToLocal
 )
 
-// ByteOrderConfig 字节序配置
+// ByteOrderConfig 字节序配置。注意：当前仅 ProtocolHandler 生效；
+// 字节序字段为预留 API（规划用于自动大小端转换），设置后暂不改变行为。
+// ByteOrderConfig holds byte-order configuration. Note: currently only
+// ProtocolHandler takes effect; the byte-order fields are reserved API
+// (planned for automatic endian conversion) and do not change behavior yet.
 type ByteOrderConfig struct {
-	LocalToRemoteOrder binary.ByteOrder // 本地到远程的字节序
-	RemoteToLocalOrder binary.ByteOrder // 远程到本地的字节序
+	LocalToRemoteOrder binary.ByteOrder // 本地到远程的字节序（预留）
+	RemoteToLocalOrder binary.ByteOrder // 远程到本地的字节序（预留）
 	ProtocolHandler    ProtocolHandler  // 协议处理器
 }
 
@@ -65,7 +68,6 @@ func NewProtocolAwareBridge(localConn, remoteConn net.Conn, config TCPConfig, by
 		remoteConn: remoteConn,
 		bufferSize: bufSize,
 		logger:     config.Logger,
-		byteOrder:  binary.BigEndian, // 默认大端序
 		timeout:    config.Timeout,
 	}
 
@@ -194,11 +196,25 @@ func (b *ProtocolAwareBridge) forwardWithProtocol(src, dst net.Conn, direction D
 		n, err := src.Read(buffer)
 		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				continue
+				// 读超时 = 该方向空闲超时：断开该方向（半关闭对端）。
+				// Read timeout = idle timeout for this direction: tear it
+				// down (half-close the peer).
+				b.logger.Printf("Idle timeout, closing direction: %v", direction)
+				halfClose(dst)
+				break
 			}
-			if err != io.EOF && !b.closed {
+			b.mu.Lock()
+			closed := b.closed
+			b.mu.Unlock()
+			if err != io.EOF && !closed {
 				b.logger.Printf("Read error: %v", err)
 			}
+			// FIN 传播：半关闭对端写侧（对端读到 EOF 后可继续写回响应），
+			// 而非立刻整体关闭；双向都结束后 Start 统一 Close。
+			// FIN propagation: half-close the peer's write side so it reads
+			// EOF and may still respond; Start closes everything once both
+			// directions finish.
+			halfClose(dst)
 			break
 		}
 
@@ -225,6 +241,21 @@ func (b *ProtocolAwareBridge) forwardWithProtocol(src, dst net.Conn, direction D
 			break
 		}
 	}
+}
+
+// halfClose 尽力向对端传播 FIN：支持 CloseWrite 的连接走半关闭，
+// 否则退化为整体关闭。
+// halfClose propagates FIN to the peer when possible: CloseWrite for capable
+// conns, full close as fallback.
+func halfClose(c net.Conn) {
+	type closeWriter interface {
+		CloseWrite() error
+	}
+	if cw, ok := c.(closeWriter); ok {
+		_ = cw.CloseWrite()
+		return
+	}
+	_ = c.Close()
 }
 
 // Close 关闭桥接

@@ -9,13 +9,16 @@ import (
 	"time"
 )
 
-// UDPSession 表示一个UDP会话
+// UDPSession 表示一个UDP会话：每个会话持有独立的本地 upstream socket，
+// 使 remote 回包可经该 socket 归属回对应 client（真正的双向桥接）。
 type UDPSession struct {
 	localAddr  *net.UDPAddr
 	remoteAddr *net.UDPAddr
+	upstream   *net.UDPConn // 本会话专属上游 socket
 	lastActive time.Time
 	dataChan   chan []byte
 	closeChan  chan struct{}
+	closeOnce  sync.Once
 }
 
 // UDPBridge UDP双向桥接
@@ -128,17 +131,25 @@ func (b *UDPBridge) handleIncomingData(data []byte, clientAddr *net.UDPAddr) {
 	b.mu.Lock()
 	session, exists := b.sessions[sessionKey]
 	if !exists {
+		// 会话专属上游 socket：随机本地端口，回包归属清晰。
+		upstream, err := net.ListenUDP("udp", nil)
+		if err != nil {
+			b.mu.Unlock()
+			b.logger.Printf("UDP upstream socket failed: %v", err)
+			return
+		}
 		// 创建新会话
 		session = &UDPSession{
 			localAddr:  clientAddr,
 			remoteAddr: b.remoteAddr,
+			upstream:   upstream,
 			lastActive: time.Now(),
 			dataChan:   make(chan []byte, 100), // 缓冲通道
 			closeChan:  make(chan struct{}),
 		}
 		b.sessions[sessionKey] = session
 
-		// 启动远程数据接收
+		// 启动远程数据接收（转发与回包）
 		go b.startRemoteReceiver(session)
 
 		b.logger.Printf("New UDP session created: %s", sessionKey)
@@ -161,9 +172,9 @@ func (b *UDPBridge) handleIncomingData(data []byte, clientAddr *net.UDPAddr) {
 	}
 }
 
-// forwardToRemote 转发数据到远程
+// forwardToRemote 转发数据到远程（经会话专属 upstream，源端口稳定）。
 func (b *UDPBridge) forwardToRemote(data []byte, session *UDPSession) {
-	_, err := b.localConn.WriteToUDP(data, session.remoteAddr)
+	_, err := session.upstream.WriteToUDP(data, session.remoteAddr)
 	if err != nil {
 		b.logger.Printf("WriteToUDP error to %s: %v", session.remoteAddr, err)
 		return
@@ -171,36 +182,69 @@ func (b *UDPBridge) forwardToRemote(data []byte, session *UDPSession) {
 	b.logger.Printf("Forwarded %d bytes to %s", len(data), session.remoteAddr)
 }
 
-// startRemoteReceiver 启动远程数据接收器
+// startRemoteReceiver 启动远程数据接收器：转发 client→remote 数据，
+// 并把 remote 回包（经会话专属 upstream）送回对应 client。
 func (b *UDPBridge) startRemoteReceiver(session *UDPSession) {
-	// 注意：UDP是无连接的，我们需要模拟会话
-	// 这里我们定期检查会话是否活跃
-
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	defer b.closeSession(session)
+
+	// 回包接收循环：upstream → client。
+	go func() {
+		buf := make([]byte, b.bufferSize)
+		for {
+			n, src, err := session.upstream.ReadFromUDP(buf)
+			if err != nil {
+				return
+			}
+			// 只接受来自 remote 的回包。
+			if !src.IP.Equal(b.remoteAddr.IP) || src.Port != b.remoteAddr.Port {
+				continue
+			}
+			if _, err := b.localConn.WriteToUDP(buf[:n], session.localAddr); err != nil {
+				b.logger.Printf("UDP reply to client failed: %v", err)
+				return
+			}
+			b.mu.Lock()
+			session.lastActive = time.Now()
+			b.mu.Unlock()
+		}
+	}()
 
 	for {
 		select {
 		case data := <-session.dataChan:
 			b.forwardToRemote(data, session)
+			b.mu.Lock()
 			session.lastActive = time.Now()
+			b.mu.Unlock()
 
 		case <-ticker.C:
-			// 检查会话是否超时
-			b.mu.Lock()
-			if time.Since(session.lastActive) > b.sessionTTL {
-				delete(b.sessions, fmt.Sprintf("%s->%s", session.localAddr.String(), session.remoteAddr.String()))
-				close(session.closeChan)
-				b.mu.Unlock()
+			b.mu.RLock()
+			expired := time.Since(session.lastActive) > b.sessionTTL
+			b.mu.RUnlock()
+			if expired {
 				b.logger.Printf("UDP session expired: %s->%s", session.localAddr, session.remoteAddr)
 				return
 			}
-			b.mu.Unlock()
 
 		case <-session.closeChan:
 			return
 		}
 	}
+}
+
+// closeSession 幂等清理会话：关 upstream、从表移除。
+// closeSession idempotently tears down a session: closes the upstream and
+// removes it from the table.
+func (b *UDPBridge) closeSession(session *UDPSession) {
+	session.closeOnce.Do(func() {
+		close(session.closeChan)
+		_ = session.upstream.Close()
+	})
+	b.mu.Lock()
+	delete(b.sessions, fmt.Sprintf("%s->%s", session.localAddr.String(), session.remoteAddr.String()))
+	b.mu.Unlock()
 }
 
 // sessionCleaner 清理过期会话
@@ -236,19 +280,25 @@ func (b *UDPBridge) sessionCleaner() {
 // Close 关闭UDP桥接
 func (b *UDPBridge) Close() error {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	if b.closed {
+		b.mu.Unlock()
 		return nil
 	}
-
 	b.closed = true
+	sessions := make([]*UDPSession, 0, len(b.sessions))
+	for key, session := range b.sessions {
+		sessions = append(sessions, session)
+		delete(b.sessions, key)
+	}
+	b.mu.Unlock()
 	b.logger.Println("Closing UDP bridge...")
 
-	// 关闭所有会话
-	for key, session := range b.sessions {
-		close(session.closeChan)
-		delete(b.sessions, key)
+	// 关闭所有会话（closeOnce 保证幂等，closeChan 只关一次）。
+	for _, session := range sessions {
+		session.closeOnce.Do(func() {
+			close(session.closeChan)
+			_ = session.upstream.Close()
+		})
 	}
 
 	if b.localConn != nil {

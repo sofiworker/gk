@@ -119,7 +119,7 @@ func (h *LinuxHandle) ReadPacket() (*Packet, error) {
 				continue
 			}
 			if err == unix.EAGAIN || err == unix.EWOULDBLOCK {
-				return nil, fmt.Errorf("rawcap: read timeout: %w", err)
+				return nil, fmt.Errorf("%w: %v", ErrReadTimeout, err)
 			}
 			if err == unix.EBADF {
 				return nil, ErrHandleClosed
@@ -145,7 +145,9 @@ func (h *LinuxHandle) ReadPacket() (*Packet, error) {
 			info.InterfaceIndex = ll.Ifindex
 		}
 
+		h.mu.Lock()
 		h.stats.PacketsReceived++
+		h.mu.Unlock()
 
 		return &Packet{
 			Data: data,
@@ -159,7 +161,13 @@ func (h *LinuxHandle) WritePacketData(data []byte) error {
 		return ErrHandleClosed
 	}
 	_, err := unix.Write(h.fd, data)
-	return err
+	if err == unix.EBADF {
+		return ErrHandleClosed
+	}
+	if err != nil {
+		return fmt.Errorf("rawcap: write packet: %w", err)
+	}
+	return nil
 }
 
 func (h *LinuxHandle) RawHandle() (interface{}, error) {
@@ -170,7 +178,9 @@ func (h *LinuxHandle) RawHandle() (interface{}, error) {
 }
 
 func (h *LinuxHandle) Stats() *Stats {
+	h.mu.Lock()
 	stats := h.stats
+	h.mu.Unlock()
 	if tp, err := unix.GetsockoptTpacketStats(h.fd, unix.SOL_PACKET, unix.PACKET_STATISTICS); err == nil {
 		stats.PacketsReceived = uint64(tp.Packets)
 		stats.PacketsDropped = uint64(tp.Drops)
@@ -247,36 +257,56 @@ func (h *LinuxHandle) enableTPacketV3() error {
 func (h *LinuxHandle) readTPacket() (*Packet, error) {
 	r := h.ring
 	for {
+		if h.isClosed() {
+			return nil, ErrHandleClosed
+		}
 		// 确保存在包含数据的 block；ensure the block has data.
 		if r.blockHeader == nil || r.pktOffset == 0 || r.pktOffset >= uint32(r.blockSize) {
 			if err := h.nextBlock(); err != nil {
 				if err == unix.EAGAIN {
+					// 无数据：poll 等待（尊重 cfg.Timeout，0 则阻塞），
+					// 避免忙等。
+					if err := h.waitRingReadable(); err != nil {
+						return nil, err
+					}
 					continue
 				}
 				return nil, err
 			}
 		}
 
+		// 包数据提取与 Close 的 munmap 互斥：持锁读取并复制。
+		h.mu.Lock()
+		if h.closed {
+			h.mu.Unlock()
+			return nil, ErrHandleClosed
+		}
 		// block 内的包指针；packet pointer within the block.
 		blockStart := r.blockIdx * r.blockSize
 		pktHdr := (*unix.Tpacket3Hdr)(unsafe.Add(unsafe.Pointer(&r.data[blockStart]), uintptr(r.pktOffset)))
 
 		if pktHdr.Status&unix.TP_STATUS_USER == 0 {
 			// 不应发生，重试；should not happen, retry.
+			h.mu.Unlock()
 			r.blockHeader = nil
 			continue
 		}
 
-		start := blockStart + int(pktHdr.Mac)
+		// tpacket3_hdr.Mac 是包数据相对 block 起点的偏移，
+		// 包实际位置 = blockStart + pktOffset + Mac。
+		start := blockStart + int(r.pktOffset) + int(pktHdr.Mac)
 		end := start + int(pktHdr.Snaplen)
-		if end > len(r.data) {
+		// 损坏 snaplen 不得跨出当前 block。
+		if end > blockStart+r.blockSize || end > len(r.data) {
 			// 数据损坏，丢弃该 block；corrupted, drop the block.
 			r.blockHeader.Block_status = unix.TP_STATUS_KERNEL
 			r.blockHeader = nil
+			h.mu.Unlock()
 			continue
 		}
 		payload := make([]byte, pktHdr.Snaplen)
 		copy(payload, r.data[start:end])
+		h.mu.Unlock()
 
 		ts := time.Unix(int64(pktHdr.Sec), int64(pktHdr.Nsec)).UTC()
 		info := &PacketInfo{
@@ -285,7 +315,9 @@ func (h *LinuxHandle) readTPacket() (*Packet, error) {
 			Length:         int(pktHdr.Len),
 			InterfaceIndex: h.iface.Index,
 		}
+		h.mu.Lock()
 		h.stats.PacketsReceived++
+		h.mu.Unlock()
 
 		// 移动到 block 中的下一个包；move to the next packet in the block.
 		if pktHdr.Next_offset == 0 {
@@ -306,6 +338,38 @@ func (h *LinuxHandle) readTPacket() (*Packet, error) {
 			Data: payload,
 			Info: info,
 		}, nil
+	}
+}
+
+// waitRingReadable 等待 TPACKET 环形有数据；超时返回 ErrReadTimeout。
+// waitRingReadable waits for TPACKET ring data; returns ErrReadTimeout on
+// timeout.
+func (h *LinuxHandle) waitRingReadable() error {
+	var timeout int
+	if h.cfg.Timeout > 0 {
+		timeout = int(h.cfg.Timeout / time.Millisecond)
+		if timeout < 1 {
+			timeout = 1
+		}
+	} else {
+		timeout = -1 // 无限
+	}
+	pfd := []unix.PollFd{{Fd: int32(h.fd), Events: unix.POLLIN}}
+	for {
+		_, err := unix.Poll(pfd, timeout)
+		if err == unix.EINTR {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("rawcap: poll ring: %w", err)
+		}
+		if h.isClosed() {
+			return ErrHandleClosed
+		}
+		if timeout > 0 && pfd[0].Revents&(unix.POLLIN|unix.POLLHUP|unix.POLLERR) == 0 {
+			return fmt.Errorf("%w: tpacket", ErrReadTimeout)
+		}
+		return nil
 	}
 }
 

@@ -1,12 +1,5 @@
 package layers
 
-import "errors"
-
-var (
-	ErrUnsupportedEtherType = errors.New("layers: unsupported ethernet type")
-	ErrUnsupportedProtocol  = errors.New("layers: unsupported protocol")
-)
-
 func Decode(data []byte) ([]Layer, error) {
 	return DecodeFrom(LayerTypeEthernet, data)
 }
@@ -44,6 +37,8 @@ func nextLayer(layer Layer) (LayerType, []byte, bool) {
 			return LayerTypeIPv4, l.Payload(), true
 		case EthernetTypeIPv6:
 			return LayerTypeIPv6, l.Payload(), true
+		case EthernetTypeARP:
+			return LayerTypeARP, l.Payload(), true
 		default:
 			return 0, nil, false
 		}
@@ -69,6 +64,13 @@ func nextLayer(layer Layer) (LayerType, []byte, bool) {
 		default:
 			return 0, nil, false
 		}
+	case *UDP:
+		// 53 端口的 UDP 载荷按 DNS 解析。
+		// UDP payloads on port 53 parse as DNS.
+		if l.SrcPort == 53 || l.DstPort == 53 {
+			return LayerTypeDNS, l.Payload(), true
+		}
+		return 0, nil, false
 	default:
 		return 0, nil, false
 	}

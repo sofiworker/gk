@@ -113,7 +113,14 @@ func fetchLinkState(fd int, name string) (bool, error) {
 
 func parseSpeed(cmd ethtoolCmd) int64 {
 	raw := (uint32(cmd.SpeedHi) << 16) | uint32(cmd.Speed)
-	if cmd.Speed == speedUnknown || cmd.SpeedHi == speedUnknown || raw == 0 {
+	// 未知哨兵：32 位全 0xffff（新驱动），或仅低 16 位 0xffff 且高字段
+	// 为 0（旧驱动）。单侧高字段 0xffff 是合法速度值，不误判。
+	switch {
+	case cmd.Speed == speedUnknown && cmd.SpeedHi == speedUnknown:
+		return unknownSpeedMbps
+	case cmd.Speed == speedUnknown && cmd.SpeedHi == 0:
+		return unknownSpeedMbps
+	case raw == 0:
 		return unknownSpeedMbps
 	}
 	return int64(raw)

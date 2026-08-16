@@ -44,7 +44,7 @@ type ipv4Decoder struct{}
 
 func (ipv4Decoder) Decode(data []byte) (Layer, error) {
 	if len(data) < 20 {
-		return nil, fmt.Errorf("layers: ipv4 packet too short: %d", len(data))
+		return nil, fmt.Errorf("%w: ipv4 packet too short: %d", ErrTruncated, len(data))
 	}
 
 	versionIHL := data[0]
@@ -56,7 +56,7 @@ func (ipv4Decoder) Decode(data []byte) (Layer, error) {
 
 	headerLen := int(ihl) * 4
 	if headerLen < 20 || len(data) < headerLen {
-		return nil, fmt.Errorf("layers: invalid ipv4 header length %d", headerLen)
+		return nil, fmt.Errorf("%w: invalid ipv4 header length %d", ErrTruncated, headerLen)
 	}
 
 	totalLen := int(binary.BigEndian.Uint16(data[2:4]))

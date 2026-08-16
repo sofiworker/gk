@@ -74,6 +74,10 @@ func (r *Reader) ReadPacket() (*Packet, error) {
 	if r.header.SnapLen > 0 && header.InclLen > r.header.SnapLen {
 		return nil, fmt.Errorf("pcap: captured length %d exceeds snap length %d", header.InclLen, r.header.SnapLen)
 	}
+	// 恶意/损坏文件防护：InclLen 无上限时分配前拦截。
+	if header.InclLen > maxCapturedLength {
+		return nil, fmt.Errorf("%w: captured length %d exceeds limit", ErrInvalidPacketHeader, header.InclLen)
+	}
 
 	data := make([]byte, header.InclLen)
 	if _, err := io.ReadFull(r.r, data); err != nil {

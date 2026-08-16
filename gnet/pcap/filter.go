@@ -1,6 +1,7 @@
 package pcap
 
 import (
+	"errors"
 	"io"
 
 	"golang.org/x/net/bpf"
@@ -12,7 +13,11 @@ func FilterCopy(r io.Reader, w io.Writer, prog []bpf.Instruction) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	writer, err := NewWriter(w, WithSnapLen(reader.Header().SnapLen), WithLinkType(reader.Header().Network))
+	hdr := reader.Header()
+	writer, err := NewWriter(w,
+		WithSnapLen(hdr.SnapLen),
+		WithLinkType(hdr.Network),
+		WithTimestampResolution(hdr.TimestampResolution()))
 	if err != nil {
 		return 0, err
 	}
@@ -27,7 +32,7 @@ func FilterCopy(r io.Reader, w io.Writer, prog []bpf.Instruction) (int, error) {
 	for {
 		pkt, err := reader.ReadPacket()
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				return count, nil
 			}
 			return count, err
