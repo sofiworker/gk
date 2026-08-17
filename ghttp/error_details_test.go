@@ -16,9 +16,9 @@ func TestErrorDetailsHiddenByDefault(t *testing.T) {
 		}
 	}
 	app := New(WithProduces(MIMEJSON))
-	Route[input, struct{}](app).POST("/users").To(func(context.Context, input) (struct{}, error) {
+	app.MustMount(Handle(Post("/users"), StructInput[input](), JSONOutput[struct{}](), func(context.Context, input) (struct{}, error) {
 		return struct{}{}, Err(http.StatusBadRequest, "internal secret detail")
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(`{"name":`))
@@ -35,9 +35,9 @@ func TestErrorDetailsHiddenByDefault(t *testing.T) {
 
 func TestPlainErrorDetailsHiddenByDefault(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[Params, struct{}](app).GET("/boom").To(func(context.Context, Params) (struct{}, error) {
+	app.MustMount(Handle(Get("/boom"), StructInput[Params](), JSONOutput[struct{}](), func(context.Context, Params) (struct{}, error) {
 		return struct{}{}, errInternalSecret
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/boom", nil))
@@ -58,9 +58,9 @@ func TestErrorDetailsExposedWhenEnabled(t *testing.T) {
 		}
 	}
 	app := New(WithProduces(MIMEJSON), WithExposeErrorDetails())
-	Route[input, struct{}](app).POST("/users").To(func(context.Context, input) (struct{}, error) {
+	app.MustMount(Handle(Post("/users"), StructInput[input](), JSONOutput[struct{}](), func(context.Context, input) (struct{}, error) {
 		return struct{}{}, nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(`{"name":`))
@@ -74,9 +74,9 @@ func TestErrorDetailsExposedWhenEnabled(t *testing.T) {
 
 func TestExplicitHTTPErrorMessageAlwaysReturned(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[Params, struct{}](app).GET("/users/{id}").To(func(context.Context, Params) (struct{}, error) {
+	app.MustMount(Handle(Get("/users/{id}"), StructInput[Params](), JSONOutput[struct{}](), func(context.Context, Params) (struct{}, error) {
 		return struct{}{}, Err(http.StatusNotFound, "user not found")
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/users/1", nil))

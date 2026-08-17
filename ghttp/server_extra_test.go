@@ -97,9 +97,9 @@ func TestJoinPaths(t *testing.T) {
 
 func TestServerRecoversHandlerPanic(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[struct{}, struct{}](app).GET("/boom").ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	app.MustMount(RawOperation(http.MethodGet, "/boom", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		panic("kaboom")
-	}))
+	})))
 
 	w := httptest.NewRecorder()
 	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/boom", nil))
@@ -111,11 +111,11 @@ func TestServerRecoversHandlerPanic(t *testing.T) {
 func TestServerMatchedParams(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	var gotPath string
-	Route[ghttpParamsAlias, struct{}](app).GET("/users/{id}").ToHTTPFunc(func(w http.ResponseWriter, r *http.Request, in ghttpParamsAlias) error {
+	app.MustMount(HandleHTTP(Get("/users/{id}"), StructInput[ghttpParamsAlias](), func(w http.ResponseWriter, r *http.Request, in ghttpParamsAlias) error {
 		gotPath = app.MatchedParams(r).Path("id")
 		w.WriteHeader(http.StatusNoContent)
 		return nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/users/u42", nil))
@@ -159,9 +159,9 @@ func TestServerDispatchError(t *testing.T) {
 	)
 
 	// 通过路由返回错误触发 dispatchError。
-	Route[struct{}, struct{}](app).GET("/fail").ToNoOutput(func(ctx context.Context, req struct{}) error {
+	app.MustMount(HandleNoOutput(Get("/fail"), StructInput[struct{}](), func(ctx context.Context, req struct{}) error {
 		return Err(http.StatusTeapot, "teapot")
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/fail", nil))

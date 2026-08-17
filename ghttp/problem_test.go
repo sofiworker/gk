@@ -11,9 +11,9 @@ import (
 
 func TestProblemDetailsOffByDefault(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[Params, struct{}](app).GET("/users/{id}").To(func(context.Context, Params) (struct{}, error) {
+	app.MustMount(Handle(Get("/users/{id}"), StructInput[Params](), JSONOutput[struct{}](), func(context.Context, Params) (struct{}, error) {
 		return struct{}{}, Err(http.StatusNotFound, "user not found")
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/users/1", nil))
@@ -28,9 +28,9 @@ func TestProblemDetailsOffByDefault(t *testing.T) {
 
 func TestProblemDetailsOn(t *testing.T) {
 	app := New(WithProduces(MIMEJSON), WithProblemDetails())
-	Route[Params, struct{}](app).GET("/users/{id}").To(func(context.Context, Params) (struct{}, error) {
+	app.MustMount(Handle(Get("/users/{id}"), StructInput[Params](), JSONOutput[struct{}](), func(context.Context, Params) (struct{}, error) {
 		return struct{}{}, Err(http.StatusNotFound, "user not found")
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/users/1", nil)
@@ -55,9 +55,9 @@ func TestProblemDetailsHidesPlainError(t *testing.T) {
 		}
 	}
 	app := New(WithProduces(MIMEJSON), WithProblemDetails())
-	Route[input, struct{}](app).POST("/users").To(func(context.Context, input) (struct{}, error) {
+	app.MustMount(Handle(Post("/users"), StructInput[input](), JSONOutput[struct{}](), func(context.Context, input) (struct{}, error) {
 		return struct{}{}, nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(`{"name":`))
@@ -71,9 +71,9 @@ func TestProblemDetailsHidesPlainError(t *testing.T) {
 
 func TestProblemDetailsWinsOverEnvelope(t *testing.T) {
 	app := New(WithProduces(MIMEJSON), WithEnvelope(DefaultEnvelope), WithProblemDetails())
-	Route[Params, struct{}](app).GET("/users/{id}").To(func(context.Context, Params) (struct{}, error) {
+	app.MustMount(Handle(Get("/users/{id}"), StructInput[Params](), JSONOutput[struct{}](), func(context.Context, Params) (struct{}, error) {
 		return struct{}{}, Err(http.StatusNotFound, "user not found")
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/users/1", nil))
@@ -88,12 +88,12 @@ func TestProblemDetailsWinsOverEnvelope(t *testing.T) {
 
 func TestRouteLevelProblemDetails(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[Params, struct{}](app).GET("/problem").ProblemDetails().To(func(context.Context, Params) (struct{}, error) {
+	app.MustMount(Handle(Get("/problem"), StructInput[Params](), JSONOutput[struct{}](), func(context.Context, Params) (struct{}, error) {
 		return struct{}{}, Err(http.StatusNotFound, "user not found")
-	})
-	Route[Params, struct{}](app).GET("/plain").To(func(context.Context, Params) (struct{}, error) {
+	}).WithProblemDetails())
+	app.MustMount(Handle(Get("/plain"), StructInput[Params](), JSONOutput[struct{}](), func(context.Context, Params) (struct{}, error) {
 		return struct{}{}, Err(http.StatusNotFound, "user not found")
-	})
+	}))
 
 	problemRec := httptest.NewRecorder()
 	app.ServeHTTP(problemRec, httptest.NewRequest(http.MethodGet, "/problem", nil))
@@ -125,9 +125,9 @@ func TestChainErrorWriters(t *testing.T) {
 			return true
 		},
 	)))
-	Route[Params, struct{}](app).GET("/boom").To(func(context.Context, Params) (struct{}, error) {
+	app.MustMount(Handle(Get("/boom"), StructInput[Params](), JSONOutput[struct{}](), func(context.Context, Params) (struct{}, error) {
 		return struct{}{}, Err(http.StatusBadRequest, "boom")
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/boom", nil))
@@ -142,14 +142,14 @@ func TestChainErrorWriters(t *testing.T) {
 
 func TestRouteErrorWriterCustom(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[Params, struct{}](app).GET("/boom").ErrorWriter(func(w http.ResponseWriter, r *http.Request, status int, err error) bool {
+	app.MustMount(Handle(Get("/boom"), StructInput[Params](), JSONOutput[struct{}](), func(context.Context, Params) (struct{}, error) {
+		return struct{}{}, Err(http.StatusBadRequest, "boom")
+	}).WithErrorWriter(func(w http.ResponseWriter, r *http.Request, status int, err error) bool {
 		w.Header().Set("X-Custom-Error", "1")
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte("custom-error"))
 		return true
-	}).To(func(context.Context, Params) (struct{}, error) {
-		return struct{}{}, Err(http.StatusBadRequest, "boom")
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/boom", nil))

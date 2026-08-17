@@ -20,12 +20,13 @@ func (s *Server) OpenAPI() ([]byte, error) {
 		s.config.openAPITitle,
 		s.config.openAPIVersion,
 		s.envelope != nil,
+		s.config.problemDetails,
 		s.config.openAPIServers,
 		s.config.openAPISecurity,
 	)
 }
 
-func compileOpenAPI(definitions []routeDefinition, title, version string, envelope bool, servers []string, security []map[string][]string) ([]byte, error) {
+func compileOpenAPI(definitions []routeDefinition, title, version string, envelope, problemDetails bool, servers []string, security []map[string][]string) ([]byte, error) {
 	paths := make(map[string]map[string]any)
 	for _, definition := range definitions {
 		if definition.internal {
@@ -39,7 +40,7 @@ func compileOpenAPI(definitions []routeDefinition, title, version string, envelo
 			paths[path] = pathItem
 		}
 
-		operation := openAPIOperationForDefinition(definition, envelope)
+		operation := openAPIOperationForDefinition(definition, envelope, problemDetails)
 		if isOpenAPIPathMethod(definition.method) {
 			pathItem[strings.ToLower(definition.method)] = operation
 			continue
@@ -119,7 +120,7 @@ func openAPIStaticSegment(segment string) string {
 	return url.PathEscape(segment)
 }
 
-func openAPIOperationForDefinition(definition routeDefinition, envelope bool) map[string]any {
+func openAPIOperationForDefinition(definition routeDefinition, envelope, problemDetails bool) map[string]any {
 	op := make(map[string]any)
 	if definition.doc.Summary != "" {
 		op["summary"] = definition.doc.Summary
@@ -155,8 +156,17 @@ func openAPIOperationForDefinition(definition routeDefinition, envelope bool) ma
 	if parameters := openAPIParametersForDefinition(definition); len(parameters) > 0 {
 		op["parameters"] = parameters
 	}
-	if bodySchema := extractBodySchema(definition.reqType); bodySchema != nil {
-		contentTypes := definition.consumes
+	if len(definition.openAPI.bodyContent) > 0 {
+		content := make(map[string]any, len(definition.openAPI.bodyContent))
+		for contentType, schema := range definition.openAPI.bodyContent {
+			content[contentType] = map[string]any{"schema": schema}
+		}
+		op["requestBody"] = map[string]any{"required": definition.openAPI.bodyRequired, "content": content}
+	} else if bodySchema := definition.openAPI.bodySchema; bodySchema != nil {
+		contentTypes := definition.openAPI.bodyContentTypes
+		if len(contentTypes) == 0 {
+			contentTypes = definition.consumes
+		}
 		if len(contentTypes) == 0 {
 			contentTypes = []string{MIMEJSON}
 		}
@@ -167,7 +177,10 @@ func openAPIOperationForDefinition(definition routeDefinition, envelope bool) ma
 		op["requestBody"] = map[string]any{"required": true, "content": content}
 	}
 
-	responses := openAPIResponsesForDefinition(definition, envelope)
+	responses := openAPIResponsesForDefinition(definition, envelope, problemDetails || definition.problemDetails)
+	for status, response := range definition.openAPI.responses {
+		responses[status] = cloneOpenAPIValue(response)
+	}
 	op["responses"] = responses
 	if definition.terminal == routeTerminalWebSocket {
 		op["x-ghttp-websocket"] = true
@@ -176,6 +189,9 @@ func openAPIOperationForDefinition(definition routeDefinition, envelope bool) ma
 }
 
 func openAPIParametersForDefinition(definition routeDefinition) []any {
+	if definition.openAPI.parameters != nil {
+		return openAPIParametersFromMetadata(definition.openAPI.parameters, definition.pattern)
+	}
 	parameters := make([]any, 0)
 	known := make(map[string]struct{})
 	pathParameters := make(map[string]map[string]any)
@@ -212,6 +228,44 @@ func openAPIParametersForDefinition(definition routeDefinition) []any {
 	return parameters
 }
 
+func openAPIParametersFromMetadata(metadata []*parameter, pattern routePattern) []any {
+	parameters := make([]any, 0, len(metadata)+len(pattern.segments))
+	known := make(map[string]struct{}, len(metadata)+len(pattern.segments))
+	for _, parameter := range metadata {
+		if parameter == nil {
+			continue
+		}
+		parameters = append(parameters, openAPIParameter(parameter))
+		known[parameter.In+"\x00"+parameter.Name] = struct{}{}
+	}
+	for _, segment := range pattern.segments {
+		if segment.kind != routeSegmentParameter && segment.kind != routeSegmentCatchAll {
+			continue
+		}
+		key := "path\x00" + segment.value
+		if _, exists := known[key]; exists {
+			if segment.kind == routeSegmentCatchAll {
+				for _, rendered := range parameters {
+					if renderedMap, ok := rendered.(map[string]any); ok && renderedMap["in"] == "path" && renderedMap["name"] == segment.value {
+						renderedMap["x-ghttp-catch-all"] = true
+						break
+					}
+				}
+			}
+			continue
+		}
+		parameter := map[string]any{
+			"name": segment.value, "in": "path", "required": true,
+			"schema": map[string]any{"type": "string"},
+		}
+		if segment.kind == routeSegmentCatchAll {
+			parameter["x-ghttp-catch-all"] = true
+		}
+		parameters = append(parameters, parameter)
+	}
+	return parameters
+}
+
 func openAPIParameter(parameter *parameter) map[string]any {
 	result := map[string]any{
 		"name":   parameter.Name,
@@ -227,14 +281,14 @@ func openAPIParameter(parameter *parameter) map[string]any {
 	return result
 }
 
-func openAPIResponsesForDefinition(definition routeDefinition, envelope bool) map[string]any {
+func openAPIResponsesForDefinition(definition routeDefinition, envelope, problemDetails bool) map[string]any {
 	if definition.method == http.MethodHead {
-		return openAPIHeadResponses(openAPIResponsesForTerminal(definition, envelope))
+		return openAPIHeadResponses(openAPIResponsesForTerminal(definition, envelope, problemDetails))
 	}
-	return openAPIResponsesForTerminal(definition, envelope)
+	return openAPIResponsesForTerminal(definition, envelope, problemDetails)
 }
 
-func openAPIResponsesForTerminal(definition routeDefinition, envelope bool) map[string]any {
+func openAPIResponsesForTerminal(definition routeDefinition, envelope, problemDetails bool) map[string]any {
 	switch definition.terminal {
 	case routeTerminalTyped:
 		status := definition.responseStatus
@@ -246,10 +300,27 @@ func openAPIResponsesForTerminal(definition routeDefinition, envelope bool) map[
 			description = definition.doc.Success.Message
 		}
 		response := map[string]any{"description": description}
-		if definition.respType != nil && len(definition.produces) > 0 {
+		if len(definition.responseHeaders) > 0 {
+			headers := make(map[string]any, len(definition.responseHeaders))
+			for _, header := range definition.responseHeaders {
+				description := header.description
+				if description == "" && header.value != "" {
+					description = "Fixed response header value: " + header.value
+				}
+				headers[header.name] = map[string]any{
+					"schema":      map[string]any{"type": "string"},
+					"description": description,
+				}
+			}
+			response["headers"] = headers
+		}
+		if (definition.respType != nil || definition.openAPI.responseSchema != nil) && len(definition.produces) > 0 {
 			content := make(map[string]any, len(definition.produces))
 			for _, contentType := range definition.produces {
-				schema := generateSchema(renderTypeArg(definition.respType))
+				schema := definition.openAPI.responseSchema
+				if schema == nil {
+					schema = generateSchema(renderTypeArg(definition.respType))
+				}
 				if envelope {
 					schema = map[string]any{
 						"type": "object",
@@ -266,8 +337,8 @@ func openAPIResponsesForTerminal(definition routeDefinition, envelope bool) map[
 		}
 		return map[string]any{
 			strconv.Itoa(status): response,
-			"404":                openAPIErrorResponse("Not Found"),
-			"405":                openAPIErrorResponse("Method Not Allowed"),
+			"404":                openAPIErrorResponse("Not Found", problemDetails),
+			"405":                openAPIErrorResponse("Method Not Allowed", problemDetails),
 		}
 	case routeTerminalRedirect:
 		status := definition.responseStatus
@@ -303,7 +374,26 @@ func openAPIDefaultResponse() map[string]any {
 	return map[string]any{"default": map[string]any{"description": "Response written by handler"}}
 }
 
-func openAPIErrorResponse(description string) map[string]any {
+func openAPIErrorResponse(description string, problemDetails bool) map[string]any {
+	if problemDetails {
+		return map[string]any{
+			"description": description,
+			"content": map[string]any{
+				MIMEProblemJSON: map[string]any{
+					"schema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"type":     map[string]any{"type": "string", "format": "uri-reference"},
+							"title":    map[string]any{"type": "string"},
+							"status":   map[string]any{"type": "integer"},
+							"detail":   map[string]any{"type": "string"},
+							"instance": map[string]any{"type": "string", "format": "uri-reference"},
+						},
+					},
+				},
+			},
+		}
+	}
 	return map[string]any{
 		"description": description,
 		"content": map[string]any{

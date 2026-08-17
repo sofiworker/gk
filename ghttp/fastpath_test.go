@@ -16,13 +16,13 @@ import (
 
 func TestFastRawRouteSkipsRequestState(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[struct{}, struct{}](app).GET("/ping").ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	app.MustMount(RawOperation(http.MethodGet, "/ping", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if st := requestStateFromRequest(r); st != nil {
 			t.Errorf("fast route should have no requestState, got %+v", st)
 		}
 		w.Header().Set("Content-Type", MIMEJSON)
 		_, _ = io.WriteString(w, `{"message":"pong"}`)
-	}))
+	})))
 
 	rec := httptest.NewRecorder()
 	app.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ping", nil))
@@ -37,12 +37,12 @@ func TestFastRawRouteSkipsRequestState(t *testing.T) {
 
 func TestRawRouteWithBodyKeepsRequestState(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[struct{}, struct{}](app).POST("/post").ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	app.MustMount(RawOperation(http.MethodPost, "/post", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if st := requestStateFromRequest(r); st == nil {
 			t.Error("route with body should keep requestState")
 		}
 		w.WriteHeader(http.StatusNoContent)
-	}))
+	})))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/post", strings.NewReader("x"))
@@ -55,15 +55,17 @@ func TestRawRouteWithBodyKeepsRequestState(t *testing.T) {
 
 func TestRawRouteWithMiddlewareKeepsRequestState(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[struct{}, struct{}](app).GET("/mw").Use(func(next http.Handler) http.Handler {
+	app.MustMount(RawOperation(http.MethodGet, "/mw",
+
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})).WithMiddleware(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if st := requestStateFromRequest(r); st == nil {
 				t.Error("middleware route should keep requestState")
 			}
 			next.ServeHTTP(w, r)
 		})
-	}).ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
 	}))
 
 	rec := httptest.NewRecorder()
@@ -76,12 +78,12 @@ func TestRawRouteWithMiddlewareKeepsRequestState(t *testing.T) {
 
 func TestHeadRawRouteKeepsRequestStateAndSuppressesBody(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[struct{}, struct{}](app).GET("/ping").ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	app.MustMount(RawOperation(http.MethodGet, "/ping", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if st := requestStateFromRequest(r); st == nil {
 			t.Error("HEAD route should keep requestState for body suppression")
 		}
 		_, _ = io.WriteString(w, "should-not-appear")
-	}))
+	})))
 
 	rec := httptest.NewRecorder()
 	app.ServeHTTP(rec, httptest.NewRequest(http.MethodHead, "/ping", nil))
@@ -97,13 +99,13 @@ func TestHeadRawRouteKeepsRequestStateAndSuppressesBody(t *testing.T) {
 func TestFastRoutePanicMatchesSlowPathErrorBody(t *testing.T) {
 	run := func(withMiddleware bool) string {
 		app := New(WithProduces(MIMEJSON))
-		b := Route[struct{}, struct{}](app).GET("/boom")
-		if withMiddleware {
-			b.Use(func(next http.Handler) http.Handler { return next })
-		}
-		b.ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		operation := RawOperation(http.MethodGet, "/boom", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			panic("boom")
 		}))
+		if withMiddleware {
+			operation = operation.WithMiddleware(func(next http.Handler) http.Handler { return next })
+		}
+		app.MustMount(operation)
 		rec := httptest.NewRecorder()
 		app.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/boom", nil))
 		return rec.Body.String()
@@ -121,16 +123,16 @@ func TestFastRoutePanicMatchesSlowPathErrorBody(t *testing.T) {
 
 func TestTypedRouteKeepsRequestState(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[struct{}, struct{}](app).GET("/typed").Use(func(next http.Handler) http.Handler {
+	app.MustMount(Handle(Get("/typed"), StructInput[struct{}](), JSONOutput[struct{}](), func(_ context.Context, _ struct{}) (struct{}, error) {
+		return struct{}{}, nil
+	}).WithMiddleware(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if st := requestStateFromRequest(r); st == nil {
 				t.Error("typed route should keep requestState")
 			}
 			next.ServeHTTP(w, r)
 		})
-	}).To(func(_ context.Context, _ struct{}) (struct{}, error) {
-		return struct{}{}, nil
-	})
+	}))
 
 	rec := httptest.NewRecorder()
 	app.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/typed", nil))
@@ -145,9 +147,9 @@ func TestTypedInputReuseDoesNotLeakAcrossRequests(t *testing.T) {
 		Q string `query:"q"`
 	}
 	app := New(WithProduces(MIMEJSON))
-	Route[in, map[string]string](app).GET("/r").To(func(_ context.Context, req in) (map[string]string, error) {
+	app.MustMount(Handle(Get("/r"), StructInput[in](), JSONOutput[map[string]string](), func(_ context.Context, req in) (map[string]string, error) {
 		return map[string]string{"q": req.Q}, nil
-	})
+	}))
 
 	get := func(query string) string {
 		rec := httptest.NewRecorder()

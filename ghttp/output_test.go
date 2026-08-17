@@ -55,11 +55,9 @@ func TestEnvelopeUsesRouteProduces(t *testing.T) {
 		Name string `json:"name"`
 	}
 	app := New(WithEnvelope(DefaultEnvelope), WithProduces(MIMEJSON))
-	Route[struct{}, Resp](app).GET("/users/{id}").
-		Produces(MIMEXML).
-		To(func(context.Context, struct{}) (Resp, error) {
-			return Resp{Name: "alice"}, nil
-		})
+	app.MustMount(Handle(Get("/users/{id}"), StructInput[struct{}](), CodecOutput[Resp](MIMEXML), func(context.Context, struct{}) (Resp, error) {
+		return Resp{Name: "alice"}, nil
+	}))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/users/1", nil)
@@ -84,9 +82,9 @@ func TestTypedRouteAlwaysWritesOK(t *testing.T) {
 	}
 
 	server := New(WithProduces(MIMEJSON))
-	Route[struct{}, response](server).GET("/created").To(func(context.Context, struct{}) (response, error) {
+	server.MustMount(Handle(Get("/created"), StructInput[struct{}](), JSONOutput[response](), func(context.Context, struct{}) (response, error) {
 		return response{Status: http.StatusCreated}, nil
-	})
+	}))
 
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/created", nil))

@@ -96,10 +96,10 @@ func TestToGerrMapsStatusToKind(t *testing.T) {
 
 func TestServerWritesGerrStatusAndMessage(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[struct{}, struct{}](app).GET("/missing").To(func(context.Context, struct{}) (struct{}, error) {
+	app.MustMount(Handle(Get("/missing"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
 		he, _ := FromGerr(gerr.New("user not found", gerr.WithKind(gerr.KindNotFound)))
 		return struct{}{}, he
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/missing", nil))

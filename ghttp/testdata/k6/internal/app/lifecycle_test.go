@@ -191,9 +191,9 @@ func startStreamingLifecycleServer(t *testing.T) *lifecycleServer {
 	serverHandler := ghttp.New(ghttp.WithProduces(ghttp.MIMEJSON))
 	serverHandler.Use(observeRequests(metrics))
 	registerStreams(serverHandler, metrics)
-	ghttp.Route[struct{}, struct{}](serverHandler).GET("/__test/metrics").ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	serverHandler.MustMount(ghttp.RawOperation(http.MethodGet, "/__test/metrics", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, metrics.Snapshot())
-	}))
+	})))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Listen() error = %v", err)

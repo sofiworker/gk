@@ -63,7 +63,7 @@ func TestServerRenderHTMLViaBuilder(t *testing.T) {
 
 	app := New(WithRenderer(NewRenderer(tmpDir, ".html", template.FuncMap{}, false)))
 
-	Route[struct{}, struct{}](app).GET("/page").ToHTML(http.StatusCreated, "index", map[string]interface{}{"Title": "Hello"})
+	app.MustMount(HTMLViewOperation(http.MethodGet, "/page", http.StatusCreated, "index", map[string]interface{}{"Title": "Hello"}))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/page", nil)
@@ -99,10 +99,10 @@ func TestServerMiddlewareChainOrder(t *testing.T) {
 		})
 	})
 
-	Route[struct{}, struct{}](app).GET("/ok").ToRaw(func(w http.ResponseWriter, r *http.Request) {
+	app.MustMount(RawOperation(http.MethodGet, "/ok", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "handler")
 		w.WriteHeader(http.StatusNoContent)
-	})
+	})))
 
 	req := httptest.NewRequest(http.MethodGet, "/ok", nil)
 	rec := httptest.NewRecorder()
@@ -124,31 +124,31 @@ func TestServerRegistersAllStandardHTTPMethods(t *testing.T) {
 		register func(*Server, string)
 	}{
 		{http.MethodGet, "/standard/get", func(s *Server, path string) {
-			Route[struct{}, standardMethodOutput](s).GET(path).To(methodOutputHandler(http.MethodGet))
+			s.MustMount(Handle(Get(path), StructInput[struct{}](), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodGet)))
 		}},
 		{http.MethodHead, "/standard/head", func(s *Server, path string) {
-			Route[struct{}, standardMethodOutput](s).HEAD(path).To(methodOutputHandler(http.MethodHead))
+			s.MustMount(Handle(Head(path), StructInput[struct{}](), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodHead)))
 		}},
 		{http.MethodPost, "/standard/post", func(s *Server, path string) {
-			Route[struct{}, standardMethodOutput](s).POST(path).To(methodOutputHandler(http.MethodPost))
+			s.MustMount(Handle(Post(path), StructInput[struct{}](), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodPost)))
 		}},
 		{http.MethodPut, "/standard/put", func(s *Server, path string) {
-			Route[struct{}, standardMethodOutput](s).PUT(path).To(methodOutputHandler(http.MethodPut))
+			s.MustMount(Handle(Put(path), StructInput[struct{}](), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodPut)))
 		}},
 		{http.MethodPatch, "/standard/patch", func(s *Server, path string) {
-			Route[struct{}, standardMethodOutput](s).PATCH(path).To(methodOutputHandler(http.MethodPatch))
+			s.MustMount(Handle(Patch(path), StructInput[struct{}](), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodPatch)))
 		}},
 		{http.MethodDelete, "/standard/delete", func(s *Server, path string) {
-			Route[struct{}, standardMethodOutput](s).DELETE(path).To(methodOutputHandler(http.MethodDelete))
+			s.MustMount(Handle(Delete(path), StructInput[struct{}](), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodDelete)))
 		}},
 		{http.MethodConnect, "/standard/connect", func(s *Server, path string) {
-			Route[struct{}, standardMethodOutput](s).CONNECT(path).To(methodOutputHandler(http.MethodConnect))
+			s.MustMount(Handle(Connect(path), StructInput[struct{}](), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodConnect)))
 		}},
 		{http.MethodOptions, "/standard/options", func(s *Server, path string) {
-			Route[struct{}, standardMethodOutput](s).OPTIONS(path).To(methodOutputHandler(http.MethodOptions))
+			s.MustMount(Handle(Options(path), StructInput[struct{}](), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodOptions)))
 		}},
 		{http.MethodTrace, "/standard/trace", func(s *Server, path string) {
-			Route[struct{}, standardMethodOutput](s).TRACE(path).To(methodOutputHandler(http.MethodTrace))
+			s.MustMount(Handle(Trace(path), StructInput[struct{}](), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodTrace)))
 		}},
 	}
 
@@ -167,11 +167,11 @@ func TestServerRegistersAllStandardHTTPMethods(t *testing.T) {
 	}
 }
 
-func TestRouteBuilderANYRegistersAllStandardHTTPMethods(t *testing.T) {
+func TestOperationAllMethodsRegistersAllStandardHTTPMethods(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[struct{}, standardMethodOutput](app).ANY("/any").To(func(ctx context.Context, req struct{}) (standardMethodOutput, error) {
+	app.MustMount(AllMethods(Handle(Get("/any"), StructInput[struct{}](), JSONOutput[standardMethodOutput](), func(ctx context.Context, req struct{}) (standardMethodOutput, error) {
 		return standardMethodOutput{Method: ""}, nil
-	})
+	}))...)
 
 	methods := []string{
 		http.MethodGet,
@@ -194,18 +194,18 @@ func TestRouteBuilderANYRegistersAllStandardHTTPMethods(t *testing.T) {
 	}
 }
 
-func TestRouteBuilderToRequiresMethod(t *testing.T) {
+func TestOperationMountRequiresMethod(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	assertPanicsIs(t, ErrRouteMethodRequired, func() {
-		Route[struct{}, struct{}](app).To(func(context.Context, struct{}) (struct{}, error) {
+	assertPanicsIs(t, ErrOperationMethodRequired, func() {
+		app.MustMount(Handle(Endpoint("", "/missing-method"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
 			return struct{}{}, nil
-		})
+		}))
 	})
 }
 
-func TestRouteBuilderCUSTOMRegistersCustomMethod(t *testing.T) {
+func TestOperationCustomMethodRegistersCustomMethod(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[struct{}, standardMethodOutput](app).CUSTOM("PROPFIND", "/custom").To(methodOutputHandler("PROPFIND"))
+	app.MustMount(Handle(Endpoint("PROPFIND", "/custom"), StructInput[struct{}](), JSONOutput[standardMethodOutput](), methodOutputHandler("PROPFIND")))
 
 	req := httptest.NewRequest("PROPFIND", "/custom", nil)
 	rec := httptest.NewRecorder()
@@ -216,12 +216,12 @@ func TestRouteBuilderCUSTOMRegistersCustomMethod(t *testing.T) {
 	}
 }
 
-func TestRouteBuilderCUSTOMRejectsInvalidMethod(t *testing.T) {
+func TestOperationCustomMethodRejectsInvalidMethod(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	assertPanicsIs(t, ErrRouteMethodInvalid, func() {
-		Route[struct{}, struct{}](app).CUSTOM("BAD METHOD", "/custom").To(func(context.Context, struct{}) (struct{}, error) {
+	assertPanicsIs(t, ErrOperationMethodInvalid, func() {
+		app.MustMount(Handle(Endpoint("BAD METHOD", "/custom"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
 			return struct{}{}, nil
-		})
+		}))
 	})
 }
 
@@ -240,17 +240,12 @@ func TestServerOpenAPIEndpoint(t *testing.T) {
 	}
 
 	app := New(WithOpenAPI("accounts", "2.0.0"), WithProduces(MIMEJSON))
-	Route[req, resp](app).
-		GET("/users/{id}").
-		Doc(
-			Summary("get user"),
-			OperationID("getUser"),
-			Tags("users"),
-			Success(Message("user")),
-		).
-		To(func(context.Context, req) (resp, error) {
-			return resp{Name: "alice"}, nil
-		})
+	app.MustMount(Handle(Get("/users/{id}"), StructInput[req](), JSONOutput[resp](), func(context.Context, req) (resp, error) {
+		return resp{Name: "alice"}, nil
+	}).Doc(Summary("get user"),
+		OperationID("getUser"),
+		Tags("users"),
+		Success(Message("user"))))
 
 	httpReq := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
 	rec := httptest.NewRecorder()
@@ -282,10 +277,10 @@ func TestServerRouteUsesValidator(t *testing.T) {
 	app := New(WithValidator(serverValidatorFunc(func(ctx context.Context, input interface{}) error {
 		return wantErr
 	})), WithProduces(MIMEJSON))
-	Route[struct{}, struct{}](app).GET("/validate").To(func(context.Context, struct{}) (struct{}, error) {
+	app.MustMount(Handle(Get("/validate"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
 		t.Fatal("handler should not run after validation error")
 		return struct{}{}, nil
-	})
+	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/validate", nil)
 	rec := httptest.NewRecorder()
@@ -305,10 +300,10 @@ func TestServerUsesGoPlaygroundValidatorWhenExplicit(t *testing.T) {
 	type output struct{}
 
 	app := New(WithProduces(MIMEJSON), WithValidator(newDefaultValidator()))
-	Route[input, output](app).POST("/validate/default").To(func(context.Context, input) (output, error) {
+	app.MustMount(Handle(Post("/validate/default"), StructInput[input](), JSONOutput[output](), func(context.Context, input) (output, error) {
 		t.Fatal("handler should not run after default validation error")
 		return output{}, nil
-	})
+	}))
 
 	req := httptest.NewRequest(http.MethodPost, "/validate/default", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -479,9 +474,9 @@ func TestServerRunExposesActualAddrForZeroPort(t *testing.T) {
 
 func TestServerServeUsesExistingListener(t *testing.T) {
 	app := New()
-	Route[struct{}, struct{}](app).GET("/ping").ToRaw(func(w http.ResponseWriter, r *http.Request) {
+	app.MustMount(RawOperation(http.MethodGet, "/ping", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("pong"))
-	})
+	})))
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -622,15 +617,15 @@ func TestGroupRouteRegistersRouteWithPrefixAndMiddleware(t *testing.T) {
 		})
 	})
 
-	Route[struct{}, struct {
+	group.MustMount(Handle(Get("/ping"), StructInput[struct{}](), JSONOutput[struct {
 		OK bool `json:"ok"`
-	}](group).GET("/ping").To(func(context.Context, struct{}) (struct {
+	}](), func(context.Context, struct{}) (struct {
 		OK bool `json:"ok"`
 	}, error) {
 		return struct {
 			OK bool `json:"ok"`
 		}{OK: true}, nil
-	})
+	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/ping", nil)
 	rec := httptest.NewRecorder()
@@ -662,10 +657,10 @@ func TestNestedGroupCombinesPrefixAndMiddlewares(t *testing.T) {
 		})
 	})
 
-	Route[struct{}, struct{}](users).GET("/me").ToRaw(func(w http.ResponseWriter, r *http.Request) {
+	users.MustMount(RawOperation(http.MethodGet, "/me", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "handler")
 		w.WriteHeader(http.StatusNoContent)
-	})
+	})))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/users/me", nil)
 	rec := httptest.NewRecorder()
@@ -680,7 +675,7 @@ func TestNestedGroupCombinesPrefixAndMiddlewares(t *testing.T) {
 	}
 }
 
-func TestGroupRouteBuilderUsesGroupPath(t *testing.T) {
+func TestGroupOperationUsesGroupPath(t *testing.T) {
 	type input struct {
 		Params `json:"-"`
 	}
@@ -690,11 +685,9 @@ func TestGroupRouteBuilderUsesGroupPath(t *testing.T) {
 
 	app := New(WithProduces(MIMEJSON))
 	group := app.Group("/api")
-	Route[input, output](group).
-		GET("/users/{id}").
-		To(func(ctx context.Context, req input) (output, error) {
-			return output{ID: req.Path("id")}, nil
-		})
+	group.MustMount(Handle(Get("/users/{id}"), StructInput[input](), JSONOutput[output](), func(ctx context.Context, req input) (output, error) {
+		return output{ID: req.Path("id")}, nil
+	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/users/42", nil)
 	rec := httptest.NewRecorder()
@@ -708,19 +701,16 @@ func TestGroupRouteBuilderUsesGroupPath(t *testing.T) {
 	}
 }
 
-func TestGroupRouteBuilderUsesGroupPathInOpenAPI(t *testing.T) {
+func TestGroupOperationUsesGroupPathInOpenAPI(t *testing.T) {
 	type input struct{}
 	type output struct{}
 
 	app := New(WithOpenAPI("api", "1.0.0"), WithProduces(MIMEJSON))
 	group := app.Group("/api")
 
-	Route[input, output](group).
-		POST("/users").
-		Doc(Summary("create user")).
-		To(func(context.Context, input) (output, error) {
-			return output{}, nil
-		})
+	group.MustMount(Handle(Post("/users"), StructInput[input](), JSONOutput[output](), func(context.Context, input) (output, error) {
+		return output{}, nil
+	}).Doc(Summary("create user")))
 
 	spec := serverOpenAPISpec(t, app)
 	var doc map[string]interface{}

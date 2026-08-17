@@ -9,9 +9,9 @@ import (
 
 func TestHostValidationDisabledByDefault(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[map[string]string, map[string]string](app).GET("/ping").ToNoInput(func(ctx context.Context) (map[string]string, error) {
+	app.MustMount(HandleNoInput(Get("/ping"), JSONOutput[map[string]string](), func(ctx context.Context) (map[string]string, error) {
 		return map[string]string{"ok": "true"}, nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/ping", nil)
@@ -27,9 +27,9 @@ func TestAllowedHostsExactMatch(t *testing.T) {
 		WithProduces(MIMEJSON),
 		WithHostValidator(AllowedHosts("api.example.com")),
 	)
-	Route[map[string]string, map[string]string](app).GET("/ping").ToNoInput(func(ctx context.Context) (map[string]string, error) {
+	app.MustMount(HandleNoInput(Get("/ping"), JSONOutput[map[string]string](), func(ctx context.Context) (map[string]string, error) {
 		return map[string]string{"ok": "true"}, nil
-	})
+	}))
 
 	// 匹配放行
 	w := httptest.NewRecorder()

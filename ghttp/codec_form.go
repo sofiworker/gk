@@ -41,29 +41,31 @@ func (c *FormCodec) Unmarshal(r io.Reader, v interface{}) error {
 	if err != nil {
 		return err
 	}
-	switch target := v.(type) {
-	case *url.Values:
-		*target = values
+	target, err := indirectDecodeValue(v)
+	if err != nil {
+		return fmt.Errorf("form codec: %w", err)
+	}
+	switch {
+	case target.Type() == reflect.TypeOf(url.Values{}):
+		target.Set(reflect.ValueOf(values))
 		return nil
-	case *map[string]string:
+	case target.Type() == reflect.TypeOf(map[string]string{}):
 		out := make(map[string]string, len(values))
 		for k, vs := range values {
 			out[k] = vs[0]
 		}
-		*target = out
+		target.Set(reflect.ValueOf(out))
 		return nil
-	case *string:
-		*target = string(data)
+	case target.Kind() == reflect.String:
+		target.SetString(string(data))
 		return nil
-	case *[]byte:
-		*target = data
+	case target.Kind() == reflect.Slice && target.Type().Elem().Kind() == reflect.Uint8:
+		target.SetBytes(data)
 		return nil
+	case target.Kind() == reflect.Struct:
+		return fillFormStruct(values, target)
 	default:
-		rv := reflect.ValueOf(v)
-		if rv.Kind() != reflect.Ptr || rv.IsNil() || rv.Elem().Kind() != reflect.Struct {
-			return fmt.Errorf("form codec: unsupported target %T", v)
-		}
-		return fillFormStruct(values, rv.Elem())
+		return fmt.Errorf("form codec: unsupported target %T", v)
 	}
 }
 

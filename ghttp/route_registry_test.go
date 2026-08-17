@@ -165,29 +165,7 @@ func TestRouteDefinitionCloneDeepCopiesDocumentation(t *testing.T) {
 	}
 }
 
-func TestRouteBuilderFinalizesAtTerminal(t *testing.T) {
-	t.Parallel()
-
-	server := New(WithProduces(MIMEJSON))
-	builder := Route[struct{}, struct{}](server).GET("/users")
-	builder.To(func(context.Context, struct{}) (struct{}, error) {
-		return struct{}{}, nil
-	})
-
-	if got := len(server.registry.snapshot()); got != 1 {
-		t.Fatalf("definition count = %d, want 1", got)
-	}
-	assertRoutePanic(t, ErrRouteBuilderFinalized, func() {
-		builder.Use(func(next http.Handler) http.Handler { return next })
-	})
-	assertRoutePanic(t, ErrRouteBuilderFinalized, func() {
-		builder.To(func(context.Context, struct{}) (struct{}, error) {
-			return struct{}{}, nil
-		})
-	})
-}
-
-func TestRouteBuilderRejectsNilTypedHandler(t *testing.T) {
+func TestOperationRejectsNilTypedHandler(t *testing.T) {
 	t.Parallel()
 
 	server := New(WithProduces(MIMEJSON))
@@ -198,10 +176,10 @@ func TestRouteBuilderRejectsNilTypedHandler(t *testing.T) {
 			t.Fatal("To(nil) did not panic")
 		}
 	}()
-	Route[struct{}, struct{}](server).GET("/users").To(handler)
+	server.MustMount(Handle(Get("/users"), StructInput[struct{}](), JSONOutput[struct{}](), handler))
 }
 
-func TestRouteBuilderRejectsNilRawHandler(t *testing.T) {
+func TestOperationRejectsNilRawHandler(t *testing.T) {
 	t.Parallel()
 
 	server := New()
@@ -212,10 +190,10 @@ func TestRouteBuilderRejectsNilRawHandler(t *testing.T) {
 			t.Fatal("ToHTTP(nil) did not panic")
 		}
 	}()
-	Route[struct{}, struct{}](server).GET("/users").ToHTTP(handler)
+	server.MustMount(RawOperation(http.MethodGet, "/users", handler))
 }
 
-func TestRouteBuilderRejectsNilParsedHandler(t *testing.T) {
+func TestOperationRejectsNilParsedHandler(t *testing.T) {
 	t.Parallel()
 
 	server := New()
@@ -226,10 +204,10 @@ func TestRouteBuilderRejectsNilParsedHandler(t *testing.T) {
 			t.Fatal("ToHTTPFunc(nil) did not panic")
 		}
 	}()
-	Route[struct{}, struct{}](server).GET("/users").ToHTTPFunc(handler)
+	server.MustMount(HandleHTTP(Get("/users"), StructInput[struct{}](), handler))
 }
 
-func TestRouteBuilderRejectsEmptyStaticRootAtTerminal(t *testing.T) {
+func TestOperationRejectsEmptyStaticRoot(t *testing.T) {
 	t.Parallel()
 
 	server := New()
@@ -238,25 +216,10 @@ func TestRouteBuilderRejectsEmptyStaticRootAtTerminal(t *testing.T) {
 			t.Fatal("ToStatic() did not panic")
 		}
 	}()
-	Route[struct{}, struct{}](server).GET("/files").ToStatic()
+	server.MustMount(StaticDirectory("/files", ""))
 }
 
-func TestRouteBuilderRejectsUnsupportedValidatorAtTerminal(t *testing.T) {
-	t.Parallel()
-
-	server := New(WithProduces(MIMEJSON))
-	builder := Route[struct{}, struct{}](server).GET("/users").Validate(func() {})
-	defer func() {
-		if recover() == nil {
-			t.Fatal("To with unsupported validator did not panic")
-		}
-	}()
-	builder.To(func(context.Context, struct{}) (struct{}, error) {
-		return struct{}{}, nil
-	})
-}
-
-func TestRouteBuilderRejectsNilSpecializedHandlers(t *testing.T) {
+func TestOperationRejectsNilSpecializedHandlers(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -267,21 +230,21 @@ func TestRouteBuilderRejectsNilSpecializedHandlers(t *testing.T) {
 			name: "redirect",
 			register: func(server *Server) {
 				var handler RedirectFunc[struct{}]
-				Route[struct{}, struct{}](server).GET("/users").ToRedirectFunc(http.StatusFound, handler)
+				server.MustMount(RedirectFuncOperation(Get("/users"), StructInput[struct{}](), http.StatusFound, handler))
 			},
 		},
 		{
 			name: "sse",
 			register: func(server *Server) {
 				var handler SSEHandler
-				Route[struct{}, struct{}](server).GET("/users").ToSSE(handler)
+				server.MustMount(SSEOperation("/users", StructInput[Params](), handler))
 			},
 		},
 		{
 			name: "websocket",
 			register: func(server *Server) {
 				var handler WebSocketHandler
-				Route[struct{}, struct{}](server).GET("/users").ToWebSocket(handler)
+				server.MustMount(WebSocketOperation("/users", StructInput[Params](), handler))
 			},
 		},
 	}
@@ -298,22 +261,20 @@ func TestRouteBuilderRejectsNilSpecializedHandlers(t *testing.T) {
 	}
 }
 
-func TestRouteBuilderCustomKeepsOriginalMethod(t *testing.T) {
+func TestOperationNormalizesCustomMethod(t *testing.T) {
 	t.Parallel()
 
 	server := New(WithProduces(MIMEJSON))
-	Route[struct{}, struct{}](server).
-		CUSTOM("purge", "/cache/{key}").
-		To(func(context.Context, struct{}) (struct{}, error) {
-			return struct{}{}, nil
-		})
+	server.MustMount(Handle(Endpoint("purge", "/cache/{key}"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
+		return struct{}{}, nil
+	}))
 
 	definitions := server.registry.snapshot()
 	if len(definitions) != 1 {
 		t.Fatalf("definition count = %d, want 1", len(definitions))
 	}
-	if got := definitions[0].method; got != "purge" {
-		t.Fatalf("method = %q, want purge", got)
+	if got := definitions[0].method; got != "PURGE" {
+		t.Fatalf("method = %q, want PURGE", got)
 	}
 }
 

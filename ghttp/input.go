@@ -19,7 +19,27 @@ type structInfo struct {
 	bodyLazy   bool
 	isLazyBody bool
 	usesParams bool
+	pathOnly   bool
+	tagged     []taggedParamField
 	err        error
+}
+
+type taggedParamSource uint8
+
+const (
+	taggedPath taggedParamSource = iota
+	taggedQuery
+	taggedHeader
+	taggedCookie
+)
+
+type taggedParamField struct {
+	index      int
+	name       string
+	source     taggedParamSource
+	defaultVal string
+	fieldName  string
+	collection bool
 }
 
 var (
@@ -35,7 +55,6 @@ func getStructInfo(t reflect.Type) *structInfo {
 	info.isLazyBody = t.Implements(bodyFieldMarkerType)
 	paramsType := reflect.TypeOf(Params{})
 	paramsPtrType := reflect.TypeOf((*Params)(nil))
-	info.usesParams = structHasBindingTags(t)
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
 		if f.Anonymous && f.Type == paramsType {
@@ -77,27 +96,43 @@ func getStructInfo(t reflect.Type) *structInfo {
 			info.err = ErrBodyFieldMustBeValue
 			break
 		}
+		if f.IsExported() {
+			for _, tag := range [...]struct {
+				source taggedParamSource
+				name   string
+			}{
+				{taggedPath, "path"},
+				{taggedQuery, "query"},
+				{taggedHeader, "header"},
+				{taggedCookie, "cookie"},
+			} {
+				name, ok := bindingName(f.Tag.Get(tag.name))
+				if !ok {
+					continue
+				}
+				info.tagged = append(info.tagged, taggedParamField{
+					index:      i,
+					name:       name,
+					source:     tag.source,
+					defaultVal: f.Tag.Get("default"),
+					fieldName:  f.Name,
+					collection: isCollectionType(f.Type),
+				})
+				break
+			}
+		}
 	}
-	if info.paramsIdx >= 0 {
-		info.usesParams = true
+	info.usesParams = info.paramsIdx >= 0 || len(info.tagged) > 0
+	info.pathOnly = info.paramsIdx < 0 && len(info.tagged) > 0
+	for _, binding := range info.tagged {
+		if binding.source != taggedPath {
+			info.pathOnly = false
+			break
+		}
 	}
 
 	structCache.Store(t, info)
 	return info
-}
-
-// structHasBindingTags 报告结构体是否有 path/query/header/cookie 绑定 tag。
-// structHasBindingTags reports whether the struct carries any binding tag.
-func structHasBindingTags(t reflect.Type) bool {
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-		for _, tag := range []string{"path", "query", "header", "cookie"} {
-			if name, ok := bindingName(f.Tag.Get(tag)); ok && name != "" {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func invalidParamsUsageError(t reflect.Type, f reflect.StructField, reason string) error {
@@ -162,8 +197,9 @@ func validateRequestParamsUsage[Req any]() error {
 	return validateInputParamsUsage(reflect.TypeOf(input))
 }
 
-// BodyDecodeFunc 将请求体解码到 target。
-// BodyDecodeFunc decodes a request body into target.
+// BodyDecodeFunc 将请求体解码到 Body 字段地址；Body *T 的 target 类型为 **T。
+// BodyDecodeFunc decodes a request body into the Body field address; target is
+// **T when the field type is *T.
 type BodyDecodeFunc func(r io.Reader, ct string, target interface{}) error
 
 func ParseInput(r *http.Request, input interface{}) error {
@@ -179,6 +215,14 @@ func parseInputWithConfig(r *http.Request, input interface{}, c *Config) error {
 }
 
 func parseInputWithConfigAndPathParams(r *http.Request, input interface{}, c *Config, codecMgr *CodecManager, routeParams pathParamList) error {
+	return parseCompiledInput(r, input, c, codecMgr, routeParams, nil)
+}
+
+// parseCompiledInput 使用注册期 structInfo 构建请求输入；info 为 nil 时保留
+// ParseInput 的独立调用语义并现场查找缓存。
+// parseCompiledInput builds request input with registration-time structInfo;
+// a nil info preserves standalone ParseInput behavior by consulting the cache.
+func parseCompiledInput(r *http.Request, input interface{}, c *Config, codecMgr *CodecManager, routeParams pathParamList, info *structInfo) error {
 	v := reflect.ValueOf(input)
 	if v.Kind() != reflect.Ptr || v.IsNil() {
 		return nil
@@ -189,10 +233,15 @@ func parseInputWithConfigAndPathParams(r *http.Request, input interface{}, c *Co
 	// 顶层简写:Req 本身就是 Body[T] 时直接装句柄,不走结构体扫描。
 	// top-level shorthand: when Req itself is Body[T], install the handle
 	// directly instead of scanning the struct.
-	if t := v.Type().Elem(); t.Kind() == reflect.Struct && getStructInfo(t).isLazyBody {
-		if setter, ok := input.(bodySourceSetter); ok {
-			setter.setBodySource(newBodySource(r, c, codecMgr))
-			return nil
+	if t := v.Type().Elem(); t.Kind() == reflect.Struct {
+		if info == nil {
+			info = getStructInfo(t)
+		}
+		if info.isLazyBody {
+			if setter, ok := input.(bodySourceSetter); ok {
+				setter.setBodySource(newBodySource(r, c, codecMgr))
+				return nil
+			}
 		}
 	}
 	v = v.Elem()
@@ -205,22 +254,33 @@ func parseInputWithConfigAndPathParams(r *http.Request, input interface{}, c *Co
 		v.Set(reflect.ValueOf(paramsFromRequestWithPathParams(r, c, routeParams)))
 		return nil
 	}
-	info := getStructInfo(t)
+	if info == nil {
+		info = getStructInfo(t)
+	}
 	if info.err != nil {
 		return info.err
 	}
 	// 结构体既无 Params 嵌入也无绑定 tag 时,完全跳过 Params 视图。
 	// skip the Params view entirely when the struct uses neither.
 	if info.usesParams {
-		params := paramsFromRequestWithPathParams(r, c, routeParams)
+		var params Params
+		if info.pathOnly && routeParams.Len() > 0 {
+			// 仅 path tag 的输入直接使用 matcher 已提取的内联参数，不构造
+			// 请求级 Params 状态。
+			// Path-only tagged input consumes the matcher's inline params without
+			// constructing request-scoped Params state.
+			params.path = routeParams
+		} else {
+			params = paramsFromRequestWithPathParams(r, c, routeParams)
+		}
+		if err := bindTaggedParams(v, info, &params); err != nil {
+			return err
+		}
 		if info.paramsIdx >= 0 {
 			// 按具体类型赋值,避免 reflect.Set 经 copyVal 为整个 Params 再分配。
 			// assign by concrete type to avoid reflect.Set allocating a copy of
 			// the whole Params via copyVal.
 			*(v.Field(info.paramsIdx).Addr().Interface().(*Params)) = params
-		}
-		if err := bindTaggedParams(v, info, params); err != nil {
-			return err
 		}
 	}
 
@@ -250,54 +310,169 @@ func parseInputWithConfigAndPathParams(r *http.Request, input interface{}, c *Co
 	return nil
 }
 
-func bindTaggedParams(v reflect.Value, info *structInfo, params Params) error {
-	t := v.Type()
-	for i := 0; i < t.NumField(); i++ {
-		if i == info.bodyIdx || i == info.paramsIdx {
-			continue
-		}
-		fieldInfo := t.Field(i)
-		if !fieldInfo.IsExported() {
-			continue
-		}
-		field := v.Field(i)
+func bindTaggedParams(v reflect.Value, info *structInfo, params *Params) error {
+	for _, binding := range info.tagged {
+		field := v.Field(binding.index)
 		if !field.CanSet() {
 			continue
 		}
-		if err := bindTaggedParamField(field, fieldInfo, params); err != nil {
-			return err
+		if binding.collection {
+			var values []string
+			switch binding.source {
+			case taggedQuery:
+				values = params.QueryList(binding.name)
+			case taggedHeader:
+				values = params.HeaderList(binding.name)
+			default:
+				value := taggedParamValue(params, binding)
+				if value != "" {
+					values = []string{value}
+				}
+			}
+			if len(values) == 0 && binding.defaultVal != "" {
+				values = []string{binding.defaultVal}
+			}
+			if len(values) == 0 {
+				continue
+			}
+			if err := setValuesFromStrings(field, values); err != nil {
+				return fmt.Errorf("bind %s parameter %q to %s: %w", binding.source, binding.name, binding.fieldName, err)
+			}
+			continue
+		}
+		value := taggedParamValue(params, binding)
+		if value == "" {
+			value = binding.defaultVal
+		}
+		if value == "" {
+			continue
+		}
+		if err := setValueFromString(field, value); err != nil {
+			return fmt.Errorf("bind %s parameter %q to %s: %w", binding.source, binding.name, binding.fieldName, err)
 		}
 	}
 	return nil
 }
 
-func bindTaggedParamField(field reflect.Value, fieldInfo reflect.StructField, params Params) error {
-	for _, binding := range []struct {
-		tag string
-		get func(string) string
-	}{
-		{tag: "path", get: params.Path},
-		{tag: "query", get: params.Query},
-		{tag: "header", get: params.Header},
-		{tag: "cookie", get: params.Cookie},
-	} {
-		name, ok := bindingName(fieldInfo.Tag.Get(binding.tag))
-		if !ok {
-			continue
-		}
-		value := binding.get(name)
-		if value == "" {
-			value = fieldInfo.Tag.Get("default")
-		}
-		if value == "" {
-			return nil
-		}
-		if err := setValueFromString(field, value); err != nil {
-			return fmt.Errorf("bind %s parameter %q to %s: %w", binding.tag, name, fieldInfo.Name, err)
-		}
+// bindDirectPathInput 执行注册期确认的 path-only 绑定计划。
+// bindDirectPathInput executes a registration-validated path-only binding plan.
+func bindDirectPathInput(target any, info *structInfo, params pathParamList) error {
+	if info == nil || !info.pathOnly {
 		return nil
 	}
+	v := reflect.ValueOf(target)
+	if v.Kind() != reflect.Ptr || v.IsNil() {
+		return nil
+	}
+	v = v.Elem()
+	if v.Kind() != reflect.Struct {
+		return nil
+	}
+	for _, binding := range info.tagged {
+		field := v.Field(binding.index)
+		if !field.CanSet() {
+			continue
+		}
+		value := params.Get(binding.name)
+		if value == "" {
+			value = binding.defaultVal
+		}
+		if value == "" {
+			continue
+		}
+		if binding.collection {
+			if err := setValuesFromStrings(field, []string{value}); err != nil {
+				return fmt.Errorf("bind path parameter %q to %s: %w", binding.name, binding.fieldName, err)
+			}
+			continue
+		}
+		if err := setValueFromString(field, value); err != nil {
+			return fmt.Errorf("bind path parameter %q to %s: %w", binding.name, binding.fieldName, err)
+		}
+	}
 	return nil
+}
+
+func (s taggedParamSource) String() string {
+	switch s {
+	case taggedPath:
+		return "path"
+	case taggedQuery:
+		return "query"
+	case taggedHeader:
+		return "header"
+	case taggedCookie:
+		return "cookie"
+	default:
+		return "unknown"
+	}
+}
+
+func taggedParamValue(params *Params, binding taggedParamField) string {
+	switch binding.source {
+	case taggedPath:
+		if params == nil {
+			return ""
+		}
+		if value := params.path.Get(binding.name); value != "" {
+			return value
+		}
+		if params.state != nil && params.state.lazyPath != nil {
+			// tag 绑定把已解码值写入 Params 的内联数组；随后复制给嵌入
+			// Params，handler 再读取同一 key 时无需分配或重复解码。
+			// Tag binding stores decoded values in Params' inline array; the
+			// embedded Params copy can reuse them without allocation or re-decoding.
+			return params.state.lazyPath.get(binding.name, &params.path)
+		}
+		return ""
+	case taggedQuery:
+		return params.Query(binding.name)
+	case taggedHeader:
+		return params.Header(binding.name)
+	case taggedCookie:
+		return params.Cookie(binding.name)
+	default:
+		return ""
+	}
+}
+
+func isCollectionType(t reflect.Type) bool {
+	for t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	return t.Kind() == reflect.Slice || t.Kind() == reflect.Array
+}
+
+func setValuesFromStrings(field reflect.Value, values []string) error {
+	for field.Kind() == reflect.Ptr {
+		if field.IsNil() {
+			field.Set(reflect.New(field.Type().Elem()))
+		}
+		field = field.Elem()
+	}
+	switch field.Kind() {
+	case reflect.Slice:
+		result := reflect.MakeSlice(field.Type(), len(values), len(values))
+		for i, value := range values {
+			if err := setValueFromString(result.Index(i), value); err != nil {
+				return fmt.Errorf("element %d: %w", i, err)
+			}
+		}
+		field.Set(result)
+		return nil
+	case reflect.Array:
+		if len(values) != field.Len() {
+			return fmt.Errorf("got %d values for array length %d", len(values), field.Len())
+		}
+		for i, value := range values {
+			if err := setValueFromString(field.Index(i), value); err != nil {
+				return fmt.Errorf("element %d: %w", i, err)
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported collection kind %s", field.Kind())
+	}
 }
 
 func bindingName(tag string) (string, bool) {
@@ -356,8 +531,13 @@ func setValueFromString(field reflect.Value, value string) error {
 }
 
 func parseBody(r *http.Request, bodyField reflect.Value, c *Config, codecMgr *CodecManager) error {
-	if bodyField.Kind() != reflect.Struct || bodyField.Type().NumField() == 0 {
-		return nil
+	if !bodyField.CanAddr() || !bodyField.CanSet() {
+		return fmt.Errorf("ghttp: body field is not settable")
+	}
+	if bodyField.Kind() == reflect.Ptr {
+		if bodyField.IsNil() {
+			bodyField.Set(reflect.New(bodyField.Type().Elem()))
+		}
 	}
 
 	ct := r.Header.Get("Content-Type")

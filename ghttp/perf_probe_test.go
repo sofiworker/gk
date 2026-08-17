@@ -101,7 +101,7 @@ func BenchmarkProbe_ClientIPResolve(b *testing.B) {
 // --- Input construction in the typed handler path (compiled at registration) ---
 
 func BenchmarkProbe_CompiledInputConstruct(b *testing.B) {
-	ci := compileInput[probeInput]()
+	ci := compileStructInput[probeInput]()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		target := ci.newTarget()
@@ -110,7 +110,7 @@ func BenchmarkProbe_CompiledInputConstruct(b *testing.B) {
 }
 
 func BenchmarkProbe_CompiledInputConstructPtr(b *testing.B) {
-	ci := compileInput[*probeInput]()
+	ci := compileStructInput[*probeInput]()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		target := ci.newTarget()
@@ -234,9 +234,9 @@ func BenchmarkProbe_FullChainInProcess(b *testing.B) {
 		ID   string `json:"id"`
 		Page string `json:"page"`
 	}
-	Route[probeInput, out](s).GET("/users/{id}").To(func(ctx context.Context, req probeInput) (out, error) {
+	s.MustMount(Handle(Get("/users/{id}"), StructInput[probeInput](), JSONOutput[out](), func(ctx context.Context, req probeInput) (out, error) {
 		return out{ID: req.Path("id"), Page: req.Query("page")}, nil
-	})
+	}))
 	// warm: finalize routes
 	warm := httptest.NewRecorder()
 	s.ServeHTTP(warm, probeRequest())
@@ -257,10 +257,10 @@ func BenchmarkProbe_FullChainInProcess(b *testing.B) {
 // Raw handler via same router, as the framework-floor reference.
 func BenchmarkProbe_FullChainRawHandler(b *testing.B) {
 	s := New(WithProduces(MIMEJSON))
-	Route[struct{}, struct{}](s).GET("/users/{id}").ToRaw(func(w http.ResponseWriter, r *http.Request) {
+	s.MustMount(RawOperation(http.MethodGet, "/users/{id}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"42"}`))
-	})
+	})))
 	warm := httptest.NewRecorder()
 	s.ServeHTTP(warm, probeRequest())
 
@@ -281,9 +281,9 @@ func BenchmarkProbe_FullChainInProcessPost(b *testing.B) {
 	type out struct {
 		Name string `json:"name"`
 	}
-	Route[probeInput, out](s).POST("/users/{id}").To(func(ctx context.Context, req probeInput) (out, error) {
+	s.MustMount(Handle(Post("/users/{id}"), StructInput[probeInput](), JSONOutput[out](), func(ctx context.Context, req probeInput) (out, error) {
 		return out{Name: req.Body.Name}, nil
-	})
+	}))
 	body := `{"name":"Alice","email":"a@b.c","age":30}`
 	mk := func() *http.Request {
 		r := httptest.NewRequest("POST", "/users/42", strings.NewReader(body))
@@ -307,15 +307,16 @@ func BenchmarkProbe_FullChainInProcessPost(b *testing.B) {
 
 func TestFullChainAllocBudget(t *testing.T) {
 	server := New(WithProduces(MIMEJSON))
-	Route[Params, struct {
+
+	server.MustMount(Handle(Get("/users/{id}"), StructInput[Params](), JSONOutput[struct {
 		ID string `json:"id"`
-	}](server).GET("/users/{id}").To(func(context.Context, Params) (struct {
+	}](), func(context.Context, Params) (struct {
 		ID string `json:"id"`
 	}, error) {
 		return struct {
 			ID string `json:"id"`
 		}{ID: "42"}, nil
-	})
+	}))
 	req := httptest.NewRequest(http.MethodGet, "/users/42", nil)
 	rec := httptest.NewRecorder()
 	res := testing.Benchmark(func(b *testing.B) {
@@ -349,7 +350,7 @@ func BenchmarkProbe_FullChainOptimizedPrototype(b *testing.B) {
 		return out{ID: p.Path("id"), Page: p.Query("page")}, nil
 	}
 
-	Route[struct{}, struct{}](s).GET("/users/{id}").ToHTTP(pathParamHandlerFunc(
+	s.MustMount(RawOperation(http.MethodGet, "/users/{id}", pathParamHandlerFunc(
 		func(w http.ResponseWriter, r *http.Request, params pathParamList) {
 			p := lazyParams{r: r, path: params}
 			resp, err := handler(r.Context(), &p)
@@ -360,7 +361,7 @@ func BenchmarkProbe_FullChainOptimizedPrototype(b *testing.B) {
 			w.Header().Set("Content-Type", MIMEJSON)
 			w.WriteHeader(200)
 			_ = codec.Marshal(w, &resp)
-		}))
+		})))
 
 	warm := httptest.NewRecorder()
 	s.ServeHTTP(warm, probeRequest())

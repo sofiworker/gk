@@ -22,11 +22,9 @@ func TestServerErrorHandlerReceivesSanitizedInternalError(t *testing.T) {
 			w.WriteHeader(http.StatusTeapot)
 		}),
 	)
-	Route[struct{}, struct{}](server).
-		GET("/broken").
-		To(func(context.Context, struct{}) (struct{}, error) {
-			return struct{}{}, cause
-		})
+	server.MustMount(Handle(Get("/broken"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
+		return struct{}{}, cause
+	}))
 
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/broken", nil))
@@ -52,9 +50,8 @@ func TestServerErrorHandlerHandlesRouteOutcomes(t *testing.T) {
 		received = append(received, err.Code)
 		w.WriteHeader(http.StatusTeapot)
 	}))
-	Route[struct{}, struct{}](server).
-		GET("/users/{id}").
-		ToHTTP(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	server.MustMount(RawOperation(http.MethodGet, "/users/{id}",
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))
 
 	for _, request := range []*http.Request{
 		httptest.NewRequest(http.MethodGet, "/missing", nil),
@@ -75,9 +72,9 @@ func TestServerRecoversPanicsWithoutLeakingDetails(t *testing.T) {
 	t.Parallel()
 
 	server := New(WithProduces(MIMEJSON))
-	Route[struct{}, struct{}](server).GET("/panic").To(func(context.Context, struct{}) (struct{}, error) {
+	server.MustMount(Handle(Get("/panic"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
 		panic("secret detail")
-	})
+	}))
 
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/panic", nil))
@@ -98,9 +95,9 @@ func TestServerFallsBackWhenErrorHandlerPanics(t *testing.T) {
 			panic("error handler panic")
 		}),
 	)
-	Route[struct{}, struct{}](server).GET("/panic").To(func(context.Context, struct{}) (struct{}, error) {
+	server.MustMount(Handle(Get("/panic"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
 		panic("handler panic")
-	})
+	}))
 
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/panic", nil))
@@ -120,11 +117,9 @@ func TestServerDoesNotReenterErrorHandlerAfterItsPanic(t *testing.T) {
 			panic("error handler panic")
 		}),
 	)
-	Route[struct{}, struct{}](server).
-		GET("/error").
-		To(func(context.Context, struct{}) (struct{}, error) {
-			return struct{}{}, errors.New("handler error")
-		})
+	server.MustMount(Handle(Get("/error"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
+		return struct{}{}, errors.New("handler error")
+	}))
 
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/error", nil))
@@ -140,9 +135,9 @@ func TestDefaultErrorResponseDoesNotExposeInternalError(t *testing.T) {
 	t.Parallel()
 
 	server := New(WithProduces(MIMEJSON))
-	Route[struct{}, struct{}](server).GET("/broken").To(func(context.Context, struct{}) (struct{}, error) {
+	server.MustMount(Handle(Get("/broken"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
 		return struct{}{}, errors.New("database password leaked")
-	})
+	}))
 
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/broken", nil))
@@ -162,13 +157,11 @@ func TestServerDoesNotRewriteCommittedSelfWrittenError(t *testing.T) {
 		errorHandlerCalls++
 		http.Error(w, "replacement", http.StatusInternalServerError)
 	}))
-	Route[struct{}, struct{}](server).
-		GET("/write-then-fail").
-		ToHTTPFunc(func(w http.ResponseWriter, _ *http.Request, _ struct{}) error {
-			w.WriteHeader(http.StatusAccepted)
-			_, _ = w.Write([]byte("accepted"))
-			return errors.New("after write")
-		})
+	server.MustMount(HandleHTTP(Get("/write-then-fail"), StructInput[struct{}](), func(w http.ResponseWriter, _ *http.Request, _ struct{}) error {
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte("accepted"))
+		return errors.New("after write")
+	}))
 
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/write-then-fail", nil))
@@ -191,13 +184,12 @@ func TestServerDoesNotRewriteCommittedPanic(t *testing.T) {
 	server := New(WithErrorHandler(func(http.ResponseWriter, *http.Request, *HTTPError) {
 		errorHandlerCalls++
 	}))
-	Route[struct{}, struct{}](server).
-		GET("/write-then-panic").
-		ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server.MustMount(RawOperation(http.MethodGet, "/write-then-panic",
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusAccepted)
 			_, _ = w.Write([]byte("accepted"))
 			panic("after write")
-		}))
+		})))
 
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/write-then-panic", nil))
@@ -218,13 +210,11 @@ func TestServerDoesNotRewriteCommittedErrorInsideTimeout(t *testing.T) {
 		http.Error(w, "replacement", http.StatusInternalServerError)
 	}))
 	server.Use(Timeout(time.Second))
-	Route[struct{}, struct{}](server).
-		GET("/write-then-fail").
-		ToHTTPFunc(func(w http.ResponseWriter, _ *http.Request, _ struct{}) error {
-			w.WriteHeader(http.StatusAccepted)
-			_, _ = w.Write([]byte("accepted"))
-			return errors.New("after write")
-		})
+	server.MustMount(HandleHTTP(Get("/write-then-fail"), StructInput[struct{}](), func(w http.ResponseWriter, _ *http.Request, _ struct{}) error {
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte("accepted"))
+		return errors.New("after write")
+	}))
 
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/write-then-fail", nil))
@@ -271,11 +261,9 @@ func TestServerRoutesMatchOnceDespiteMiddlewarePathMutation(t *testing.T) {
 			next.ServeHTTP(w, r)
 		})
 	})
-	Route[struct{}, struct{}](server).
-		GET("/users/{id}").
-		To(func(context.Context, struct{}) (struct{}, error) {
-			return struct{}{}, nil
-		})
+	server.MustMount(Handle(Get("/users/{id}"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
+		return struct{}{}, nil
+	}))
 
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/users/42", nil))
@@ -303,11 +291,9 @@ func TestServerRoutesExtractorFallbackFailureThroughErrorHandler(t *testing.T) {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	})
-	Route[struct{}, struct{}](server).
-		GET("/users/{id}").
-		To(func(context.Context, struct{}) (struct{}, error) {
-			return struct{}{}, nil
-		})
+	server.MustMount(Handle(Get("/users/{id}"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
+		return struct{}{}, nil
+	}))
 
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/users/42", nil))
@@ -321,11 +307,9 @@ func TestServerLogsRecoveredPanicWithStack(t *testing.T) {
 
 	logger := &testLogger{}
 	server := New(WithProduces(MIMEJSON), WithLogger(logger))
-	Route[struct{}, struct{}](server).
-		GET("/panic").
-		To(func(context.Context, struct{}) (struct{}, error) {
-			panic("boom")
-		})
+	server.MustMount(Handle(Get("/panic"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
+		panic("boom")
+	}))
 
 	server.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/panic", nil))
 	if logger.lastLevel != "error" || logger.lastMsg != "panic recovered" {

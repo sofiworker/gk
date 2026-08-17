@@ -47,50 +47,41 @@ func TestScenario_ServerGroupRouteMiddlewareOpenAPIAndStatic(t *testing.T) {
 		Name string `json:"name"`
 	}
 
-	Route[input, output](api).
-		POST("/users/{id}").
-		Doc(
-			Summary("create user"),
-			Tags("users"),
-			OperationID("createUser"),
-			Success(Message("created")),
-		).
-		To(func(ctx context.Context, req input) (output, error) {
-			return output{ID: req.Path("id"), Name: req.Body.Name}, nil
-		})
+	api.MustMount(Handle(Post("/users/{id}"), StructInput[input](), JSONOutput[output](), func(ctx context.Context, req input) (output, error) {
+		return output{ID: req.Path("id"), Name: req.Body.Name}, nil
+	}).Doc(Summary("create user"),
+		Tags("users"),
+		OperationID("createUser"),
+		Success(Message("created"))))
 
-	Route[struct{}, struct {
+	app.MustMount(AllMethods(Handle(Get("/health"), StructInput[struct{}](), JSONOutput[struct {
 		OK bool `json:"ok"`
-	}](app).
-		ANY("/health").
-		To(func(ctx context.Context, req struct{}) (struct {
+	}](), func(ctx context.Context, req struct{}) (struct {
+		OK bool `json:"ok"`
+	}, error) {
+		return struct {
 			OK bool `json:"ok"`
-		}, error) {
-			return struct {
-				OK bool `json:"ok"`
-			}{OK: true}, nil
-		})
+		}{OK: true}, nil
+	}))...)
 
-	Route[struct{}, struct {
+	app.MustMount(Handle(Endpoint("PROPFIND", "/custom"), StructInput[struct{}](), JSONOutput[struct {
 		Verb string `json:"verb"`
-	}](app).
-		CUSTOM("PROPFIND", "/custom").
-		To(func(ctx context.Context, req struct{}) (struct {
+	}](), func(ctx context.Context, req struct{}) (struct {
+		Verb string `json:"verb"`
+	}, error) {
+		return struct {
 			Verb string `json:"verb"`
-		}, error) {
-			return struct {
-				Verb string `json:"verb"`
-			}{Verb: "PROPFIND"}, nil
-		})
+		}{Verb: "PROPFIND"}, nil
+	}))
 
 	staticDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(staticDir, "hello.txt"), []byte("hello from scenario"), 0o600); err != nil {
 		t.Fatalf("write static file failed: %v", err)
 	}
-	Route[struct{}, struct{}](app).GET("/public").ToStatic(staticDir)
-	Route[struct{}, struct{}](app).GET("/events").ToSSE(func(ctx context.Context, params Params, stream *SSEWriter) error {
+	app.MustMount(StaticDirectory("/public", staticDir))
+	app.MustMount(SSEOperation("/events", StructInput[Params](), func(ctx context.Context, params Params, stream *SSEWriter) error {
 		return stream.WriteEvent("ready", "ok")
-	})
+	}))
 
 	ts := httptest.NewServer(app)
 	defer ts.Close()

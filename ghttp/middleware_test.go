@@ -15,10 +15,10 @@ func TestBuiltinMiddlewareTimeoutDrainsTailHandler(t *testing.T) {
 	var finished atomic.Bool
 	app := New(WithProduces(MIMEJSON))
 	app.Use(Timeout(10 * time.Millisecond))
-	Route[struct{}, struct{}](app).GET("/slow").ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	app.MustMount(RawOperation(http.MethodGet, "/slow", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		defer finished.Store(true)
 		time.Sleep(100 * time.Millisecond)
-	}))
+	})))
 
 	w := httptest.NewRecorder()
 	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/slow", nil))
@@ -53,11 +53,11 @@ func TestMiddlewareOrder(t *testing.T) {
 	})
 
 	var handlerCalled bool
-	Route[struct{ Body struct{} }, struct{ Body struct{} }](app).GET("/test").To(func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
+	app.MustMount(Handle(Get("/test"), StructInput[struct{ Body struct{} }](), JSONOutput[struct{ Body struct{} }](), func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
 		order = append(order, "handler")
 		handlerCalled = true
 		return struct{ Body struct{} }{}, nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/test", nil)
@@ -91,19 +91,16 @@ func TestMiddlewareServerGroupAndRoute(t *testing.T) {
 		})
 	})
 
-	Route[struct{ Body struct{} }, struct{ Body struct{} }](group).
-		GET("/test").
-		Use(func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls = append(calls, "route-before")
-				next.ServeHTTP(w, r)
-				calls = append(calls, "route-after")
-			})
-		}).
-		To(func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
-			calls = append(calls, "handler")
-			return struct{ Body struct{} }{}, nil
+	group.MustMount(Handle(Get("/test"), StructInput[struct{ Body struct{} }](), JSONOutput[struct{ Body struct{} }](), func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
+		calls = append(calls, "handler")
+		return struct{ Body struct{} }{}, nil
+	}).WithMiddleware(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls = append(calls, "route-before")
+			next.ServeHTTP(w, r)
+			calls = append(calls, "route-after")
 		})
+	}))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/test", nil)
@@ -207,9 +204,9 @@ func TestBuiltinMiddlewareRequestID(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	app.Use(RequestID())
 
-	Route[struct{ Body struct{} }, struct{ Body struct{} }](app).GET("/test").To(func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
+	app.MustMount(Handle(Get("/test"), StructInput[struct{ Body struct{} }](), JSONOutput[struct{ Body struct{} }](), func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
 		return struct{ Body struct{} }{}, nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/test", nil)
@@ -225,10 +222,10 @@ func TestBuiltinMiddlewareRequestIDInjectsContext(t *testing.T) {
 	app.Use(RequestID())
 
 	var got string
-	Route[struct{}, struct{}](app).GET("/test").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+	app.MustMount(Handle(Get("/test"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
 		got = GetRequestID(ctx)
 		return struct{}{}, nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/test", nil)
@@ -244,9 +241,9 @@ func TestBuiltinMiddlewareRequestIDRejectsOversizedIncomingValue(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	app.Use(RequestID())
 
-	Route[struct{}, struct{}](app).GET("/test").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+	app.MustMount(Handle(Get("/test"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
 		return struct{}{}, nil
-	})
+	}))
 
 	long := strings.Repeat("x", 8192)
 	w := httptest.NewRecorder()
@@ -267,9 +264,9 @@ func TestBuiltinMiddlewareRequestIDMaxLengthOption(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	app.Use(RequestID(WithRequestIDMaxLength(8)))
 
-	Route[struct{}, struct{}](app).GET("/test").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+	app.MustMount(Handle(Get("/test"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
 		return struct{}{}, nil
-	})
+	}))
 
 	for _, tc := range []struct {
 		name string
@@ -310,9 +307,9 @@ func TestBuiltinMiddlewareCORSUsesConfiguredHeaders(t *testing.T) {
 		MaxAge:       60,
 	}))
 
-	Route[struct{}, struct{}](app).GET("/cors").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+	app.MustMount(Handle(Get("/cors"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
 		return struct{}{}, nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/cors", nil)
@@ -344,14 +341,14 @@ func TestBuiltinMiddlewareCORSPassesThroughNonPreflightOptions(t *testing.T) {
 	}))
 
 	handlerCalled := 0
-	Route[struct{}, struct{}](app).OPTIONS("/custom").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+	app.MustMount(Handle(Options("/custom"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
 		handlerCalled++
 		return struct{}{}, nil
-	})
-	Route[struct{}, struct{}](app).GET("/custom").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+	}))
+	app.MustMount(Handle(Get("/custom"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
 		handlerCalled++
 		return struct{}{}, nil
-	})
+	}))
 
 	tests := []struct {
 		name         string
@@ -401,9 +398,9 @@ func TestBuiltinMiddlewareCORSDoesNotEmitAllowHeadersForRejectedOrigin(t *testin
 		AllowHeaders: []string{"Content-Type"},
 	}))
 
-	Route[struct{}, struct{}](app).GET("/cors").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+	app.MustMount(Handle(Get("/cors"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
 		return struct{}{}, nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/cors", nil)
@@ -430,9 +427,9 @@ func TestBuiltinMiddlewareCORSCredentialsRejectsWildcardOrigin(t *testing.T) {
 		AllowCredentials: true,
 	}))
 
-	Route[struct{}, struct{}](app).GET("/cors").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+	app.MustMount(Handle(Get("/cors"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
 		return struct{}{}, nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/cors", nil)
@@ -451,9 +448,9 @@ func TestBuiltinMiddlewareRecovery(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	app.Use(Recoverer())
 
-	Route[struct{ Body struct{} }, struct{ Body struct{} }](app).GET("/panic").To(func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
+	app.MustMount(Handle(Get("/panic"), StructInput[struct{ Body struct{} }](), JSONOutput[struct{ Body struct{} }](), func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
 		panic("test panic")
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/panic", nil)
@@ -468,9 +465,9 @@ func TestBuiltinMiddlewareRecoveryUsesStructuredGenericError(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	app.Use(Recoverer())
 
-	Route[struct{}, struct{}](app).GET("/panic").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+	app.MustMount(Handle(Get("/panic"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
 		panic("secret panic detail")
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/panic", nil)
@@ -498,10 +495,10 @@ func TestBuiltinMiddlewareTimeoutWritesGatewayTimeout(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	app.Use(Timeout(5 * time.Millisecond))
 
-	Route[struct{}, struct{}](app).GET("/slow").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+	app.MustMount(Handle(Get("/slow"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
 		time.Sleep(30 * time.Millisecond)
 		return struct{}{}, nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/slow", nil)
@@ -517,13 +514,13 @@ func TestBuiltinMiddlewareTimeoutStopsLateWrites(t *testing.T) {
 	app.Use(Timeout(10 * time.Millisecond))
 
 	done := make(chan struct{})
-	Route[struct{}, struct{}](app).GET("/slow").ToHTTPFunc(func(w http.ResponseWriter, r *http.Request, _ struct{}) error {
+	app.MustMount(HandleHTTP(Get("/slow"), StructInput[struct{}](), func(w http.ResponseWriter, r *http.Request, _ struct{}) error {
 		defer close(done)
 		time.Sleep(300 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("late body"))
 		return nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/slow", nil))
@@ -546,11 +543,11 @@ func TestBuiltinMiddlewareTimeoutCancelsContext(t *testing.T) {
 	app.Use(Timeout(10 * time.Millisecond))
 
 	canceled := make(chan struct{})
-	Route[struct{}, struct{}](app).GET("/slow").ToHTTPFunc(func(w http.ResponseWriter, r *http.Request, _ struct{}) error {
+	app.MustMount(HandleHTTP(Get("/slow"), StructInput[struct{}](), func(w http.ResponseWriter, r *http.Request, _ struct{}) error {
 		<-r.Context().Done()
 		close(canceled)
 		return nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/slow", nil))
@@ -569,9 +566,9 @@ func TestBuiltinMiddlewareRecovererCatchesPanicInsideTimeout(t *testing.T) {
 	app.Use(Recoverer())
 	app.Use(Timeout(time.Second))
 
-	Route[struct{}, struct{}](app).GET("/panic").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+	app.MustMount(Handle(Get("/panic"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
 		panic("panic inside timeout")
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/panic", nil)
@@ -586,9 +583,9 @@ func TestGroupUseAfterRouteRegistrationApplies(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	group := app.Group("/api")
 
-	Route[struct{}, struct{}](group).GET("/test").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+	group.MustMount(Handle(Get("/test"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
 		return struct{}{}, nil
-	})
+	}))
 
 	group.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -617,9 +614,9 @@ func TestGroupMiddlewareSnapshotAtCreation(t *testing.T) {
 		})
 	})
 
-	Route[struct{}, struct{}](child).GET("/test").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+	child.MustMount(Handle(Get("/test"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
 		return struct{}{}, nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/test", nil))
@@ -642,9 +639,9 @@ func TestGroupMiddlewareSnapshotIncludesParentBeforeCreation(t *testing.T) {
 	})
 	child := parent.Group("/v1")
 
-	Route[struct{}, struct{}](child).GET("/test").To(func(ctx context.Context, req struct{}) (struct{}, error) {
+	child.MustMount(Handle(Get("/test"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
 		return struct{}{}, nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/test", nil))
@@ -673,15 +670,16 @@ func TestMiddlewareSeesMatchedPathParams(t *testing.T) {
 			next.ServeHTTP(w, r)
 		})
 	})
-	Route[Params, struct {
+
+	app.MustMount(Handle(Get("/users/{id}"), StructInput[Params](), JSONOutput[struct {
 		ID string `json:"id"`
-	}](app).GET("/users/{id}").To(func(context.Context, Params) (struct {
+	}](), func(context.Context, Params) (struct {
 		ID string `json:"id"`
 	}, error) {
 		return struct {
 			ID string `json:"id"`
 		}{ID: "ok"}, nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/users/42", nil))

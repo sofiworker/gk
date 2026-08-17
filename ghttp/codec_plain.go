@@ -3,6 +3,7 @@ package ghttp
 import (
 	"fmt"
 	"io"
+	"reflect"
 )
 
 // PlainCodec 处理 text/plain 内容。
@@ -32,12 +33,16 @@ func (c *PlainCodec) Unmarshal(r io.Reader, v interface{}) error {
 	if err != nil {
 		return err
 	}
-	if ptr, ok := v.(*string); ok {
-		*ptr = string(data)
+	target, err := indirectDecodeValue(v)
+	if err != nil {
+		return fmt.Errorf("plain codec: %w", err)
+	}
+	if target.Kind() == reflect.String {
+		target.SetString(string(data))
 		return nil
 	}
-	if ptr, ok := v.(*[]byte); ok {
-		*ptr = data
+	if target.Kind() == reflect.Slice && target.Type().Elem().Kind() == reflect.Uint8 {
+		target.SetBytes(data)
 		return nil
 	}
 	return fmt.Errorf("plain codec: unsupported target %T", v)

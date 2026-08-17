@@ -118,9 +118,9 @@ func TestURLEncodedFormWithoutTagsReturns400(t *testing.T) {
 			Name string `json:"name"`
 		}
 	}
-	Route[input, struct{}](app).POST("/users").To(func(context.Context, input) (struct{}, error) {
+	app.MustMount(Handle(Post("/users"), StructInput[input](), JSONOutput[struct{}](), func(context.Context, input) (struct{}, error) {
 		return struct{}{}, nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/users", bytes.NewBufferString("name=alice"))

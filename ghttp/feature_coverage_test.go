@@ -21,28 +21,30 @@ import (
 
 func TestFeatureCoverage_RoutingAndHTTPMethods(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[Params, struct {
+
+	app.MustMount(Handle(Get("/users/{id}"), StructInput[Params](), JSONOutput[struct {
 		ID string `json:"id"`
-	}](app).GET("/users/{id}").To(func(_ context.Context, in Params) (struct {
+	}](), func(_ context.Context, in Params) (struct {
 		ID string `json:"id"`
 	}, error) {
 		return struct {
 			ID string `json:"id"`
 		}{ID: in.Path("id")}, nil
-	})
-	Route[Params, struct{}](app).DELETE("/users/{id}").Status(http.StatusNoContent).To(func(context.Context, Params) (struct{}, error) {
+	}))
+	app.MustMount(Handle(Delete("/users/{id}"), StructInput[Params](), WithStatus(http.StatusNoContent, JSONOutput[struct{}]()), func(context.Context, Params) (struct{}, error) {
 		return struct{}{}, nil
-	})
-	Route[Params, struct{}](app).OPTIONS("/users/{id}").ToHTTPFunc(func(w http.ResponseWriter, _ *http.Request, _ Params) error {
+	}))
+	app.MustMount(HandleHTTP(Options("/users/{id}"), StructInput[Params](), func(w http.ResponseWriter, _ *http.Request, _ Params) error {
 		w.WriteHeader(http.StatusNoContent)
 		return nil
-	})
-	Route[Params, struct{}](app).ANY("/any").To(func(context.Context, Params) (struct{}, error) {
-		return struct{}{}, nil
-	})
-	Route[Params, struct{}](app).CUSTOM("PURGE", "/purge").ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
 	}))
+	app.MustMount(AllMethods(Handle(Get("/any"), StructInput[Params](), JSONOutput[struct{}](), func(context.Context, Params) (struct{}, error) {
+		return struct{}{}, nil
+	}))...)
+
+	app.MustMount(RawOperation("PURGE", "/purge", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})))
 
 	cases := []struct {
 		name       string
@@ -99,7 +101,7 @@ type coverageBindOutput struct {
 
 func TestFeatureCoverage_ParamsBinding(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[coverageBindInput, coverageBindOutput](app).GET("/users/{id}").To(func(_ context.Context, in coverageBindInput) (coverageBindOutput, error) {
+	app.MustMount(Handle(Get("/users/{id}"), StructInput[coverageBindInput](), JSONOutput[coverageBindOutput](), func(_ context.Context, in coverageBindInput) (coverageBindOutput, error) {
 		return coverageBindOutput{
 			ID:   in.ID,
 			Page: in.Page,
@@ -107,7 +109,7 @@ func TestFeatureCoverage_ParamsBinding(t *testing.T) {
 			Sess: in.Sess,
 			IP:   in.ClientIP(),
 		}, nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/users/42?page=3", nil)
@@ -153,15 +155,15 @@ func TestFeatureCoverage_BodyCodecs(t *testing.T) {
 	}
 
 	app := New(WithProduces(MIMEJSON))
-	Route[jsonInput, out](app).POST("/json").To(func(_ context.Context, in jsonInput) (out, error) {
+	app.MustMount(Handle(Post("/json"), StructInput[jsonInput](), JSONOutput[out](), func(_ context.Context, in jsonInput) (out, error) {
 		return out{Name: in.Body.Name}, nil
-	})
-	Route[formInput, out](app).POST("/form").To(func(_ context.Context, in formInput) (out, error) {
+	}))
+	app.MustMount(Handle(Post("/form"), StructInput[formInput](), JSONOutput[out](), func(_ context.Context, in formInput) (out, error) {
 		return out{Name: in.Body.Name, Age: in.Body.Age}, nil
-	})
-	Route[noTagFormInput, out](app).POST("/no-tag-form").To(func(_ context.Context, in noTagFormInput) (out, error) {
+	}))
+	app.MustMount(Handle(Post("/no-tag-form"), StructInput[noTagFormInput](), JSONOutput[out](), func(_ context.Context, in noTagFormInput) (out, error) {
 		return out{Name: in.Body.Name}, nil
-	})
+	}))
 
 	jsonRec := httptest.NewRecorder()
 	jsonReq := httptest.NewRequest(http.MethodPost, "/json", strings.NewReader(`{"name":"alice"}`))
@@ -218,19 +220,15 @@ func TestFeatureCoverage_Validation(t *testing.T) {
 	}
 
 	app := New(WithProduces(MIMEJSON), WithValidator(newDefaultValidator()))
-	Route[input, output](app).POST("/required").To(handler)
-	Route[input, output](app).POST("/skip").SkipValidation().To(handler)
-	Route[input, output](app).POST("/mapped").
-		Validate(
-			func(in input) error {
-				if in.Body.Name == "bad" {
-					return errors.New("bad name")
-				}
-				return nil
-			},
-			ValidationError(BadRequest("name is bad")),
-		).
-		To(handler)
+	app.MustMount(Handle(Post("/required"), StructInput[input](), JSONOutput[output](), handler))
+	app.MustMount(Handle(Post("/skip"), StructInput[input](), JSONOutput[output](), handler).WithoutServerValidation())
+	app.MustMount(Handle(Post("/mapped"), ValidatedInput(StructInput[input](), func(_ context.Context, in input) error {
+		if in.Body.Name == "bad" {
+			return errors.New("bad name")
+		}
+		return nil
+	},
+		ValidationError(BadRequest("name is bad"))), JSONOutput[output](), handler))
 
 	emptyRec := httptest.NewRecorder()
 	emptyReq := httptest.NewRequest(http.MethodPost, "/required", strings.NewReader(`{}`))
@@ -272,20 +270,21 @@ func TestFeatureCoverage_MiddlewareGroupsCapabilities(t *testing.T) {
 			next.ServeHTTP(w, r)
 		})
 	})
-	Route[Params, struct {
+
+	group.MustMount(Handle(Get("/users/{id}"), StructInput[Params](), JSONOutput[struct {
 		ID string `json:"id"`
-	}](group).GET("/users/{id}").Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			order = append(order, "route")
-			next.ServeHTTP(w, r)
-		})
-	}).To(func(_ context.Context, in Params) (struct {
+	}](), func(_ context.Context, in Params) (struct {
 		ID string `json:"id"`
 	}, error) {
 		return struct {
 			ID string `json:"id"`
 		}{ID: in.Path("id")}, nil
-	})
+	}).WithMiddleware(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			order = append(order, "route")
+			next.ServeHTTP(w, r)
+		})
+	}))
 
 	w := httptest.NewRecorder()
 	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/users/7", nil))
@@ -310,9 +309,9 @@ func TestFeatureCoverage_MatchedParamsRequestIDCORS(t *testing.T) {
 			next.ServeHTTP(w, r)
 		})
 	})
-	Route[Params, struct{}](app).GET("/users/{id}").To(func(context.Context, Params) (struct{}, error) {
+	app.MustMount(Handle(Get("/users/{id}"), StructInput[Params](), JSONOutput[struct{}](), func(context.Context, Params) (struct{}, error) {
 		return struct{}{}, nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/users/9", nil)
@@ -349,9 +348,9 @@ func TestFeatureCoverage_LoggerAndRBAC(t *testing.T) {
 		func(r *http.Request) string { return "users:read" },
 		func(r *http.Request) string { return r.URL.Path },
 	))
-	Route[Params, struct{}](app).GET("/users").To(func(context.Context, Params) (struct{}, error) {
+	app.MustMount(Handle(Get("/users"), StructInput[Params](), JSONOutput[struct{}](), func(context.Context, Params) (struct{}, error) {
 		return struct{}{}, nil
-	})
+	}))
 
 	okRec := httptest.NewRecorder()
 	okReq := httptest.NewRequest(http.MethodGet, "/users", nil)
@@ -398,15 +397,15 @@ func (o coverageCookieResp) Cookies() []*http.Cookie {
 
 func TestFeatureCoverage_OutputAndErrors(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[struct{}, coverageCreatedResp](app).POST("/created").To(func(context.Context, struct{}) (coverageCreatedResp, error) {
+	app.MustMount(Handle(Post("/created"), StructInput[struct{}](), JSONOutput[coverageCreatedResp](), func(context.Context, struct{}) (coverageCreatedResp, error) {
 		return coverageCreatedResp{ID: "u-1"}, nil
-	})
-	Route[struct{}, coverageNoContentResp](app).DELETE("/nocontent").To(func(context.Context, struct{}) (coverageNoContentResp, error) {
+	}))
+	app.MustMount(Handle(Delete("/nocontent"), StructInput[struct{}](), JSONOutput[coverageNoContentResp](), func(context.Context, struct{}) (coverageNoContentResp, error) {
 		return coverageNoContentResp{}, nil
-	})
-	Route[struct{}, coverageCookieResp](app).GET("/cookie").To(func(context.Context, struct{}) (coverageCookieResp, error) {
+	}))
+	app.MustMount(Handle(Get("/cookie"), StructInput[struct{}](), JSONOutput[coverageCookieResp](), func(context.Context, struct{}) (coverageCookieResp, error) {
 		return coverageCookieResp{Token: "t-1"}, nil
-	})
+	}))
 
 	created := httptest.NewRecorder()
 	app.ServeHTTP(created, httptest.NewRequest(http.MethodPost, "/created", nil))
@@ -430,21 +429,22 @@ func TestFeatureCoverage_OutputAndErrors(t *testing.T) {
 
 func TestFeatureCoverage_EnvelopeAndErrorModels(t *testing.T) {
 	app := New(WithProduces(MIMEJSON), WithEnvelope(DefaultEnvelope))
-	Route[Params, struct {
+
+	app.MustMount(Handle(Get("/ok"), StructInput[Params](), JSONOutput[struct {
 		ID string `json:"id"`
-	}](app).GET("/ok").To(func(context.Context, Params) (struct {
+	}](), func(context.Context, Params) (struct {
 		ID string `json:"id"`
 	}, error) {
 		return struct {
 			ID string `json:"id"`
 		}{ID: "42"}, nil
-	})
-	Route[Params, struct{}](app).GET("/notfound").To(func(context.Context, Params) (struct{}, error) {
+	}))
+	app.MustMount(Handle(Get("/notfound"), StructInput[Params](), JSONOutput[struct{}](), func(context.Context, Params) (struct{}, error) {
 		return struct{}{}, Err(http.StatusNotFound, "user not found")
-	})
-	Route[Params, struct{}](app).GET("/problem").ProblemDetails().To(func(context.Context, Params) (struct{}, error) {
+	}))
+	app.MustMount(Handle(Get("/problem"), StructInput[Params](), JSONOutput[struct{}](), func(context.Context, Params) (struct{}, error) {
 		return struct{}{}, Err(http.StatusBadRequest, "bad request")
-	})
+	}).WithProblemDetails())
 
 	okRec := httptest.NewRecorder()
 	app.ServeHTTP(okRec, httptest.NewRequest(http.MethodGet, "/ok", nil))
@@ -470,9 +470,9 @@ func TestFeatureCoverage_Negotiation(t *testing.T) {
 		ID string `json:"id" xml:"id"`
 	}
 	app := New(WithProduces(MIMEJSON, MIMEXML))
-	Route[Params, out](app).GET("/users/{id}").To(func(_ context.Context, in Params) (out, error) {
+	app.MustMount(Handle(Get("/users/{id}"), StructInput[Params](), CodecOutput[out](MIMEJSON, MIMEXML), func(_ context.Context, in Params) (out, error) {
 		return out{ID: in.Path("id")}, nil
-	})
+	}))
 
 	xmlRec := httptest.NewRecorder()
 	xmlReq := httptest.NewRequest(http.MethodGet, "/users/1", nil)
@@ -499,9 +499,9 @@ func TestFeatureCoverage_Negotiation(t *testing.T) {
 	}
 
 	lenient := New(WithProduces(MIMEJSON), WithLenientContentNegotiation())
-	Route[Params, map[string]string](lenient).GET("/ping").To(func(context.Context, Params) (map[string]string, error) {
+	lenient.MustMount(Handle(Get("/ping"), StructInput[Params](), CodecOutput[map[string]string](MIMEJSON), func(context.Context, Params) (map[string]string, error) {
 		return map[string]string{"pong": "1"}, nil
-	})
+	}))
 	lenientRec := httptest.NewRecorder()
 	lenientReq := httptest.NewRequest(http.MethodGet, "/ping", nil)
 	lenientReq.Header.Set("Accept", "text/html")
@@ -513,17 +513,17 @@ func TestFeatureCoverage_Negotiation(t *testing.T) {
 
 func TestFeatureCoverage_EscapeHatches(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[struct{}, struct{}](app).GET("/raw").ToRaw(func(w http.ResponseWriter, _ *http.Request) {
+	app.MustMount(RawOperation(http.MethodGet, "/raw", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTeapot)
-	})
-	Route[struct{}, struct{}](app).GET("/http").ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	})))
+	app.MustMount(RawOperation(http.MethodGet, "/http", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("plain"))
-	}))
-	Route[Params, struct{}](app).GET("/httpfunc/{id}").ToHTTPFunc(func(w http.ResponseWriter, _ *http.Request, in Params) error {
+	})))
+	app.MustMount(HandleHTTP(Get("/httpfunc/{id}"), StructInput[Params](), func(w http.ResponseWriter, _ *http.Request, in Params) error {
 		_, _ = w.Write([]byte(in.Path("id")))
 		return nil
-	})
-	Route[struct{}, struct{}](app).GET("/redirect").ToRedirect(http.StatusFound, "/target")
+	}))
+	app.MustMount(RedirectOperation(http.MethodGet, "/redirect", http.StatusFound, "/target"))
 
 	raw := httptest.NewRecorder()
 	app.ServeHTTP(raw, httptest.NewRequest(http.MethodGet, "/raw", nil))
@@ -557,11 +557,11 @@ func TestFeatureCoverage_StaticAndHTMLAndSSE(t *testing.T) {
 	}
 
 	app := New(WithProduces(MIMEJSON), WithRenderer(NewRenderer(tmpDir, ".html", template.FuncMap{}, false)))
-	Route[struct{}, struct{}](app).GET("/static").ToStatic(tmpDir)
-	Route[struct{}, struct{}](app).GET("/page").ToHTML(http.StatusOK, "page", map[string]interface{}{"Title": "Hello"})
-	Route[Params, struct{}](app).GET("/events").ToSSE(func(_ context.Context, _ Params, stream *SSEWriter) error {
+	app.MustMount(StaticDirectory("/static", tmpDir))
+	app.MustMount(HTMLViewOperation(http.MethodGet, "/page", http.StatusOK, "page", map[string]interface{}{"Title": "Hello"}))
+	app.MustMount(SSEOperation("/events", StructInput[Params](), func(_ context.Context, _ Params, stream *SSEWriter) error {
 		return stream.WriteEvent("message", "line1\nline2")
-	})
+	}))
 
 	staticRec := httptest.NewRecorder()
 	app.ServeHTTP(staticRec, httptest.NewRequest(http.MethodGet, "/static/a.txt", nil))
@@ -584,14 +584,14 @@ func TestFeatureCoverage_StaticAndHTMLAndSSE(t *testing.T) {
 
 func TestFeatureCoverage_WebSocket(t *testing.T) {
 	app := New()
-	Route[Params, struct{}](app).GET("/ws/{room}").ToWebSocket(func(_ context.Context, in Params, conn *WebSocketConn) error {
+	app.MustMount(WebSocketOperation("/ws/{room}", StructInput[Params](), func(_ context.Context, in Params, conn *WebSocketConn) error {
 		var msg map[string]string
 		if err := conn.ReadJSON(&msg); err != nil {
 			return err
 		}
 		msg["room"] = in.Path("room")
 		return conn.WriteJSON(msg)
-	})
+	}))
 
 	ts := httptest.NewServer(app)
 	defer ts.Close()
@@ -617,12 +617,9 @@ func TestFeatureCoverage_OpenAPI(t *testing.T) {
 		WithOpenAPISecurity(map[string][]string{"apiKey": {}}),
 		WithEnvelope(DefaultEnvelope),
 	)
-	Route[Params, coverageCreatedResp](app).POST("/users").
-		Status(http.StatusCreated).
-		Doc(Tags("users"), OperationID("createUser"), Summary("create a user")).
-		To(func(context.Context, Params) (coverageCreatedResp, error) {
-			return coverageCreatedResp{ID: "u-1"}, nil
-		})
+	app.MustMount(Handle(Post("/users"), StructInput[Params](), WithStatus(http.StatusCreated, JSONOutput[coverageCreatedResp]()), func(context.Context, Params) (coverageCreatedResp, error) {
+		return coverageCreatedResp{ID: "u-1"}, nil
+	}).Doc(Tags("users"), OperationID("createUser"), Summary("create a user")))
 
 	doc, err := app.OpenAPI()
 	if err != nil {
@@ -642,34 +639,22 @@ func TestFeatureCoverage_OpenAPI(t *testing.T) {
 func TestFeatureCoverage_SetupErrors(t *testing.T) {
 	t.Run("duplicate-route", func(t *testing.T) {
 		app := New(WithProduces(MIMEJSON))
-		Route[struct{}, struct{}](app).GET("/dup").ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+		app.MustMount(RawOperation(http.MethodGet, "/dup", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {})))
 		defer func() {
 			if recover() == nil {
 				t.Fatal("expected panic on duplicate route")
 			}
 		}()
-		Route[struct{}, struct{}](app).GET("/dup").ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
-	})
-
-	t.Run("missing-produces", func(t *testing.T) {
-		app := New()
-		defer func() {
-			if recover() == nil {
-				t.Fatal("expected panic on missing produces")
-			}
-		}()
-		Route[struct{}, struct{}](app).GET("/x").To(func(context.Context, struct{}) (struct{}, error) {
-			return struct{}{}, nil
-		})
+		app.MustMount(RawOperation(http.MethodGet, "/dup", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {})))
 	})
 
 	t.Run("timeout", func(t *testing.T) {
 		app := New(WithProduces(MIMEJSON))
 		app.Use(Timeout(50 * time.Millisecond))
-		Route[Params, struct{}](app).GET("/slow").ToNoOutput(func(context.Context, Params) error {
+		app.MustMount(HandleNoOutput(Get("/slow"), StructInput[Params](), func(context.Context, Params) error {
 			time.Sleep(300 * time.Millisecond)
 			return nil
-		})
+		}))
 		w := httptest.NewRecorder()
 		app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/slow", nil))
 		if w.Code != http.StatusGatewayTimeout {

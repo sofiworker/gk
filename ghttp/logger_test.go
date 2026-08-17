@@ -76,9 +76,9 @@ func TestRequestLoggerUsesInjectedLogger(t *testing.T) {
 	app := New(WithLogger(tl), WithProduces(MIMEJSON))
 	app.Use(RequestLogger())
 
-	Route[struct{}, struct{}](app).GET("/log").To(func(context.Context, struct{}) (struct{}, error) {
+	app.MustMount(Handle(Get("/log"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
 		return struct{}{}, nil
-	})
+	}))
 
 	rec := httptest.NewRecorder()
 	app.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/log", nil))
@@ -113,9 +113,9 @@ func TestRequestLoggerWithoutInjectedLoggerIsNoop(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	app.Use(RequestLogger())
 
-	Route[struct{}, struct{}](app).GET("/log").To(func(context.Context, struct{}) (struct{}, error) {
+	app.MustMount(Handle(Get("/log"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
 		return struct{}{}, nil
-	})
+	}))
 
 	rec := httptest.NewRecorder()
 	app.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/log", nil))
@@ -130,9 +130,9 @@ func TestRecovererUsesInjectedLogger(t *testing.T) {
 	app := New(WithLogger(tl), WithProduces(MIMEJSON))
 	app.Use(Recoverer())
 
-	Route[struct{}, struct{}](app).GET("/panic").To(func(context.Context, struct{}) (struct{}, error) {
+	app.MustMount(Handle(Get("/panic"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
 		panic("boom")
-	})
+	}))
 
 	rec := httptest.NewRecorder()
 	app.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/panic", nil))

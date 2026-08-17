@@ -21,32 +21,81 @@ const (
 )
 
 type routeDefinition struct {
-	method          string
-	pattern         routePattern
-	handler         http.Handler
-	middlewares     []Middleware
-	group           *Group
-	needsExtractor  bool
-	terminal        routeTerminalKind
-	responseStatus  int
-	responseHeaders []responseHeader
-	errorWriter     ErrorWriter
-	internal        bool
-	doc             RouteDoc
-	reqType         reflect.Type
-	respType        reflect.Type
-	consumes        []string
-	produces        []string
+	method             string
+	pattern            routePattern
+	handler            http.Handler
+	contextBuild       func(*Server, *Operation) ContextHandler
+	fastBuild          func(*Server, *Operation) http.HandlerFunc
+	middlewares        []Middleware
+	contextMiddlewares []ContextMiddleware
+	group              *Group
+	needsExtractor     bool
+	terminal           routeTerminalKind
+	responseStatus     int
+	responseHeaders    []responseHeader
+	errorWriter        ErrorWriter
+	problemDetails     bool
+	internal           bool
+	doc                RouteDoc
+	reqType            reflect.Type
+	respType           reflect.Type
+	consumes           []string
+	produces           []string
+	// openAPI 在路由注册时编译；不可变定义携带反射结果，文档请求无需再次扫描类型。
+	// openAPI is compiled while the route is registered; the immutable definition
+	// avoids scanning request/response types when the document is served.
+	openAPI routeOpenAPIMetadata
+}
+
+// routeOpenAPIMetadata 是注册期 endpoint 元数据；registerHandler 填充后视为不可变。
+// routeOpenAPIMetadata is registration-time endpoint metadata; values are
+// immutable after registerHandler has populated them.
+type routeOpenAPIMetadata struct {
+	parameters       []*parameter
+	bodySchema       interface{}
+	bodyContentTypes []string
+	bodyRequired     bool
+	bodyContent      map[string]any
+	responseSchema   interface{}
+	responses        map[string]any
 }
 
 func (d routeDefinition) clone() routeDefinition {
 	cloned := d
 	cloned.pattern.segments = append([]routeSegment(nil), d.pattern.segments...)
 	cloned.middlewares = append([]Middleware(nil), d.middlewares...)
+	cloned.contextMiddlewares = append([]ContextMiddleware(nil), d.contextMiddlewares...)
 	cloned.doc = d.doc.clone()
 	cloned.consumes = append([]string(nil), d.consumes...)
 	cloned.produces = append([]string(nil), d.produces...)
 	cloned.responseHeaders = append([]responseHeader(nil), d.responseHeaders...)
+	cloned.openAPI = d.openAPI.clone()
+	return cloned
+}
+
+func (m routeOpenAPIMetadata) clone() routeOpenAPIMetadata {
+	cloned := m
+	if m.parameters != nil {
+		cloned.parameters = make([]*parameter, len(m.parameters))
+		for i, p := range m.parameters {
+			if p == nil {
+				continue
+			}
+			copyParameter := *p
+			copyParameter.Schema = cloneOpenAPIValue(p.Schema)
+			cloned.parameters[i] = &copyParameter
+		}
+	}
+	cloned.bodyContentTypes = append([]string(nil), m.bodyContentTypes...)
+	cloned.bodySchema = cloneOpenAPIValue(m.bodySchema)
+	cloned.bodyContent = cloneSchemaContent(m.bodyContent)
+	cloned.responseSchema = cloneOpenAPIValue(m.responseSchema)
+	if m.responses != nil {
+		cloned.responses = make(map[string]any, len(m.responses))
+		for status, response := range m.responses {
+			cloned.responses[status] = cloneOpenAPIValue(response)
+		}
+	}
 	return cloned
 }
 

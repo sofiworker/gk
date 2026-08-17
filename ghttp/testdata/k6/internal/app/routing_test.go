@@ -235,14 +235,14 @@ func TestTrailingRouteRegistrationPanics(t *testing.T) {
 
 func registerDuplicateRouteForTest() {
 	server := ghttp.New()
-	ghttp.Route[struct{}, struct{}](server).GET("/same").ToHTTP(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	ghttp.Route[struct{}, struct{}](server).GET("/same").ToHTTP(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	server.MustMount(ghttp.RawOperation(http.MethodGet, "/same", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))
+	server.MustMount(ghttp.RawOperation(http.MethodGet, "/same", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))
 }
 
 func registerTrailingConflictForTest() {
 	server := ghttp.New()
-	ghttp.Route[struct{}, struct{}](server).GET("/health").ToHTTP(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	ghttp.Route[struct{}, struct{}](server).GET("/health/").ToHTTP(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	server.MustMount(ghttp.RawOperation(http.MethodGet, "/health", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))
+	server.MustMount(ghttp.RawOperation(http.MethodGet, "/health/", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))
 }
 
 func TestRoutingMiddlewarePreservesOptionalInterfaces(t *testing.T) {

@@ -13,9 +13,9 @@ func TestStrictContentNegotiationReturns406(t *testing.T) {
 		Name string `json:"name"`
 	}
 	app := New(WithProduces(MIMEJSON), WithStrictContentNegotiation())
-	Route[Params, pingResp](app).GET("/ping").To(func(context.Context, Params) (pingResp, error) {
+	app.MustMount(Handle(Get("/ping"), StructInput[Params](), JSONOutput[pingResp](), func(context.Context, Params) (pingResp, error) {
 		return pingResp{Name: "pong"}, nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
@@ -29,9 +29,9 @@ func TestStrictContentNegotiationReturns406(t *testing.T) {
 
 func TestLenientContentNegotiationFallsBack(t *testing.T) {
 	app := New(WithProduces(MIMEJSON), WithLenientContentNegotiation())
-	Route[Params, map[string]string](app).GET("/ping").To(func(context.Context, Params) (map[string]string, error) {
+	app.MustMount(Handle(Get("/ping"), StructInput[Params](), CodecOutput[map[string]string](MIMEJSON), func(context.Context, Params) (map[string]string, error) {
 		return map[string]string{"name": "pong"}, nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
@@ -54,9 +54,9 @@ func TestStrictContentTypeReturns415(t *testing.T) {
 		}
 	}
 	app := New(WithProduces(MIMEJSON))
-	Route[input, struct{}](app).POST("/users").To(func(context.Context, input) (struct{}, error) {
+	app.MustMount(Handle(Post("/users"), StructInput[input](), JSONOutput[struct{}](), func(context.Context, input) (struct{}, error) {
 		return struct{}{}, nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(`{"name":"a"}`))
@@ -76,15 +76,16 @@ func TestLenientContentTypeFallsBackToJSON(t *testing.T) {
 		}
 	}
 	app := New(WithProduces(MIMEJSON), WithLenientContentType())
-	Route[input, struct {
+
+	app.MustMount(Handle(Post("/users"), StructInput[input](), JSONOutput[struct {
 		Name string `json:"name"`
-	}](app).POST("/users").To(func(context.Context, input) (struct {
+	}](), func(context.Context, input) (struct {
 		Name string `json:"name"`
 	}, error) {
 		return struct {
 			Name string `json:"name"`
 		}{}, nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(`{"name":"a"}`))

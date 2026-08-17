@@ -44,9 +44,9 @@ func TestRBACMiddleware(t *testing.T) {
 		func(r *http.Request) string { return "users:read" },
 		func(r *http.Request) string { return r.URL.Path },
 	))
-	Route[Params, struct{}](app).GET("/users").To(func(context.Context, Params) (struct{}, error) {
+	app.MustMount(Handle(Get("/users"), StructInput[Params](), JSONOutput[struct{}](), func(context.Context, Params) (struct{}, error) {
 		return struct{}{}, nil
-	})
+	}))
 
 	okReq := httptest.NewRequest(http.MethodGet, "/users", nil)
 	okReq.Header.Set("X-User", "alice")

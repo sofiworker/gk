@@ -9,11 +9,25 @@ import (
 // generateSchema 从 Go 类型生成 JSON Schema。
 // generateSchema generates a JSON Schema from a Go type.
 func generateSchema(t reflect.Type) map[string]interface{} {
-	if t.Kind() == reflect.Ptr {
+	return generateSchemaSeen(t, make(map[reflect.Type]bool))
+}
+
+func generateSchemaSeen(t reflect.Type, seen map[reflect.Type]bool) map[string]interface{} {
+	schema := make(map[string]interface{})
+	if t == nil {
+		return schema
+	}
+	for t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
-
-	schema := make(map[string]interface{})
+	if seen[t] {
+		return schema
+	}
+	switch t.Kind() {
+	case reflect.Struct, reflect.Slice, reflect.Array, reflect.Map:
+		seen[t] = true
+		defer delete(seen, t)
+	}
 
 	switch t.Kind() {
 	case reflect.Struct:
@@ -27,13 +41,17 @@ func generateSchema(t reflect.Type) map[string]interface{} {
 				continue
 			}
 
-			jsonTag := f.Tag.Get("json")
-			if jsonTag == "" || jsonTag == "-" {
+			jsonTag, hasJSONTag := f.Tag.Lookup("json")
+			parts := strings.Split(jsonTag, ",")
+			if len(parts) > 0 && parts[0] == "-" {
 				continue
 			}
-			name := strings.Split(jsonTag, ",")[0]
+			name := f.Name
+			if len(parts) > 0 && parts[0] != "" {
+				name = parts[0]
+			}
 
-			prop := generateSchema(f.Type)
+			prop := generateSchemaSeen(f.Type, seen)
 			if doc := f.Tag.Get("doc"); doc != "" {
 				prop["description"] = doc
 			}
@@ -70,6 +88,17 @@ func generateSchema(t reflect.Type) map[string]interface{} {
 				required = append(required, name)
 			}
 
+			if f.Anonymous && (!hasJSONTag || (len(parts) > 0 && parts[0] == "")) {
+				if embedded, ok := prop["properties"].(map[string]interface{}); ok {
+					for embeddedName, embeddedSchema := range embedded {
+						props[embeddedName] = embeddedSchema
+					}
+					if embeddedRequired, ok := prop["required"].([]string); ok {
+						required = append(required, embeddedRequired...)
+					}
+					continue
+				}
+			}
 			props[name] = prop
 		}
 
@@ -80,18 +109,28 @@ func generateSchema(t reflect.Type) map[string]interface{} {
 
 	case reflect.String:
 		schema["type"] = "string"
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+	case reflect.Int64, reflect.Uint64:
 		schema["type"] = "integer"
-	case reflect.Float32, reflect.Float64:
+		schema["format"] = "int64"
+	case reflect.Int32, reflect.Uint32:
+		schema["type"] = "integer"
+		schema["format"] = "int32"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uintptr:
+		schema["type"] = "integer"
+	case reflect.Float32:
 		schema["type"] = "number"
+		schema["format"] = "float"
+	case reflect.Float64:
+		schema["type"] = "number"
+		schema["format"] = "double"
 	case reflect.Bool:
 		schema["type"] = "boolean"
-	case reflect.Slice:
+	case reflect.Slice, reflect.Array:
 		schema["type"] = "array"
-		schema["items"] = generateSchema(t.Elem())
+		schema["items"] = generateSchemaSeen(t.Elem(), seen)
 	case reflect.Map:
 		schema["type"] = "object"
-		schema["additionalProperties"] = generateSchema(t.Elem())
+		schema["additionalProperties"] = generateSchemaSeen(t.Elem(), seen)
 	default:
 		schema["type"] = "object"
 	}

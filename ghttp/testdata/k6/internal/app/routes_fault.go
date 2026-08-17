@@ -40,25 +40,26 @@ func registerFaults(server *ghttp.Server, cfg Config, controller *FaultControlle
 		secret = testDefaultSecret
 	}
 	faults := server.Group("/fault")
-	ghttp.Route[struct{}, struct{}](faults).GET("/delay").ToHTTP(http.HandlerFunc(handleFaultDelay))
-	ghttp.Route[struct{}, struct{}](faults).GET("/random").ToHTTP(http.HandlerFunc(controller.handleRandom))
-	ghttp.Route[struct{}, struct{}](faults).GET("/limited").ToHTTP(http.HandlerFunc(controller.handleLimited))
-	ghttp.Route[struct{}, struct{}](faults).POST("/reset").ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	faults.MustMount(ghttp.RawOperation(http.MethodGet, "/delay", http.HandlerFunc(handleFaultDelay)))
+	faults.MustMount(ghttp.RawOperation(http.MethodGet, "/random", http.HandlerFunc(controller.handleRandom)))
+	faults.MustMount(ghttp.RawOperation(http.MethodGet, "/limited", http.HandlerFunc(controller.handleLimited)))
+	faults.MustMount(ghttp.RawOperation(http.MethodPost, "/reset", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		controller.Reset()
 		w.WriteHeader(http.StatusNoContent)
-	}))
-	ghttp.Route[struct{}, struct{}](faults).GET("/unavailable").ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	})))
+	faults.MustMount(ghttp.RawOperation(http.MethodGet, "/unavailable", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writePublicError(w, http.StatusServiceUnavailable)
-	}))
-	ghttp.Route[struct{}, struct{}](faults).GET("/panic").ToHTTP(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	})))
+	faults.MustMount(ghttp.RawOperation(http.MethodGet, "/panic", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic("fault panic " + secret)
-	}))
-	ghttp.Route[struct{}, struct{}](faults).GET("/timeout").Use(ghttp.Timeout(faultTimeout)).ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	})))
+	faults.MustMount(ghttp.RawOperation(http.MethodGet, "/timeout", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(faultLateWrite)
 		writeJSON(w, map[string]string{"status": "late-success"})
 		signalFaultLateDone(r)
-	}))
-	ghttp.Route[struct{}, struct{}](faults).GET("/cancel").ToHTTP(http.HandlerFunc(handleFaultCancel))
+	})).WithMiddleware(ghttp.Timeout(faultTimeout)))
+
+	faults.MustMount(ghttp.RawOperation(http.MethodGet, "/cancel", http.HandlerFunc(handleFaultCancel)))
 }
 
 func handleFaultDelay(w http.ResponseWriter, r *http.Request) {
@@ -174,6 +175,6 @@ func signalFaultStarted(request *http.Request) {
 }
 func signalFaultLateDone(request *http.Request) {
 	if done, ok := request.Context().Value(faultLateDoneContextKey{}).(chan struct{}); ok {
-		done <- struct{}{}
+		close(done)
 	}
 }

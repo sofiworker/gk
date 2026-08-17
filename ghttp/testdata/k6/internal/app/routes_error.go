@@ -26,25 +26,25 @@ func registerErrors(server *ghttp.Server, cfg Config) {
 		secret = testDefaultSecret
 	}
 
-	ghttp.Route[struct{}, struct{}](server).GET("/errors/ordinary").ToHTTP(errorAdapterHandler(func() error {
+	server.MustMount(ghttp.RawOperation(http.MethodGet, "/errors/ordinary", errorAdapterHandler(func() error {
 		return fmt.Errorf("ordinary-internal: %s", secret)
-	}))
-	ghttp.Route[struct{}, struct{}](server).GET("/errors/wrapped").ToHTTP(errorAdapterHandler(func() error {
+	})))
+	server.MustMount(ghttp.RawOperation(http.MethodGet, "/errors/wrapped", errorAdapterHandler(func() error {
 		return fmt.Errorf("wrapped %s: %w", secret, errConflictSentinel)
-	}))
-	ghttp.Route[struct{}, struct{}](server).GET("/errors/joined").ToHTTP(errorAdapterHandler(func() error {
+	})))
+	server.MustMount(ghttp.RawOperation(http.MethodGet, "/errors/joined", errorAdapterHandler(func() error {
 		return errors.Join(
 			fmt.Errorf("joined %s: %w", secret, errConflictSentinel),
 			fmt.Errorf("joined %s: %w", secret, errUnavailableSentinel),
 		)
-	}))
-	ghttp.Route[struct{}, struct{}](server).GET("/errors/gerr").ToHTTP(errorAdapterHandler(func() error {
+	})))
+	server.MustMount(ghttp.RawOperation(http.MethodGet, "/errors/gerr", errorAdapterHandler(func() error {
 		return gerr.New("gerr "+secret, gerr.WithKind(gerr.KindUnavailable))
-	}))
-	ghttp.Route[struct{}, struct{}](server).GET("/errors/validation").ToHTTP(errorAdapterHandler(func() error {
+	})))
+	server.MustMount(ghttp.RawOperation(http.MethodGet, "/errors/validation", errorAdapterHandler(func() error {
 		return ghttp.Err(http.StatusUnprocessableEntity, http.StatusText(http.StatusUnprocessableEntity), ghttp.WithCause(fmt.Errorf("validation %s", secret)))
-	}))
-	ghttp.Route[ghttp.Params, struct{}](server).GET("/errors/status/{code}").ToHTTPFunc(func(w http.ResponseWriter, r *http.Request, params ghttp.Params) error {
+	})))
+	server.MustMount(ghttp.HandleHTTP(ghttp.Get("/errors/status/{code}"), ghttp.StructInput[ghttp.Params](), func(w http.ResponseWriter, r *http.Request, params ghttp.Params) error {
 		status, err := strconv.Atoi(params.Path("code"))
 		if err != nil || !allowedErrorStatus(status) {
 			applicationErrorAdapter(w, r, ghttp.NotFound(http.StatusText(http.StatusNotFound)))
@@ -52,23 +52,24 @@ func registerErrors(server *ghttp.Server, cfg Config) {
 		}
 		applicationErrorAdapter(w, r, ghttp.Err(status, http.StatusText(status), ghttp.WithCause(fmt.Errorf("controlled %s", secret))))
 		return nil
-	})
-	ghttp.Route[ghttp.Params, struct{}](server).GET("/problem/{kind}").ProblemDetails().To(func(_ context.Context, params ghttp.Params) (struct{}, error) {
+	}))
+	server.MustMount(ghttp.Handle(ghttp.Get("/problem/{kind}"), ghttp.StructInput[ghttp.Params](), ghttp.JSONOutput[struct{}](), func(_ context.Context, params ghttp.Params) (struct{}, error) {
 		if params.Path("kind") != "not-found" {
 			return struct{}{}, ghttp.BadRequest(http.StatusText(http.StatusBadRequest))
 		}
 		return struct{}{}, ghttp.NotFound(http.StatusText(http.StatusNotFound))
-	})
+	}).WithProblemDetails())
 
 	authGroup := server.Group("/auth")
-	ghttp.Route[struct{}, struct{}](authGroup).GET("/user").Use(authMiddleware(secret, false)).ToHTTP(authHandler("user"))
-	ghttp.Route[struct{}, struct{}](authGroup).GET("/admin").Use(authMiddleware(secret, true)).ToHTTP(authHandler("admin"))
+	authGroup.MustMount(ghttp.RawOperation(http.MethodGet, "/user", authHandler("user")).WithMiddleware(authMiddleware(secret, false)))
+	authGroup.MustMount(ghttp.RawOperation(http.MethodGet, "/admin", authHandler("admin")).WithMiddleware(authMiddleware(secret, true)))
 
 	middlewareGroup := server.Group("/middleware", traceMiddleware("group", "X-Group"))
-	ghttp.Route[struct{}, struct{}](middlewareGroup).GET("/order").Use(traceMiddleware("route", "X-Route")).ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	middlewareGroup.MustMount(ghttp.RawOperation(http.MethodGet, "/order", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		traceFromRequest(r).Record("handler")
 		writeJSON(w, map[string]string{"status": "ok"})
-	}))
+	})).WithMiddleware(traceMiddleware("route", "X-Route")))
+
 }
 
 func errorAdapterHandler(build func() error) http.Handler {

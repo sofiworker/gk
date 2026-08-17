@@ -26,9 +26,9 @@ type badCaseOutput struct {
 	Name    string `json:"name"`
 }
 
-func TestRouteBuilderBadCasesMalformedJSONReturnsBadRequest(t *testing.T) {
+func TestOperationBadCasesMalformedJSONReturnsBadRequest(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[badCaseInput, badCaseOutput](app).POST("/users/{id}").To(badCaseEchoHandler)
+	app.MustMount(Handle(Post("/users/{id}"), StructInput[badCaseInput](), JSONOutput[badCaseOutput](), badCaseEchoHandler))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/users/42", strings.NewReader(`{"name":`))
@@ -40,9 +40,9 @@ func TestRouteBuilderBadCasesMalformedJSONReturnsBadRequest(t *testing.T) {
 	}
 }
 
-func TestRouteBuilderBadCasesParamsKeepRawScalarValues(t *testing.T) {
+func TestOperationBadCasesParamsKeepRawScalarValues(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[badCaseInput, badCaseOutput](app).POST("/users/{id}").To(badCaseEchoHandler)
+	app.MustMount(Handle(Post("/users/{id}"), StructInput[badCaseInput](), JSONOutput[badCaseOutput](), badCaseEchoHandler))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/users/not-int?page=bad&flag=maybe", strings.NewReader(`{"name":"alice"}`))
@@ -62,12 +62,12 @@ func TestRouteBuilderBadCasesParamsKeepRawScalarValues(t *testing.T) {
 	}
 }
 
-func TestRouteBuilderBadCasesValidatorErrorReturnsUnprocessableEntity(t *testing.T) {
+func TestOperationBadCasesValidatorErrorReturnsUnprocessableEntity(t *testing.T) {
 	wantErr := errors.New("validation failed")
 	app := New(WithValidator(serverValidatorFunc(func(context.Context, interface{}) error {
 		return wantErr
 	})), WithProduces(MIMEJSON))
-	Route[badCaseInput, badCaseOutput](app).POST("/users/{id}").To(badCaseEchoHandler)
+	app.MustMount(Handle(Post("/users/{id}"), StructInput[badCaseInput](), JSONOutput[badCaseOutput](), badCaseEchoHandler))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/users/42", strings.NewReader(`{"name":"alice"}`))
@@ -79,11 +79,11 @@ func TestRouteBuilderBadCasesValidatorErrorReturnsUnprocessableEntity(t *testing
 	}
 }
 
-func TestRouteBuilderBadCasesHandlerHTTPErrorStatusIsPreserved(t *testing.T) {
+func TestOperationBadCasesHandlerHTTPErrorStatusIsPreserved(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[struct{}, struct{}](app).GET("/conflict").To(func(context.Context, struct{}) (struct{}, error) {
+	app.MustMount(Handle(Get("/conflict"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
 		return struct{}{}, Conflict("already exists")
-	})
+	}))
 
 	rec := httptest.NewRecorder()
 	app.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/conflict", nil))
@@ -93,20 +93,17 @@ func TestRouteBuilderBadCasesHandlerHTTPErrorStatusIsPreserved(t *testing.T) {
 	}
 }
 
-func TestRouteBuilderBadCasesMiddlewareCanShortCircuitRoute(t *testing.T) {
+func TestOperationBadCasesMiddlewareCanShortCircuitRoute(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[struct{}, struct{}](app).
-		GET("/blocked").
-		Use(func(http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusTeapot)
-				_, _ = w.Write([]byte("blocked"))
-			})
-		}).
-		To(func(context.Context, struct{}) (struct{}, error) {
-			t.Fatal("handler should not be called")
-			return struct{}{}, nil
+	app.MustMount(Handle(Get("/blocked"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
+		t.Fatal("handler should not be called")
+		return struct{}{}, nil
+	}).WithMiddleware(func(http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusTeapot)
+			_, _ = w.Write([]byte("blocked"))
 		})
+	}))
 
 	rec := httptest.NewRecorder()
 	app.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/blocked", nil))
@@ -116,7 +113,7 @@ func TestRouteBuilderBadCasesMiddlewareCanShortCircuitRoute(t *testing.T) {
 	}
 }
 
-func TestRouteBuilderBadCasesGroupPathJoiningEdgeCases(t *testing.T) {
+func TestOperationBadCasesGroupPathJoiningEdgeCases(t *testing.T) {
 	tests := []struct {
 		name      string
 		prefix    string
@@ -133,9 +130,9 @@ func TestRouteBuilderBadCasesGroupPathJoiningEdgeCases(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			app := New(WithProduces(MIMEJSON))
 			group := app.Group(tt.prefix)
-			Route[struct{}, badCaseOutput](group).GET(tt.routePath).To(func(context.Context, struct{}) (badCaseOutput, error) {
+			group.MustMount(Handle(Get(tt.routePath), StructInput[struct{}](), JSONOutput[badCaseOutput](), func(context.Context, struct{}) (badCaseOutput, error) {
 				return badCaseOutput{Name: tt.name}, nil
-			})
+			}))
 
 			rec := httptest.NewRecorder()
 			app.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.wantPath, nil))
@@ -146,16 +143,16 @@ func TestRouteBuilderBadCasesGroupPathJoiningEdgeCases(t *testing.T) {
 	}
 }
 
-func TestRouteBuilderBadCasesCORSPreflightShortCircuitsOptionsRoute(t *testing.T) {
+func TestOperationBadCasesCORSPreflightShortCircuitsOptionsRoute(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	app.Use(CORS(CORSConfig{
 		AllowOrigins: []string{"*"},
 		AllowMethods: []string{http.MethodOptions},
 	}))
-	Route[struct{}, badCaseOutput](app).OPTIONS("/options").To(func(context.Context, struct{}) (badCaseOutput, error) {
+	app.MustMount(Handle(Options("/options"), StructInput[struct{}](), JSONOutput[badCaseOutput](), func(context.Context, struct{}) (badCaseOutput, error) {
 		t.Fatal("OPTIONS handler should not be called for CORS preflight")
 		return badCaseOutput{}, nil
-	})
+	}))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodOptions, "/options", nil)

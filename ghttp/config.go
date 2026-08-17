@@ -31,7 +31,6 @@ type Config struct {
 	trustedCIDRs              []*net.IPNet
 	hostResolver              HostResolver
 	hostValidator             HostValidator
-	vfsPath                   string
 	strictRouting             bool
 	exposeErrorDetails        bool
 	openAPIEnabled            bool
@@ -358,14 +357,6 @@ func WithHostResolver(resolver HostResolver) ServerOption {
 func WithHostValidator(validator HostValidator) ServerOption {
 	return func(c *Config) {
 		c.hostValidator = validator
-	}
-}
-
-// WithVFSPath 设置 ToStatic() 的默认安全静态文件根。
-// WithVFSPath sets the default safe static root for ToStatic().
-func WithVFSPath(root string) ServerOption {
-	return func(c *Config) {
-		c.vfsPath = root
 	}
 }
 

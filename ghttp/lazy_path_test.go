@@ -12,10 +12,10 @@ func TestLazyPathParamsDecodeOnAccess(t *testing.T) {
 
 	server := New(WithProduces(MIMEJSON))
 	var gotID string
-	Route[Params, map[string]string](server).GET("/users/{id}").To(func(_ context.Context, p Params) (map[string]string, error) {
+	server.MustMount(Handle(Get("/users/{id}"), StructInput[Params](), JSONOutput[map[string]string](), func(_ context.Context, p Params) (map[string]string, error) {
 		gotID = p.Path("id")
 		return map[string]string{"id": gotID}, nil
-	})
+	}))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/users/42", nil)
@@ -33,10 +33,10 @@ func TestLazyPathParamsCatchAllJoinsRawSegments(t *testing.T) {
 
 	server := New(WithProduces(MIMEJSON))
 	var got string
-	Route[Params, map[string]string](server).GET("/files/{path...}").To(func(_ context.Context, p Params) (map[string]string, error) {
+	server.MustMount(Handle(Get("/files/{path...}"), StructInput[Params](), JSONOutput[map[string]string](), func(_ context.Context, p Params) (map[string]string, error) {
 		got = p.Path("path")
 		return map[string]string{"path": got}, nil
-	})
+	}))
 
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/files/a/b%2Fc/d", nil))
@@ -50,11 +50,11 @@ func TestLazyPathParamsEncodedValues(t *testing.T) {
 
 	server := New(WithProduces(MIMEJSON))
 	var id, slug string
-	Route[Params, map[string]string](server).GET("/u/{id}/{slug}").To(func(_ context.Context, p Params) (map[string]string, error) {
+	server.MustMount(Handle(Get("/u/{id}/{slug}"), StructInput[Params](), JSONOutput[map[string]string](), func(_ context.Context, p Params) (map[string]string, error) {
 		id = p.Path("id")
 		slug = p.Path("slug")
 		return map[string]string{}, nil
-	})
+	}))
 
 	server.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/u/a%2fb/caf%C3%A9", nil))
 	if id != "a/b" {
@@ -69,9 +69,9 @@ func TestLazyPathParamsStaticEscapedMatch(t *testing.T) {
 	t.Parallel()
 
 	server := New(WithProduces(MIMEJSON))
-	Route[struct{}, map[string]string](server).GET("/caf%C3%A9/ok").To(func(context.Context, struct{}) (map[string]string, error) {
+	server.MustMount(Handle(Get("/caf%C3%A9/ok"), StructInput[struct{}](), JSONOutput[map[string]string](), func(context.Context, struct{}) (map[string]string, error) {
 		return map[string]string{"hit": "1"}, nil
-	})
+	}))
 
 	for _, target := range []string{"/caf%C3%A9/ok", "/café/ok"} {
 		rec := httptest.NewRecorder()
@@ -87,11 +87,11 @@ func TestLazyPathParamsDetachMaterializes(t *testing.T) {
 
 	server := New(WithProduces(MIMEJSON))
 	var detached Params
-	Route[Params, struct{}](server).GET("/a/{x}/b/{y}").To(func(_ context.Context, p Params) (struct{}, error) {
+	server.MustMount(Handle(Get("/a/{x}/b/{y}"), StructInput[Params](), JSONOutput[struct{}](), func(_ context.Context, p Params) (struct{}, error) {
 		_ = p.Path("x") // 只访问一个;detach 后另一个也必须物化。
 		detached = p.Detach()
 		return struct{}{}, nil
-	})
+	}))
 
 	server.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/a/1/b/2", nil))
 	if detached.Path("x") != "1" || detached.Path("y") != "2" {

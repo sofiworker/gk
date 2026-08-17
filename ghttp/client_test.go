@@ -22,11 +22,11 @@ func TestClientBasicGet(t *testing.T) {
 			Message string `json:"message"`
 		}
 	}
-	Route[struct{ Body struct{} }, helloResp](app).GET("/hello").To(func(ctx context.Context, req struct{ Body struct{} }) (helloResp, error) {
+	app.MustMount(Handle(Get("/hello"), StructInput[struct{ Body struct{} }](), JSONOutput[helloResp](), func(ctx context.Context, req struct{ Body struct{} }) (helloResp, error) {
 		return helloResp{Body: struct {
 			Message string `json:"message"`
 		}{Message: "Hello"}}, nil
-	})
+	}))
 
 	ts := httptest.NewServer(app)
 	defer ts.Close()
@@ -49,9 +49,9 @@ func TestClientBaseURL(t *testing.T) {
 	type pongResp struct {
 		Body struct{ Pong string }
 	}
-	Route[struct{ Body struct{} }, pongResp](app).GET("/ping").To(func(ctx context.Context, req struct{ Body struct{} }) (pongResp, error) {
+	app.MustMount(Handle(Get("/ping"), StructInput[struct{ Body struct{} }](), JSONOutput[pongResp](), func(ctx context.Context, req struct{ Body struct{} }) (pongResp, error) {
 		return pongResp{Body: struct{ Pong string }{Pong: "ok"}}, nil
-	})
+	}))
 
 	ts := httptest.NewServer(app)
 	defer ts.Close()
@@ -212,11 +212,11 @@ type clientGreetResp struct {
 
 func TestClientGenericEndpoint(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[clientGreetReq, clientGreetResp](app).POST("/greet").To(func(ctx context.Context, req clientGreetReq) (clientGreetResp, error) {
+	app.MustMount(Handle(Post("/greet"), StructInput[clientGreetReq](), JSONOutput[clientGreetResp](), func(ctx context.Context, req clientGreetReq) (clientGreetResp, error) {
 		return clientGreetResp{Body: struct {
 			Message string `json:"message"`
 		}{Message: "Hello, " + req.Body.Name}}, nil
-	})
+	}))
 
 	ts := httptest.NewServer(app)
 	defer ts.Close()

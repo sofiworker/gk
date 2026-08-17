@@ -20,15 +20,13 @@ func TestWebSocketServerEchoJSON(t *testing.T) {
 		Text string `json:"text"`
 	}
 
-	Route[struct{}, struct{}](app).
-		GET("/ws").
-		ToWebSocket(func(ctx context.Context, params Params, conn *WebSocketConn) error {
-			var in message
-			if err := conn.ReadJSON(&in); err != nil {
-				return err
-			}
-			return conn.WriteJSON(message{Text: "echo:" + in.Text})
-		})
+	app.MustMount(WebSocketOperation("/ws", StructInput[Params](), func(ctx context.Context, params Params, conn *WebSocketConn) error {
+		var in message
+		if err := conn.ReadJSON(&in); err != nil {
+			return err
+		}
+		return conn.WriteJSON(message{Text: "echo:" + in.Text})
+	}))
 
 	ts := httptest.NewServer(app)
 	defer ts.Close()
@@ -56,14 +54,12 @@ func TestWebSocketServerPassesParams(t *testing.T) {
 		Trace string `json:"trace"`
 	}
 
-	Route[struct{}, struct{}](app).
-		GET("/ws/{id}").
-		ToWebSocket(func(ctx context.Context, params Params, conn *WebSocketConn) error {
-			return conn.WriteJSON(output{
-				ID:    params.Path("id"),
-				Trace: params.Query("trace"),
-			})
+	app.MustMount(WebSocketOperation("/ws/{id}", StructInput[Params](), func(ctx context.Context, params Params, conn *WebSocketConn) error {
+		return conn.WriteJSON(output{
+			ID:    params.Path("id"),
+			Trace: params.Query("trace"),
 		})
+	}))
 
 	ts := httptest.NewServer(app)
 	defer ts.Close()
@@ -82,9 +78,9 @@ func TestWebSocketServerPassesParams(t *testing.T) {
 
 func TestWebSocketServerRejectsPlainHTTP(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[struct{}, struct{}](app).GET("/ws").ToWebSocket(func(context.Context, Params, *WebSocketConn) error {
+	app.MustMount(WebSocketOperation("/ws", StructInput[Params](), func(context.Context, Params, *WebSocketConn) error {
 		return nil
-	})
+	}))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/ws", nil)
@@ -102,13 +98,13 @@ func TestClientWebSocketEchoJSON(t *testing.T) {
 		Text string `json:"text"`
 	}
 
-	Route[struct{}, struct{}](app).GET("/ws").ToWebSocket(func(ctx context.Context, params Params, conn *WebSocketConn) error {
+	app.MustMount(WebSocketOperation("/ws", StructInput[Params](), func(ctx context.Context, params Params, conn *WebSocketConn) error {
 		var in message
 		if err := conn.ReadJSON(&in); err != nil {
 			return err
 		}
 		return conn.WriteJSON(message{Text: "server:" + in.Text})
-	})
+	}))
 
 	ts := httptest.NewServer(app)
 	defer ts.Close()
@@ -139,9 +135,9 @@ func TestClientWebSocketSubprotocols(t *testing.T) {
 		Protocol string `json:"protocol"`
 	}
 
-	Route[struct{}, struct{}](app).GET("/ws").ToWebSocket(func(ctx context.Context, params Params, conn *WebSocketConn) error {
+	app.MustMount(WebSocketOperation("/ws", StructInput[Params](), func(ctx context.Context, params Params, conn *WebSocketConn) error {
 		return conn.WriteJSON(output{Protocol: params.Header("Sec-WebSocket-Protocol")})
-	})
+	}))
 
 	ts := httptest.NewServer(app)
 	defer ts.Close()
@@ -169,9 +165,9 @@ func TestClientWebSocketTLS(t *testing.T) {
 		Text string `json:"text"`
 	}
 
-	Route[struct{}, struct{}](app).GET("/ws").ToWebSocket(func(ctx context.Context, params Params, conn *WebSocketConn) error {
+	app.MustMount(WebSocketOperation("/ws", StructInput[Params](), func(ctx context.Context, params Params, conn *WebSocketConn) error {
 		return conn.WriteJSON(message{Text: "secure"})
-	})
+	}))
 
 	ts := httptest.NewTLSServer(app)
 	defer ts.Close()
@@ -204,13 +200,13 @@ func TestWebSocketServerUnderTimeoutMiddlewareUpgrades(t *testing.T) {
 	type message struct {
 		Text string `json:"text"`
 	}
-	Route[struct{}, struct{}](app).GET("/ws").ToWebSocket(func(ctx context.Context, params Params, conn *WebSocketConn) error {
+	app.MustMount(WebSocketOperation("/ws", StructInput[Params](), func(ctx context.Context, params Params, conn *WebSocketConn) error {
 		var in message
 		if err := conn.ReadJSON(&in); err != nil {
 			return err
 		}
 		return conn.WriteJSON(message{Text: "echo:" + in.Text})
-	})
+	}))
 
 	ts := httptest.NewServer(app)
 	defer ts.Close()
@@ -231,13 +227,13 @@ func TestWebSocketServerUnderTimeoutMiddlewareUpgrades(t *testing.T) {
 
 func TestWebSocketServerRawMessages(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[struct{}, struct{}](app).GET("/ws").ToWebSocket(func(ctx context.Context, params Params, conn *WebSocketConn) error {
+	app.MustMount(WebSocketOperation("/ws", StructInput[Params](), func(ctx context.Context, params Params, conn *WebSocketConn) error {
 		messageType, data, err := conn.ReadMessage()
 		if err != nil {
 			return err
 		}
 		return conn.WriteMessage(messageType, append([]byte("echo:"), data...))
-	})
+	}))
 
 	ts := httptest.NewServer(app)
 	defer ts.Close()
@@ -265,9 +261,9 @@ func TestWebSocketServerNegotiatedSubprotocol(t *testing.T) {
 	type output struct {
 		Protocol string `json:"protocol"`
 	}
-	Route[struct{}, struct{}](app).GET("/ws").ToWebSocket(func(ctx context.Context, params Params, conn *WebSocketConn) error {
+	app.MustMount(WebSocketOperation("/ws", StructInput[Params](), func(ctx context.Context, params Params, conn *WebSocketConn) error {
 		return conn.WriteJSON(output{Protocol: conn.Subprotocol()})
-	})
+	}))
 
 	ts := httptest.NewServer(app)
 	defer ts.Close()
@@ -290,14 +286,11 @@ func TestWebSocketServerNegotiatedSubprotocol(t *testing.T) {
 
 func TestWebSocketServerRouteOriginOverride(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[struct{}, struct{}](app).
-		GET("/open").
-		WebSocketCheckOrigin(func(r *http.Request) bool {
-			return r.Header.Get("Origin") == "https://allowed.test"
-		}).
-		ToWebSocket(func(ctx context.Context, params Params, conn *WebSocketConn) error {
-			return conn.WriteJSON(map[string]any{"ok": true})
-		})
+	app.MustMount(WebSocketOperation("/open", StructInput[Params](), func(ctx context.Context, params Params, conn *WebSocketConn) error {
+		return conn.WriteJSON(map[string]any{"ok": true})
+	}).WithWebSocketOriginCheck(func(r *http.Request) bool {
+		return r.Header.Get("Origin") == "https://allowed.test"
+	}))
 
 	ts := httptest.NewServer(app)
 	defer ts.Close()
@@ -325,7 +318,7 @@ func TestWebSocketServerRouteOriginOverride(t *testing.T) {
 func TestWebSocketServerReadJSONContextCanceled(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	errCh := make(chan error, 1)
-	Route[struct{}, struct{}](app).GET("/ws").ToWebSocket(func(ctx context.Context, params Params, conn *WebSocketConn) error {
+	app.MustMount(WebSocketOperation("/ws", StructInput[Params](), func(ctx context.Context, params Params, conn *WebSocketConn) error {
 		ctx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 		defer cancel()
 		var msg struct {
@@ -333,7 +326,7 @@ func TestWebSocketServerReadJSONContextCanceled(t *testing.T) {
 		}
 		errCh <- conn.ReadJSONContext(ctx, &msg)
 		return nil
-	})
+	}))
 
 	ts := httptest.NewServer(app)
 	defer ts.Close()
@@ -361,13 +354,13 @@ func TestWebSocketServerKeepAlivePing(t *testing.T) {
 	type message struct {
 		Text string `json:"text"`
 	}
-	Route[struct{}, struct{}](app).GET("/ws").ToWebSocket(func(ctx context.Context, params Params, conn *WebSocketConn) error {
+	app.MustMount(WebSocketOperation("/ws", StructInput[Params](), func(ctx context.Context, params Params, conn *WebSocketConn) error {
 		var in message
 		if err := conn.ReadJSONContext(ctx, &in); err != nil {
 			return err
 		}
 		return conn.WriteJSON(message{Text: "alive:" + in.Text})
-	})
+	}))
 
 	ts := httptest.NewServer(app)
 	defer ts.Close()
@@ -475,9 +468,9 @@ func TestServerWebSocketOptionsConfigure(t *testing.T) {
 
 func TestWebSocketRejectsCrossOriginByDefault(t *testing.T) {
 	app := New()
-	Route[Params, struct{}](app).GET("/ws").ToWebSocket(func(context.Context, Params, *WebSocketConn) error {
+	app.MustMount(WebSocketOperation("/ws", StructInput[Params](), func(context.Context, Params, *WebSocketConn) error {
 		return nil
-	})
+	}))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/ws", nil)

@@ -1,6 +1,7 @@
 package ghttp
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -13,11 +14,10 @@ func TestServerFreezesCompiledRoutesOnFirstRequest(t *testing.T) {
 	t.Parallel()
 
 	server := New()
-	Route[struct{}, struct{}](server).
-		GET("/health").
-		ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server.MustMount(RawOperation(http.MethodGet, "/health",
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte("ok"))
-		}))
+		})))
 
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/health", nil))
@@ -29,9 +29,8 @@ func TestServerFreezesCompiledRoutesOnFirstRequest(t *testing.T) {
 	}
 
 	assertRoutePanic(t, ErrServerFrozen, func() {
-		Route[struct{}, struct{}](server).
-			GET("/after-freeze").
-			ToHTTP(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		server.MustMount(RawOperation(http.MethodGet, "/after-freeze",
+			http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))
 	})
 }
 
@@ -39,11 +38,10 @@ func TestServerReportsCompiledMethodOutcomes(t *testing.T) {
 	t.Parallel()
 
 	server := New()
-	Route[struct{}, struct{}](server).
-		GET("/resources/{id}").
-		ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server.MustMount(RawOperation(http.MethodGet, "/resources/{id}",
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
-		}))
+		})))
 
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/resources/42", nil))
@@ -81,11 +79,10 @@ func TestServerStrictRoutingDistinguishesTrailingSlash(t *testing.T) {
 	t.Parallel()
 
 	server := New(WithStrictRouting())
-	Route[struct{}, struct{}](server).
-		GET("/health").
-		ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server.MustMount(RawOperation(http.MethodGet, "/health",
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
-		}))
+		})))
 
 	withoutSlash := httptest.NewRecorder()
 	server.ServeHTTP(withoutSlash, httptest.NewRequest(http.MethodGet, "/health", nil))
@@ -100,15 +97,16 @@ func TestServerStrictRoutingDistinguishesTrailingSlash(t *testing.T) {
 	}
 }
 
-func TestServerFreezeRejectsExistingRouteBuilderMutation(t *testing.T) {
+func TestServerFreezeRejectsOperationMount(t *testing.T) {
 	t.Parallel()
 
 	server := New(WithProduces(MIMEJSON))
-	builder := Route[struct{}, struct{}](server)
 	server.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
 
 	assertRoutePanic(t, ErrServerFrozen, func() {
-		builder.GET("/after-freeze")
+		server.MustMount(GetJSON("/after-freeze", NoInput(), func(context.Context, EmptyInput) (struct{}, error) {
+			return struct{}{}, nil
+		}))
 	})
 }
 
@@ -153,9 +151,8 @@ func TestGroupConcurrentUseRetainsEveryMiddleware(t *testing.T) {
 	const writers = 64
 	var calls atomic.Int64
 
-	Route[struct{}, struct{}](group).
-		GET("/health").
-		ToHTTP(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	group.MustMount(RawOperation(http.MethodGet, "/health",
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))
 
 	start := make(chan struct{})
 	var waitGroup sync.WaitGroup
@@ -196,11 +193,10 @@ func TestServerRegistrationFreezeIsAtomic(t *testing.T) {
 		go func() {
 			defer func() { registered <- recover() }()
 			<-start
-			Route[struct{}, struct{}](server).
-				GET("/concurrent").
-				ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			server.MustMount(RawOperation(http.MethodGet, "/concurrent",
+				http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					w.WriteHeader(http.StatusNoContent)
-				}))
+				})))
 		}()
 		go func() {
 			<-start

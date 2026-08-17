@@ -18,8 +18,24 @@ const defaultMaxMemory = 32 << 20 // 32 MB
 // parse result, keeping eager and lazy paths consistent even when the request
 // was replaced by the MaxBodyBytes wrapper.
 func fillMultipartBody(bodyVal reflect.Value, form *multipart.Form) error {
-	if bodyVal.Kind() != reflect.Struct {
-		return nil
+	if !bodyVal.IsValid() {
+		return fmt.Errorf("%w: multipart target must be a struct pointer", ErrInvalidBody)
+	}
+	targetType := bodyVal.Type()
+	for targetType.Kind() == reflect.Ptr {
+		targetType = targetType.Elem()
+	}
+	if targetType.Kind() != reflect.Struct {
+		return fmt.Errorf("%w: multipart target must be a struct pointer", ErrInvalidBody)
+	}
+	for bodyVal.Kind() == reflect.Ptr {
+		if bodyVal.IsNil() {
+			if !bodyVal.CanSet() {
+				return fmt.Errorf("multipart target %s is not settable", bodyVal.Type())
+			}
+			bodyVal.Set(reflect.New(bodyVal.Type().Elem()))
+		}
+		bodyVal = bodyVal.Elem()
 	}
 	if form == nil {
 		return nil

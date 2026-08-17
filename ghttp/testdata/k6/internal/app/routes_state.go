@@ -91,7 +91,7 @@ func (c *stateController) delete(generation uint64, namespace, id string) (bool,
 }
 
 func registerState(server *ghttp.Server, controller *stateController) {
-	ghttp.Route[ghttp.Params, struct{}](server).POST("/state/{namespace}/items").ToHTTPFunc(func(w http.ResponseWriter, r *http.Request, params ghttp.Params) error {
+	server.MustMount(ghttp.HandleHTTP(ghttp.Post("/state/{namespace}/items"), ghttp.StructInput[ghttp.Params](), func(w http.ResponseWriter, r *http.Request, params ghttp.Params) error {
 		generation := controller.snapshotGeneration()
 		pauseStateMutation(r)
 		var input struct {
@@ -113,9 +113,9 @@ func registerState(server *ghttp.Server, controller *stateController) {
 		w.WriteHeader(http.StatusCreated)
 		writeJSONBody(w, item)
 		return nil
-	})
+	}))
 
-	ghttp.Route[ghttp.Params, struct{}](server).GET("/state/{namespace}/items/{id}").ToHTTPFunc(func(w http.ResponseWriter, _ *http.Request, params ghttp.Params) error {
+	server.MustMount(ghttp.HandleHTTP(ghttp.Get("/state/{namespace}/items/{id}"), ghttp.StructInput[ghttp.Params](), func(w http.ResponseWriter, _ *http.Request, params ghttp.Params) error {
 		item, ok := controller.store.Get(params.Path("namespace"), params.Path("id"))
 		if !ok {
 			writePublicError(w, http.StatusNotFound)
@@ -124,14 +124,14 @@ func registerState(server *ghttp.Server, controller *stateController) {
 		w.Header().Set("ETag", stateETag(item.Version))
 		writeJSON(w, item)
 		return nil
-	})
+	}))
 
-	ghttp.Route[ghttp.Params, struct{}](server).GET("/state/{namespace}/items").ToHTTPFunc(func(w http.ResponseWriter, _ *http.Request, params ghttp.Params) error {
+	server.MustMount(ghttp.HandleHTTP(ghttp.Get("/state/{namespace}/items"), ghttp.StructInput[ghttp.Params](), func(w http.ResponseWriter, _ *http.Request, params ghttp.Params) error {
 		writeJSON(w, controller.store.List(params.Path("namespace")))
 		return nil
-	})
+	}))
 
-	ghttp.Route[ghttp.Params, struct{}](server).PUT("/state/{namespace}/items/{id}").ToHTTPFunc(func(w http.ResponseWriter, r *http.Request, params ghttp.Params) error {
+	server.MustMount(ghttp.HandleHTTP(ghttp.Put("/state/{namespace}/items/{id}"), ghttp.StructInput[ghttp.Params](), func(w http.ResponseWriter, r *http.Request, params ghttp.Params) error {
 		generation := controller.snapshotGeneration()
 		pauseStateMutation(r)
 		ifMatch := r.Header.Get("If-Match")
@@ -163,9 +163,9 @@ func registerState(server *ghttp.Server, controller *stateController) {
 		w.Header().Set("ETag", stateETag(item.Version))
 		writeJSON(w, item)
 		return nil
-	})
+	}))
 
-	ghttp.Route[ghttp.Params, struct{}](server).DELETE("/state/{namespace}/items/{id}").ToHTTPFunc(func(w http.ResponseWriter, r *http.Request, params ghttp.Params) error {
+	server.MustMount(ghttp.HandleHTTP(ghttp.Delete("/state/{namespace}/items/{id}"), ghttp.StructInput[ghttp.Params](), func(w http.ResponseWriter, r *http.Request, params ghttp.Params) error {
 		generation := controller.snapshotGeneration()
 		pauseStateMutation(r)
 		deleted, err := controller.delete(generation, params.Path("namespace"), params.Path("id"))
@@ -179,7 +179,7 @@ func registerState(server *ghttp.Server, controller *stateController) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 		return nil
-	})
+	}))
 }
 
 func decodeStateJSON(request *http.Request, target any) bool {

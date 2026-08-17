@@ -44,38 +44,36 @@ func TestServerRoutingPublicAPI(t *testing.T) {
 	api := server.Group("/api", externalRoutingMiddleware(&middlewareOrder, "api"))
 	v1 := api.Group("/v1", externalRoutingMiddleware(&middlewareOrder, "v1"))
 
-	ghttp.Route[externalTypedInput, externalTypedOutput](v1).
-		GET("/users/{id}").
-		Use(externalRoutingMiddleware(&middlewareOrder, "route")).
-		To(func(_ context.Context, input externalTypedInput) (externalTypedOutput, error) {
+	v1.MustMount(ghttp.Handle(ghttp.Get("/users/{id}"), ghttp.StructInput[externalTypedInput](), ghttp.JSONOutput[externalTypedOutput](),
+
+		func(_ context.Context, input externalTypedInput) (externalTypedOutput, error) {
 			middlewareOrder = append(middlewareOrder, "handler")
 			return externalTypedOutput{
 				ID:     input.Path("id"),
 				Source: input.Query("source"),
 			}, nil
-		})
+		}).WithMiddleware(externalRoutingMiddleware(&middlewareOrder, "route")))
 
-	ghttp.Route[struct{}, struct{}](v1).
-		GET("/raw/{id}").
-		ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	v1.MustMount(ghttp.RawOperation(http.MethodGet, "/raw/{id}",
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Path-Value", r.PathValue("id"))
 			w.Header().Set("X-Request-URI", r.URL.RequestURI())
 			w.WriteHeader(http.StatusNoContent)
-		}))
+		})))
 
-	ghttp.Route[externalHTTPFuncInput, struct{}](v1).
-		GET("/manual/{id}").
-		ToHTTPFunc(func(w http.ResponseWriter, _ *http.Request, input externalHTTPFuncInput) error {
+	v1.MustMount(ghttp.HandleHTTP(ghttp.Get("/manual/{id}"), ghttp.StructInput[externalHTTPFuncInput](),
+
+		func(w http.ResponseWriter, _ *http.Request, input externalHTTPFuncInput) error {
 			w.WriteHeader(http.StatusAccepted)
 			_, err := fmt.Fprintf(w, "%s:%s", input.Path("id"), input.Query("view"))
 			return err
-		})
+		}))
 
-	ghttp.Route[struct{}, struct{}](server).
-		GET("/trigger-error").
-		To(func(context.Context, struct{}) (struct{}, error) {
+	server.MustMount(ghttp.Handle(ghttp.Get("/trigger-error"), ghttp.StructInput[struct{}](), ghttp.JSONOutput[struct{}](),
+
+		func(context.Context, struct{}) (struct{}, error) {
 			return struct{}{}, errors.New("route failure")
-		})
+		}))
 
 	testServer := httptest.NewServer(server)
 	defer testServer.Close()

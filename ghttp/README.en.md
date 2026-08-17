@@ -2,20 +2,23 @@
 
 English | [中文](README.md)
 
-A general-purpose Go HTTP framework built on Go 1.24+ generics and the standard library `net/http`, with server/client support, OpenAPI 3.1 generation, content negotiation, template rendering, WebSocket/SSE and more.
+> Under development. Do not use directly for production development.
+>
+> ghttp is pre-v1.0.0. Its public API, defaults, and performance implementation are not frozen. This breaking server rewrite removes `Route[Req, Resp]`, `RouteBuilder`, and their chained terminals.
 
----
+ghttp provides HTTP client and server functionality on top of the standard `net/http` package. The server is centered on immutable `Operation` values: method, path, input, output, documentation, and business logic are compiled before being mounted on a `Server` or `Group`. Request dispatch does not scan struct tags or pass through the old `RouteBuilder`.
 
-## Features
+## Core Features
 
-- **Generic-first API** — typed route chains with compile-time safety
-- **Explicit input** — `Params` for path/query/header/cookie and a `Body` field for request bodies
-- **Content negotiation** — `Accept`-driven response codecs and `Consumes`-constrained request types
-- **Flexible output** — response structs and custom Envelope wrapping
-- **Built-in routing** — a single method-first matcher with static, parameter and catch-all paths
-- **OpenAPI 3.1** — inferred JSON Schema and OAS documents from route metadata
-
----
+- Reusable, copy-on-write `Operation` endpoint descriptions.
+- Explicit `Input[T]` contracts for path, query, header, cookie, and body values.
+- Explicit `Output[T]` contracts for status, Content-Type, headers, serialization, and OpenAPI schemas.
+- Registration-time validation of methods, paths, metadata, duplicate parameters, bodies, and outputs.
+- A frozen method-aware route tree supporting static, `{param}`, and `{path...}` segments.
+- OpenAPI 3.1 generated directly from input and output contracts.
+- Direct calls and a direct-path fast path for common JSON endpoints.
+- One error, validation, body-limit, envelope, and content-negotiation pipeline.
+- Native HTTP handlers, typed HTTP functions, WebSocket, SSE, and safe static files.
 
 ## Installation
 
@@ -27,769 +30,395 @@ go get github.com/sofiworker/gk
 import "github.com/sofiworker/gk/ghttp"
 ```
 
----
+The module currently requires Go 1.25.0 or later. Files using Go 1.27 generic methods are selected automatically by toolchain version.
 
 ## Quick Start
-
-### Server
 
 ```go
 package main
 
 import (
     "context"
+    "log"
+
     "github.com/sofiworker/gk/ghttp"
 )
 
-type GreetInput struct {
-    ghttp.Params `json:"-"`
+type LookupUser struct {
+    ID     int64
+    Locale string
 }
 
-type GreetOutput struct {
-    Message string `json:"message"`
+type User struct {
+    ID   int64  `json:"id"`
+    Name string `json:"name"`
 }
 
 func main() {
-    s := ghttp.New(ghttp.WithProduces(ghttp.MIMEJSON))
+    input := ghttp.MapInputs(
+        ghttp.PathInt64("id", ghttp.Minimum(1)),
+        ghttp.QueryString("locale", ghttp.AllowedValues("en-US", "zh-CN")),
+        func(id int64, locale string) LookupUser {
+            return LookupUser{ID: id, Locale: locale}
+        },
+    )
 
-    // 链式构建器（支持 OpenAPI 元数据）；
-    // chain builder (with OpenAPI metadata).
-    ghttp.Route[GreetInput, GreetOutput](s).
-    GET("/hello/{name}").
-    Produces(ghttp.MIMEJSON, ghttp.MIMEXML).
-    Doc(ghttp.Summary("返回个性化的问候消息")).
-    To(func(ctx context.Context, req GreetInput) (GreetOutput, error) {
-            return GreetOutput{Message: "Hello, " + req.Path("name")}, nil
-    })
+    getUser := ghttp.Handle(
+        ghttp.Get("/users/{id}"),
+        input,
+        ghttp.JSONOutput[User](),
+        func(ctx context.Context, lookup LookupUser) (User, error) {
+            return User{ID: lookup.ID, Name: lookup.Locale}, nil
+        },
+    ).Doc(
+        ghttp.Summary("Get a user"),
+        ghttp.Tags("users"),
+        ghttp.OperationID("getUser"),
+    )
 
-    s.Run(":8080")
+    server := ghttp.New(ghttp.WithOpenAPI("users", "0.1.0"))
+    server.MustMount(getUser)
+    log.Fatal(server.Run(":8080"))
 }
 ```
 
-### Client
+`GET /users/7?locale=en-US` returns:
+
+```json
+{"id":7,"name":"en-US"}
+```
+
+## Operation Model
+
+`EndpointBuilder` stores only an HTTP method and path. `Handle` compiles it with an input, output, and handler:
+
+```go
+operation := ghttp.Handle(
+    ghttp.Post("/users"),
+    ghttp.JSONBody[CreateUser](),
+    ghttp.WithResponseHeader(
+        "X-Contract", "create-user",
+        ghttp.WithStatus(http.StatusCreated, ghttp.JSONOutput[User]()),
+    ),
+    createUser,
+)
+```
+
+Built-in starts are `Get`, `Post`, `Put`, `Patch`, `Delete`, `Head`, `Options`, `Connect`, and `Trace`. Use `Endpoint` for a custom method:
+
+```go
+ghttp.Endpoint("PURGE", "/cache")
+```
+
+All Operation modifiers return copies:
+
+| Method | Purpose |
+|---|---|
+| `Doc(options...)` | Add OpenAPI summary, tags, operationId, and related metadata. |
+| `WithMiddleware(middlewares...)` | Add route-level standard `net/http` middleware. |
+| `WithMaxBodyBytes(n)` | Override the body limit; `n <= 0` disables it for this Operation. |
+| `WithErrorWriter(writer)` | Override the route-level error writer. |
+| `WithProblemDetails()` | Use RFC 9457 `application/problem+json`. |
+| `WithoutServerValidation()` | Skip the server Validator but retain descriptor validation. |
+| `WithWebSocketOriginCheck(check)` | Override the WebSocket Origin check. |
+
+`Method()` and `Path()` inspect the description. `Mount` returns registration errors; `MustMount` panics for programmer configuration errors:
+
+```go
+server.MustMount(operationA, operationB)
+
+api := server.Group("/api", authMiddleware)
+api.MustMount(operationA.Doc(ghttp.Tags("api")))
+```
+
+The same Operation may be mounted on multiple Servers or Groups. Prefixes, middleware, and server configuration are never written back into it.
+
+## Before and After Go 1.27
+
+Both syntaxes share `compileOperation`, all descriptors, and one execution pipeline.
+
+Before Go 1.27, use the package-level generic function:
+
+```go
+operation := ghttp.Handle(
+    ghttp.Get("/users/{id}"),
+    ghttp.PathInt64("id"),
+    ghttp.JSONOutput[User](),
+    getUser,
+)
+```
+
+Go 1.27 adds inferred generic methods:
+
+```go
+operation := ghttp.Get("/users/{id}").Handle(
+    ghttp.PathInt64("id"),
+    ghttp.JSONOutput[User](),
+    getUser,
+)
+```
+
+The package-level `Handle` remains available on Go 1.27 for source migration. Go 1.27-only files require the corresponding `gofmt`; older formatters cannot parse generic methods.
+
+## Input Contracts
+
+### Built-ins
+
+| Constructor | Result | Behavior |
+|---|---|---|
+| `NoInput()` | `Input[EmptyInput]` | Reads no request data. |
+| `PathString/PathInt64/PathBool/PathFloat64` | Scalars | Required path parameters. |
+| `PathRemainder` | `string` | A `{name...}` catch-all parameter. |
+| `QueryString/QueryInt/QueryBool/QueryFloat64` | Scalars | Required query parameters. |
+| `QueryIntDefault` | `int` | Uses a default when absent. |
+| `QueryStrings` | `[]string` | Repeated query values. |
+| `HeaderString` | `string` | A required request header. |
+| `CookieString` | `string` | A required Cookie. |
+| `JSONBody[T]` | `T` | Required JSON body with optional validators. |
+| `FormBody` | `url.Values` | URL-encoded body. |
+| `MultipartFile` | `*FileHeader` | Multipart file field. |
+| `HTTPRequest` | `*http.Request` | Input-side low-level escape hatch. |
+| `StructInput[T]` | `T` | Compiles struct tags, embedded `Params`, `Body`, and OpenAPI metadata once. |
+| `ValidatedInput[T]` | `T` | Wraps any input contract with endpoint-level validation. |
+
+Numeric parameters accept only `NumberConstraint` values from `Minimum` and `Maximum`. String parameters accept only `StringConstraint` values from `AllowedValues`. Invalid schema/runtime combinations therefore fail at compile time.
+
+### Composition
+
+```go
+type Search struct {
+    Tenant string
+    Page   int
+    Tags   []string
+}
+
+input := ghttp.MapInputs3(
+    ghttp.HeaderString("X-Tenant"),
+    ghttp.QueryIntDefault("page", 1, ghttp.Minimum(1)),
+    ghttp.QueryStrings("tag"),
+    func(tenant string, page int, tags []string) Search {
+        return Search{Tenant: tenant, Page: page, Tags: tags}
+    },
+)
+```
+
+`CombineInputs`/`CombineInputs3` return `InputPair`/`InputTriple`; `MapInputs`/`MapInputs3` construct a business type. Composed inputs share one request state, so query, body, form, and multipart data are parsed once.
+
+Use `InputFunc` for arbitrary input. Add OpenAPI metadata with `InputFuncWithMetadata`:
+
+```go
+input := ghttp.InputFuncWithMetadata(
+    func(request ghttp.RequestView) (Tenant, error) {
+        return Tenant{ID: request.Header().Get("X-Tenant")}, nil
+    },
+    ghttp.InputMetadata{Parameters: []ghttp.InputParameter{{
+        Name: "X-Tenant", Location: ghttp.ParameterLocationHeader,
+        Required: true, Schema: map[string]any{"type": "string"},
+    }}},
+)
+```
+
+`RequestView` exposes `Context`, `HTTPRequest`, `Path`, `Query`, `Header`, `Cookie`, and `ClientIP`. It is valid only while constructing the input; returned query/header values must not be mutated.
+
+Registration rejects duplicate or empty parameters, unsupported locations, path parameters absent from the route, multiple independent bodies, nil constructors, and nil mappers.
+
+## Output Contracts
+
+| Constructor | Output |
+|---|---|
+| `JSONOutput[T]` | JSON 200, serialized before committing the status. |
+| `CodecOutput[T]` | Negotiates through Server-registered Codecs and `Accept`. |
+| `TextOutput` | `text/plain` 200. |
+| `XMLOutput[T]` | XML 200, serialized before commit. |
+| `HTMLOutput[T]` | `html/template`, executed before commit. |
+| `BytesOutput` | `[]byte` with an explicit Content-Type. |
+| `NoContentOutput[T]` | 204 with no body. |
+| `RedirectOutput` | The handler returns `RedirectResponse{Location: ...}`. |
+| `DownloadOutput` | Byte response with an attachment filename. |
+| `StreamOutput` | The handler returns `func(io.Writer) error`. |
+| `SSEOutput` | The handler returns `func(*SSEWriter) error`. |
+| `FileOutput` | Sends an `io.ReadSeeker` from its beginning. |
+| `OutputFunc` | Custom status, Content-Type, and writer. |
+
+Output wrappers:
+
+- `WithStatus(status, output)` overrides the success status.
+- `WithResponseHeader(name, value, output)` adds a fixed response header.
+- `WithResponseCookie(cookie, output)` adds a response Cookie.
+- `WithOutputSchema(schema, output)` overrides the success schema.
+- `WithDocumentedResponses(responses, output)` declares additional OpenAPI responses.
+
+Invalid status codes, nil templates, and nil custom writers fail at Mount. JSON/XML/HTML preparation failures, file seek failures, and SSE writer capability failures occur before response commit and still enter the unified error pipeline.
+
+## Convenience Operations
+
+```go
+server.MustMount(
+    ghttp.GetJSON("/users/{id}", ghttp.PathInt64("id"), getUser),
+    ghttp.PostJSON("/users", ghttp.JSONBody[CreateUser](), createUser),
+    ghttp.CreatedJSON("/users", ghttp.JSONBody[CreateUser](), createUser),
+    ghttp.GetText("/health", ghttp.NoInput(), health),
+)
+```
+
+`PutJSON`, `PatchJSON`, `DeleteJSON`, and corresponding Text forms are also available. A JSON operation with one path input uses direct value compilation instead of constructing a general parameter container.
+
+## Native HTTP, WebSocket, SSE, and Static Files
+
+```go
+raw := ghttp.RawOperation(http.MethodGet, "/metrics", metricsHandler)
+
+httpFunc := ghttp.HTTPFuncOperation(
+    http.MethodGet, "/raw",
+    func(w http.ResponseWriter, r *http.Request) error { return nil },
+)
+
+typedHTTP := ghttp.HandleHTTP(
+    ghttp.Get("/files/{name}"),
+    ghttp.PathString("name"),
+    func(w http.ResponseWriter, r *http.Request, name string) error { return nil },
+)
+```
+
+Go 1.27 adds `EndpointBuilder.HandleHTTP` as an inferred method.
+
+WebSocket operations reuse ghttp connection, Origin, subprotocol, buffer, logger, and keepalive behavior:
+
+```go
+ws := ghttp.WebSocketOperation(
+    "/chat/{room}",
+    ghttp.PathString("room"),
+    func(ctx context.Context, room string, conn *ghttp.WebSocketConn) error {
+        return nil
+    },
+)
+```
+
+SSE is a regular output contract:
+
+```go
+events := ghttp.Handle(
+    ghttp.Get("/events"),
+    ghttp.NoInput(),
+    ghttp.SSEOutput(),
+    func(ctx context.Context, _ ghttp.EmptyInput) (func(*ghttp.SSEWriter) error, error) {
+        return func(stream *ghttp.SSEWriter) error {
+            return stream.WriteJSON("tick", map[string]any{"ready": true})
+        }, nil
+    },
+)
+```
+
+Static files:
+
+```go
+server.MustMount(
+    ghttp.StaticDirectory("/assets", "./public"),
+    ghttp.StaticFileSystem("/embedded", http.FS(assets)),
+    ghttp.StaticFile("/favicon.ico", "./favicon.ico"),
+)
+```
+
+`StaticDirectory` uses `NewSafeFS`, rejecting traversal, backslashes, and symlink escapes.
+
+## Errors, Validation, and Body Limits
+
+Returning an `*HTTPError` preserves its status:
+
+```go
+return User{}, ghttp.NotFound("user not found")
+```
+
+The default error body is `{code,message}`. Server-level `WithProblemDetails()` or Operation-level `WithProblemDetails()` switches to RFC 9457. `WithErrorWriter` installs composable custom writers.
+
+The server Validator is disabled by default:
+
+```go
+server := ghttp.New(ghttp.WithValidator(ghttp.NewDefaultValidator()))
+```
+
+Operation invokes it after input construction and returns 422 on failure. `WithoutServerValidation` skips only the server Validator; `JSONBody` validators and `InputFunc` validation still run.
+
+`WithMaxBodyBytes` sets the server default and `operation.WithMaxBodyBytes` overrides one route. JSON, URL-encoded, multipart, `RawBody`, and `Body[T]` share request body state and one limit. Exceeding it returns 413.
+
+Content negotiation is strict by default:
+
+- A body Content-Type not accepted by the input contract returns 415.
+- An `Accept` header excluding the output type returns 406.
+- Empty `Accept` and `*/*` accept the output type.
+
+## OpenAPI 3.1
+
+```go
+server := ghttp.New(ghttp.WithOpenAPI("users", "0.1.0"))
+server.MustMount(operation)
+
+document, err := server.OpenAPI()
+```
+
+`/openapi.json` is registered by default. Operation registration freezes:
+
+- path/query/header/cookie parameters and required, format, minimum, maximum, and enum constraints;
+- JSON, form, and multipart request schemas;
+- success status, Content-Type, response headers, Cookies, and body schema;
+- additional responses, Problem Details schemas, and WebSocket/SSE extensions;
+- summary, description, tags, operationId, deprecation, sunset, and external docs.
+
+Missing summaries and operation IDs are inferred. For example, `GET /users/{id}` becomes `get_users_by_id`. An explicit `OperationID` always wins.
+
+## Server and Middleware
+
+`Server` implements `http.Handler`. Routes freeze before the first request; later registration returns or panics with `ErrServerFrozen`.
+
+```go
+server := ghttp.New(
+    ghttp.WithAddress(":8080"),
+    ghttp.WithReadHeaderTimeout(5*time.Second),
+    ghttp.WithIdleTimeout(60*time.Second),
+)
+
+server.Use(ghttp.RequestID(), ghttp.Recoverer())
+server.SkipUse(authMiddleware, http.MethodGet, "/health")
+
+go server.Run()
+defer server.Shutdown(context.Background())
+```
+
+`Server.Use`, `Group`, and `Operation.WithMiddleware` all use `func(http.Handler) http.Handler`. Execution order is server, group, then Operation from outermost to innermost.
+
+## Client
+
+The client API remains independent:
 
 ```go
 client := ghttp.NewClient()
 
-// 泛型调用；
-// typed generic call.
-resp, err := ghttp.GET[GreetInput, GreetOutput](client, "/hello/world", nil)
-
-// 链式调用（go-resty 风格）；
-// chain call (go-resty style).
-result, err := client.R().
+response, err := client.R().
     SetHeader("Authorization", "Bearer token").
-    SetQueryParam("lang", "zh").
-    Get("/hello/world")
+    SetQueryParam("lang", "en-US").
+    Get("/users/7")
 
-// 结构化请求；
-// structured request.
-input := &GreetInput{}
-resp, err := ghttp.Do[GreetInput, GreetOutput](client, "POST", "/hello", input)
-
-// 自定义底层客户端或 Transport；
-// custom underlying client or transport.
-client = ghttp.NewClient(
-    ghttp.WithHTTPClient(&http.Client{Timeout: 10 * time.Second}),
-    ghttp.WithTransport(customTransport),
-)
-
-// 流式响应由调用方关闭 RawBody；
-// streaming responses are closed by the caller via RawBody.
-streamResp, err := client.R().SetStreamResponse(true).Get("/download")
-if err != nil { return err }
-defer streamResp.RawBody().Close()
-_, err = io.Copy(dst, streamResp.RawBody())
+typed, err := ghttp.GET[GetUserRequest, User](client, "/users/7", nil)
 ```
 
-Client capabilities (inspired by go-resty / imroc/req):
+It supports retries, before/after hooks, authentication, Cookies, request timeouts, streaming responses, error-model binding, and custom `http.Client`/Transport values. Go 1.27 also provides generic client methods.
 
-- **Retry** — client/request level with default transport-error or >= 500 conditions.
-- **Hooks** — before/after request lifecycle hooks at client and request level.
-- **Error binding** — automatic non-2xx body binding via `SetError`.
-- **Auth** — token/basic auth actually sent on the wire.
-- **Output** — write response bodies to files.
-- **Query** — params, values and raw query strings.
-- **Timeout/context** — per-request timeout and context.
-- **Cookie**：`client.SetCookie(s)` / `client.R().SetCookies(...)`。
-- **Cookies** — client and request level.
-- **Response accessors** — Time/ReceivedAt/Size/Cookies/Unmarshal/Error/Result.
-- **Debug** — request summaries via logger.
-- **Go 1.27+ typed methods** — `client.Get/Post/Put/Delete[...]`.
+## RouteBuilder Removal
 
----
+`Route[Req, Resp](target).GET(path).To(...)`, the Go 1.27 `server.GET(path).To(...)` form, `RouteOption`, and all former terminals are removed. There is no deprecated shim or test-only compatibility entry point.
 
-## API Overview
+Breaking changes in this rewrite include:
 
-### Route Registration
+- `Operation` plus `Mount/MustMount` is the only registration model.
+- Explicit `Input[T]` descriptors replace implicit endpoint binding; use `StructInput[T]` for struct binding.
+- Explicit `Output[T]` contracts replace inferred output behavior; use `CodecOutput[T]` for multiple formats.
+- Response wrappers are named `WithResponseHeader` and `WithResponseCookie`.
+- Redirect locations come from `RedirectResponse.Location`.
+- Constraints are split into `NumberConstraint` and `StringConstraint`.
+- Inferred operation IDs use normalized `method_resource_by_parameter` names.
 
-| Function | Description |
-|------|------|
-| `Route[Req,Resp](target)` | Chain start (`*Server` or `*Group`); deprecated shim on Go 1.27+. |
-| `.GET(path)` | Register a GET route. |
-| `.POST(path)` | Register a POST route. |
-| `.PUT(path)` | Register a PUT route. |
-| `.DELETE(path)` | Register a DELETE route. |
-| `.PATCH(path)` | Register a PATCH route. |
-| `.ANY(path)` | Register all standard methods. |
-| `.CUSTOM(method, path)` | Register a custom method token. |
-
-### Chain Builder Methods
-
-| Method | Description |
-|------|------|
-| `.GET(path)` | Set GET method and path. |
-| `.POST(path)` | Set POST method and path. |
-| `.PUT(path)` | Set PUT method and path. |
-| `.DELETE(path)` | Set DELETE method and path. |
-| `.PATCH(path)` | Set PATCH method and path. |
-| `.ANY(path)` | Set all standard methods and path. |
-| `.CUSTOM(method, path)` | Set a custom method and path. |
-| `.Doc(ghttp.Summary("..."), ghttp.Tags("..."))` | Operation documentation. |
-| `.Consumes(contentTypes...)` | Declare accepted request Content-Types. |
-| `.MaxBodyBytes(n)` | Override body size limit; <= 0 disables it. |
-| `.Produces(contentTypes...)` | Declare response Content-Types. |
-| `.Apply(opts...)` | Apply `RouteOption` functional options in bulk; must be called before a terminal. |
-| `.Group(prefix, mws...)` | Branch into a sub-group; call before setting method/path. |
-
-### Route Options (RouteOption)
-
-`RouteOption = func(*routeBuilderCore)` is the functional configuration primitive, applied via `.Apply(opts...)`. It shares the same setters and the finalized guard as the chain methods: **calling after a terminal panics with `ErrRouteBuilderFinalized`**. `GroupOptions(opts...)` bundles options into one reusable option.
-
-| Constructor | Equivalent chained method |
-|------|------|
-| `OptDoc(opts...)` | `.Doc(...)` |
-| `OptProduces(cts...)` | `.Produces(...)` |
-| `OptConsumes(cts...)` | `.Consumes(...)` |
-| `OptMaxBodyBytes(n)` | `.MaxBodyBytes(n)` |
-| `OptUse(mws...)` | `.Use(...)` |
-| `OptStatus(code)` | `.Status(code)` |
-| `OptResponseHeader(name, value)` | `.ResponseHeader(...)` |
-| `OptErrorWriter(w)` / `OptProblemDetails()` | `.ErrorWriter(...)` / `.ProblemDetails()` |
-| `OptValidate(fn, opts...)` / `OptSkipValidation()` | `.Validate(...)` / `.SkipValidation()` |
-
-```go
-// Define once, reuse everywhere.
-var userEndpoint = ghttp.GroupOptions(
-    ghttp.OptUse(authMW),
-    ghttp.OptDoc(ghttp.Summary("User management"), ghttp.Tags("user")),
-)
-
-s.GET("/users/{id}").Apply(userEndpoint).To[getReq, getResp](getUser)
-s.POST("/users").Apply(userEndpoint).To[createReq, createResp](createUser)
-```
-
-### Middleware Exemption (SkipUse)
-
-`SkipUse` exempts a middleware on matching routes (exact match by method + final path pattern). The typical use is letting a global auth middleware pass through login and health routes. Middlewares are identified by function pointer, so only the specified one is dropped; other middlewares are unaffected. Both Server and Group support it:
-
-```go
-// Server-level: exempt GET /ping.
-s.Use(authMW)
-s.SkipUse(authMW, http.MethodGet, "/ping")
-
-// Group-level: match the final registered path (including the group prefix).
-api := s.Group("/api")
-api.Use(authMW)
-api.SkipUse(authMW, http.MethodGet, "/api/login")
-```
-
-### Terminal Methods
-
-| Method | Description |
-|------|------|
-| `.To(handler)` | Register a typed handler; setup errors panic. |
-| `.ToNoInput(handler)` | Register a handler with no request input. |
-| `.ToNoOutput(handler)` | Register an error-only handler; 204 by default. |
-| `.ToHTTP(handler)` / `.ToRaw(handler)` | Raw escape hatches. |
-| `.ToHTTPFunc(handler)` | Parsed-input handler writing its own response. |
-| `.ToRedirect(code, location)` / `.ToRedirectFunc(...)` | Redirects. |
-| `.ToSSE` / `.ToWebSocket` / `.ToStatic*` / `.ToHTML` | Specialized terminals. |
-
-> No-input/no-output are explicit terminals, never `struct{}` magic: `.ToNoOutput` defaults to 204; `.ToNoInput` skips request parsing entirely.
-
-### Go 1.27 Generic Methods
-
-Both APIs ship in the same module and are selected automatically by toolchain version (like stdlib `//go:build` constraints); users pass no build tags:
-
-- Go < 1.27: package-level type parameters.
-- Go >= 1.27: generic terminal methods inferred from handlers; Server/Group act as root groups; no `.Route()` method; `Route[Req,Resp]` remains a deprecated shim.
-
-```go
-// Go 1.27+ 写法；
-// Go 1.27+ style.
-s.GET("/hello/{name}").Doc(ghttp.Summary("问候")).
-    To(func(ctx context.Context, req *GreetInput) (*GreetOutput, error) {
-    return &GreetOutput{Message: "Hello, " + req.Path("name")}, nil
-})
-
-// 分组与 Server 一致；
-// groups behave like the server.
-api := s.Group("/api")
-api.GET("/users/{id}").To(func(ctx context.Context, req *GetUserReq) (*GetUserResp, error) {
-    return &GetUserResp{ID: req.ID}, nil
-})
-api.POST("/users").Status(http.StatusCreated).To(func(ctx context.Context, req *CreateUserReq) (*CreateUserResp, error) {
-    return &CreateUserResp{ID: "u-1"}, nil
-})
-
-// 显式起点：自定义方法或全方法路由直接链式；
-// explicit starts: custom or all-method chains.
-s.ANY("/health").ToNoInput(func(ctx context.Context) (*HealthResp, error) { ... })
-s.CUSTOM("PURGE", "/cache").ToNoOutput(func(ctx context.Context, req *PurgeReq) error { ... })
-```
-
-Both APIs share one implementation (`routeBuilderCore`). Note: Go 1.27-only files use generic-method syntax, so `go fmt`/`gofmt` must be Go 1.27+.
-
-### Route Parameters
-
-Route paths use stdlib/OpenAPI-compatible `{param}` syntax:
-
-- `{param}` — named parameter
-- `{path...}` — wildcard (matches the remaining path)
-
-```go
-ghttp.Route[Req, Resp](s).GET("/users/{id}").To(handler)      // 命名参数；named parameter.
-ghttp.Route[Req, Resp](s).GET("/files/{path...}").To(handler)  // 通配符；wildcard.
-```
-
-Legacy `:param` and `*path` syntax is removed; use `{param}` and `{path...}`.
-
-### Input Structs
-
-```go
-type CreateUserInput struct {
-    ghttp.Params `json:"-"`
-
-    Body struct {
-    Name   string `json:"name"`
-    Age    int    `json:"age"`
-    Active bool   `json:"active"`
-    } `json:"body"`
-}
-
-func createUser(ctx context.Context, req CreateUserInput) (UserOutput, error) {
-    id := req.Path("id")
-    role := req.DefaultQuery("role", "guest")
-    token := req.Header("Authorization")
-    sessionID := req.Cookie("session_id")
-    _ = role
-    _ = token
-    _ = sessionID
-    return UserOutput{ID: id, Name: req.Body.Name}, nil
-}
-```
-
-Request media types are declared with `Consumes` (matching `Content-Type`); response media types use `Produces` (matching response `Content-Type` and client `Accept`):
-
-```go
-ghttp.Route[CreateUserInput, UserOutput](s).
-    POST("/users/{id}").
-    Consumes(ghttp.MIMEJSON, ghttp.MIMEXML).
-    Produces(ghttp.MIMEJSON, ghttp.MIMEXML).
-    To(createUser)
-```
-
-`Consumes` only constrains routes with a `Body`. When configured, missing or mismatched `Content-Type` returns 415; without it, missing `Content-Type` defaults to JSON.
-
-`application/x-www-form-urlencoded` forms bind via explicit `form:"name"` tags; a bindable struct without any `form` tag returns 400 instead of silently binding nothing.
-
-### Lazy Request Body `Body[T]`
-
-Use `ghttp.Body[T]` at the field level (any field name; detected by type, with the
-top-level shorthand `Route[ghttp.Body[T], Resp]`). Binding installs a handle
-without reading the stream or decoding; the first `Decode()` decodes and caches.
-JSON uses goccy/go-json; other Content-Types dispatch through CodecManager.
-
-`Decode()` dispatches by Content-Type (the convenience path). For an explicit
-format use `DecodeJSON()` / `DecodeXML()` / `DecodeForm()`, which force their
-format and ignore Content-Type (`DecodeForm` parses multipart as multipart and
-everything else as urlencoded). All methods share one cache; the first call
-(whichever) fixes the format and the result.
-
-```go
-type CreateUserReq struct {
-    TenantID string                   `path:"tenantID"`
-    Payload  ghttp.Body[CreateUserPayload]
-    ghttp.Params                      // dynamic access: Path/Query/Header/Cookie/ClientIP/RawBody/Request
-}
-
-func create(ctx context.Context, req CreateUserReq) (UserOutput, error) {
-    payload, err := req.Payload.Decode() // first call decodes and caches
-    if err != nil {
-        return UserOutput{}, ghttp.Err(http.StatusBadRequest, err.Error(), ghttp.WithCause(err))
-    }
-    raw, _ := req.Payload.Raw() // raw bytes, shared with middleware RawBody
-    id, _ := req.PathInt("tenantID")
-    _ = raw
-    return save(id, payload)
-}
-```
-
-- `Body[T].Raw()/Decode()`, `ghttp.RawBody(r)` and `Params.RawBody()` share the same
-  bytes; the stream is read once, and requests that never touch the body pay nothing.
-- Missing `Content-Type` falls back to JSON; XML/plain use the registered codec.
-- `application/x-www-form-urlencoded` fills from the shared postForm cache (same
-  `form`-tag requirement as eager forms); `multipart/form-data` fills from the shared
-  multipart cache (value fields and `FileHeader`), but must be parsed before `RawBody`
-  drains the stream.
-- Middleware can call `ghttp.PostFormValues(r)` / `ghttp.MultipartForm(r, maxMemory)`
-  first and the handler `Decode()` later; both share one parse and one stream read.
-- `MaxBodyBytes` applies on first access (JSON/form/multipart alike) and returns
-  `*http.MaxBytesError` when exceeded.
-- On-demand access: `path, _ := ghttp.CompileJSONPath("$.items[0].title")`, then
-  `path.Extract(raw)` / `path.Unmarshal(raw, &dst)`.
-- Decode errors satisfy `errors.Is(err, ghttp.ErrInvalidBody)`; map the status code
-  yourself in the handler.
-
-> pre-v1.0 breaking change: the eager multipart `Body` field now binds form values
-> only (query values are no longer merged), matching the lazy `Body[T]` semantics.
-
-### Explicit Response Format `Render[T]`
-
-By default the response format is negotiated from the `Accept` header and
-`Produces`. To pin the format explicitly, return `ghttp.Render[T]` (an optional
-wrapper; the handler signature shape is unchanged):
-
-```go
-type UserOutput struct {
-    ID   int    `json:"id"`
-    Name string `json:"name"`
-}
-
-func get(ctx context.Context, req Req) (ghttp.Render[UserOutput], error) {
-    u, err := load(req.Path("id"))
-    if err != nil {
-        return ghttp.Render[UserOutput]{}, err
-    }
-    return ghttp.RenderJSON(u), nil // force JSON
-}
-```
-
-- `RenderJSON(data)` forces JSON (goccy); `RenderXML(data)` forces XML;
-  `RenderBytes(data, contentType)` writes raw bytes verbatim (no serialization,
-  for file downloads or custom formats).
-- Explicit formats still **honor the Accept constraint**: a client that
-  explicitly excludes the format gets `406`.
-- `Render[T]` is optional: the zero value behaves like a bare Data (Accept
-  negotiation), and `StatusCoder` / `ResponseHeaderWriter` / Envelope / OpenAPI
-  all apply to the unwrapped Data (not the wrapper).
-- Envelope and Render are orthogonal: Render fixes the format, Envelope fixes
-  the shape — `RenderJSON` + Envelope emits `{"code":0,"msg":"success","data":{...}}`.
-
-### Defaults at a Glance
-
-| Scenario | Default | Override |
-|------|----------|----------|
-| Explicit `Accept` with no match | `406 Not Acceptable` | `WithLenientContentNegotiation()` falls back to the first `Produces` |
-| Empty or `*/*` `Accept` | first `Produces` | — |
-| Unknown explicit request `Content-Type` | `415 Unsupported Media Type` | `WithLenientContentType()` decodes as JSON |
-| Missing `Content-Type` with `Consumes` configured | `415 Unsupported Media Type` | JSON without `Consumes` |
-| Codec cannot decode the target type | `400 Bad Request` | — |
-| Error body | `{code,message}` | `WithProblemDetails()` / `.ProblemDetails()` use RFC 9457; `WithErrorWriter` / `.ErrorWriter` fully custom |
-
-`WithStrictContentNegotiation()` / `WithStrictContentType()` remain as no-op compatibility aliases.
-
-`Params` is a lazy view of request inputs: query/cookies/client IP parse on first access and are cached, headers read through; it never holds a `ResponseWriter`.
-
-The view is valid for the handler lifetime and must be used from a single goroutine; call `Detach()` to retain it beyond the handler or share it across goroutines:
-
-```go
-func handler(ctx context.Context, p ghttp.Params) (Out, error) {
-    snapshot := p.Detach() // 深拷贝，安全跨 goroutine / 超生命周期使用；deep copy, safe across goroutines/lifetime.
-    go audit(snapshot)
-    return Out{}, nil
-}
-```
-
-When only path/query/header/cookie inputs are needed, use the value type `ghttp.Params` directly as the input:
-
-```go
-ghttp.Route[ghttp.Params, UserOutput](s).
-    GET("/users/{id}").
-    To(func(ctx context.Context, params ghttp.Params) (UserOutput, error) {
-    return UserOutput{
-            ID: params.Path("id"),
-    }, nil
-    })
-```
-
-For request bodies, embed `Params` anonymously:
-
-```go
-type Input struct {
-    ghttp.Params `json:"-"`
-    Body struct {
-    Name string `json:"name"`
-    } `json:"body"`
-}
-```
-
-`Route[*ghttp.Params, Resp]`, named `Params` fields, pointer embeddings and indirect embeddings are setup errors: the terminal call panics with `ErrInvalidParamsUsage`.
-
-### Output
-
-```go
-type UserOutput struct {
-    ID    string `json:"id"`
-    Name  string `json:"name"`
-    Email string `json:"email"`
-}
-```
-
-When the response implements `Cookies() []*http.Cookie`, the framework writes `Set-Cookie` headers before the response:
-
-```go
-type LoginOutput struct {
-    Token string `json:"token"`
-}
-
-func (o LoginOutput) Cookies() []*http.Cookie {
-    return []*http.Cookie{
-    {
-            Name:     "session_id",
-            Value:    o.Token,
-            Path:     "/",
-            HttpOnly: true,
-            Secure:   true,
-            SameSite: http.SameSiteLaxMode,
-    },
-    ghttp.DeleteCookie("old_session"),
-    }
-}
-```
-
-Default response format:
-```json
-{
-    "code": 0,
-    "msg": "success",
-    "data": { "id": 1, "name": "Alice", "email": "alice@example.com" }
-}
-```
-
-Error response:
-```json
-{
-    "code": 40001,
-    "msg": "invalid parameter: name is required"
-}
-```
-
-Customize the wrapping format with `WithEnvelope(fn)`.
-
-`EnvelopeFunc` must not change the HTTP status code. Error responses return only status text by default; `WithExposeErrorDetails()` enables internal messages.
-
-`WithProblemDetails()` switches errors to RFC 9457 `application/problem+json`; the explicit `WithErrorHandler` has the highest priority.
-
-Error models are per-route: `.ProblemDetails()` affects only that route; `.ErrorWriter(fn)` installs a route-level writer. `ErrorWriter` returns true when handled, false to fall through, so `ChainErrorWriters` composes them:
-
-```go
-ghttp.Route[Req, Resp](s).GET("/users/{id}").
-    ProblemDetails().
-    To(handler)
-
-s := ghttp.New(ghttp.WithErrorWriter(ghttp.ChainErrorWriters(
-    logErrorWriter,            // 返回 false，继续；returns false, falls through.
-    problemWriter,             // 返回 true，结束；returns true, stops.
-)))
-```
-
-Typed responses can declare status/headers via `StatusCode()`/`WriteResponseHeaders` or builder `.Status()`/`.ResponseHeader()`. 204/304/1xx skip the body automatically.
-
-### Middleware
-
-```go
-// 注入结构化 logger，glog.Default() 可直接满足 ghttp.Logger；
-// inject a structured logger; glog.Default() satisfies ghttp.Logger.
-s := ghttp.New(ghttp.WithLogger(glog.Default()))
-// 或使用标准库 slog 适配；
-// or use the standard library slog adapter.
-
-s.Use(ghttp.RequestID())
-s.Use(ghttp.CORS(ghttp.CORSConfig{
-    AllowOrigins: []string{"*"},
-}))
-s.Use(ghttp.RequestLogger())
-s.Use(ghttp.Recoverer())
-s.Use(ghttp.Timeout(5 * time.Second))
-
-// 分组路由添加中间件；
-// add middleware to a group.
-group := s.Group("/api")
-group.Use(authMiddleware)
-
-// 中间件中读取已匹配的路径参数（显式访问器，默认不注入 context）；
-// read matched path params in middleware (explicit accessor).
-s.Use(func(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-    id := s.MatchedParams(r).Path("id")
-    _ = id
-    next.ServeHTTP(w, r)
-    })
-})
-
-// RBAC 能力：Authorizer 接口 + 默认 RBAC 实现；
-// RBAC capability: Authorizer interface + default implementation.
-s.Use(ghttp.RBACMiddleware(authz,
-    func(r *http.Request) string { return r.Header.Get("X-User") },
-    func(r *http.Request) string { return "users:read" },
-    func(r *http.Request) string { return r.URL.Path },
-))
-```
-
-- `RequestID` echoes incoming IDs up to 128 chars; longer values are replaced.
-- `CORS` short-circuits only true preflights; ordinary OPTIONS reach the router.
-- `Timeout` returns 504, cancels the context and discards late writes; its writer supports Hijack/Flush for WS/SSE.
-
-### WebSocket
-
-```go
-ghttp.Route[struct{}, struct{}](s).GET("/ws/{room}").ToWebSocket(func(ctx context.Context, params ghttp.Params, conn *ghttp.WebSocketConn) error {
-    var msg map[string]string
-    if err := conn.ReadJSON(&msg); err != nil {
-    return err
-    }
-    msg["room"] = params.Path("room")
-    return conn.WriteJSON(msg)
-})
-```
-
-WebSocket defaults to same-origin checks (missing Origin is allowed); override globally with `WithWebSocketOriginChecker` or per-route with `.WebSocketCheckOrigin`.
-
-`WebSocketConn` provides:
-
-
-Server WebSocket options (disabled by default, opt-in):
-
-```go
-s := ghttp.New(
-    ghttp.WithServerWebSocketSubprotocols([]string{"chat", "json"}), // 握手子协议；handshake subprotocols.
-    ghttp.WithServerWebSocketReadBufferSize(4096),
-    ghttp.WithServerWebSocketWriteBufferSize(4096),
-    ghttp.WithServerWebSocketPingPeriod(30*time.Second), // keepalive ping
-    ghttp.WithServerWebSocketPongWait(60*time.Second),   // pong 等待上限；pong wait cap.
-)
-```
-
-### SSE
-
-```go
-ghttp.Route[struct{}, struct{}](s).GET("/events").ToSSE(func(ctx context.Context, params ghttp.Params, w *ghttp.SSEWriter) error {
-    for i := 0; i < 10; i++ {
-    w.WriteEvent("message", fmt.Sprintf("event %d", i))
-    time.Sleep(time.Second)
-    }
-    return nil
-})
-
-// SSEWriter 还提供 WriteJSON / WriteJSONWithID / WriteEventWithID / WriteComment / Retry；
-// SSEWriter also offers WriteJSON/WriteJSONWithID/WriteEventWithID/WriteComment/Retry.
-// data 含换行时会按规范拆成多行 data: 字段。
-// newlines in data are split into multiple data: lines per spec.
-
-stream, err := client.SSE("/events", ghttp.SSEConfig{
-    Reconnect:     true,
-    RetryInterval: time.Second,
-    MaxRetries:    3,
-    LastEventID:   "optional-last-id",
-})
-if err != nil { return err }
-defer stream.Close()
-```
-
-### Static Files
-
-```go
-// 使用服务器级 VFS 根目录：/a.txt 会解析到 /srv/files/a.txt；
-// uses the server-level VFS root: /a.txt resolves to /srv/files/a.txt.
-s := ghttp.New(ghttp.WithVFSPath("/srv/files"))
-ghttp.Route[struct{}, struct{}](s).GET("/").ToStatic()
-
-// 也可以为单条静态路由显式指定根目录；
-// or set an explicit root for a single static route.
-ghttp.Route[struct{}, struct{}](s).GET("/static").ToStatic("./public")
-ghttp.Route[struct{}, struct{}](s).GET("/assets").ToStaticFS(http.FS(embeddedAssets))
-ghttp.Route[struct{}, struct{}](s).GET("/favicon.ico").ToStaticFile("./favicon.ico")
-```
-
-`ToStatic` uses a safe VFS: all request paths resolve relatively beneath the static root.
-Traversal via `../`, URL-encoded paths and Windows backslashes is rejected.
-
-### Template Rendering
-
-```go
-renderer := ghttp.NewRenderer("./templates/*.html")
-s = ghttp.New(ghttp.WithRenderer(renderer))
-
-// 处理函数中；
-// inside the handler.
-ghttp.Route[NoInput, NoOutput](s).GET("/page").Produces(ghttp.MIMEJSON, ghttp.MIMEXML).To(func(ctx context.Context, req NoInput) (NoOutput, error) {
-    return NoOutput{}, nil
-})
-```
-
-### OpenAPI Documentation
-
-Enable optional best-effort docs with WithOpenAPI. `Server.OpenAPI` generates JSON from the current route snapshot without freezing the Server; the default endpoint is /openapi.json.
-
-```go
-document, err := s.OpenAPI()
-```
-
-`WithOpenAPIServers` and `WithOpenAPISecurity` declare document-level servers/security; envelope mode generates the `{code,msg,data}` schema automatically.
-
-### Validation
-
-```go
-import "github.com/sofiworker/gk/ghttp"
-
-type validator struct{}
-
-func (v *validator) Validate(i any) error {
-    // 自定义验证逻辑；
-    // custom validation logic.
-    return nil
-}
-
-s = ghttp.New(ghttp.WithValidator(&validator{}))
-```
-
-The server-level validator is **disabled by default**; enable it with `WithValidator(v)` or restore struct-tag checks with `NewDefaultValidator()`. Route-level `.Validate`/`.SkipValidation` are unaffected.
-
----
-
-## Routing Engine
-
-The server uses a single method-first matcher; routes are registered only through the builder chain.
-
-The route table freezes at the first serve. Trailing slashes are insensitive by default (strict via WithStrictRouting); OPTIONS is not automatic; HEAD falls back to GET with the body suppressed.
-
-Only `{param}` and `{path...}` are supported; paths are not cleaned or redirected, and invalid escapes return 400.
-
-Middleware order is fixed; group middleware snapshots at child creation (gin-like); server middleware also covers 400/404/405 and the OpenAPI endpoint.
-
-Typed handlers support explicit status/headers; raw terminals get the raw request, and middleware reads path params via `Server.MatchedParams(r)`.
-
----
-
-## Configuration Options
-
-```go
-s := ghttp.New(
-    ghttp.WithAddress(":8080"),                              // 监听地址；listen address.
-    ghttp.WithValidator(myValidator),                        // 验证器；validator.
-    ghttp.WithEnvelope(myEnvelope),                          // Envelope 函数；envelope function.
-    ghttp.WithConsumes(ghttp.MIMEJSON),                      // 默认请求 Content-Type；default request Content-Type.
-server 级 validator **默认关闭**：`New()` 不自动安装任何 validator，需要 `WithValidator(v)` 显式启用（破坏性变更）；`ghttp.NewDefaultValidator()` 可恢复内置 struct-tag 校验。路由级 `.Validate(fn)` 与 `.SkipValidation()` 不受影响。
-
-    ghttp.WithBodyDecoder(func(r io.Reader, contentType string, target interface{}) error { // 自定义 Body 解码；custom body decoder.
-    return customDecoder.Decode(r, target)
-    }),
-    ghttp.WithRenderer(myRenderer),                          // 模板渲染器；template renderer.
-    ghttp.WithReadHeaderTimeout(5*time.Second),              // 请求头读取超时；read header timeout.
-    ghttp.WithReadTimeout(30*time.Second),                   // 读取超时；read timeout.
-    ghttp.WithWriteTimeout(30*time.Second),                  // 写入超时；write timeout.
-    ghttp.WithIdleTimeout(60*time.Second),                   // keep-alive 空闲超时；idle timeout.
-    ghttp.WithMaxHeaderBytes(1<<20),                         // 最大请求头；max header bytes.
-    ghttp.WithMaxBodyBytes(ghttp.DefaultMaxBodyBytes),        // 自动解析请求体大小上限，默认 4 MiB；max decoded body, default 4 MiB.
-    ghttp.WithTLSConfig(tlsConfig),                          // TLS 配置；TLS config.
-    ghttp.WithBaseContext(baseContext),                      // 底层 Server BaseContext；underlying BaseContext.
-    ghttp.WithConnContext(connContext),                      // 连接级 Context；per-connection context.
-    ghttp.WithErrorLog(errorLog),                            // 底层 Server 错误日志；underlying server error log.
-    ghttp.WithTrustedProxies("10.0.0.0/8", "192.168.0.0/16"), // trusted proxy CIDRs (reverse-proxy setups).
-    ghttp.WithHostValidator(ghttp.AllowedHosts("api.example.com", "*.example.com")), // host allow-list (DNS rebinding guard).
-)
-```
-
-### Trust Boundary and Host Validation
-
-The `Host` header is as forgeable as `ClientIP`, and even less reliable behind a reverse proxy. gk provides a trust model symmetric to `ClientIPResolver`:
-
-- **`WithTrustedProxies(cidrs...)`** — sets the trusted proxy CIDRs. **Trusts all by default** (`0.0.0.0/0` and `::/0`, gin's default); forwarded headers (`X-Forwarded-For` / `X-Forwarded-Host`) are then considered trusted. An unsafe warning is emitted at startup when the boundary covers all IPs; narrow it explicitly when the server is directly reachable.
-- **`WithHostResolver(resolver)`** — sets the host resolver; defaults to `r.Host` (never trusting forwarded headers). `TrustedHostResolver(cidrs, headers)` provides the trust-aware variant: it reads `X-Forwarded-Host` only when the source is a trusted proxy, otherwise falls back to `r.Host`, preventing direct clients from forging the header to bypass validation.
-- **`WithClientIPResolver`** — pair with `TrustedClientIPResolver(cidrs, headers)`: reads the first `X-Forwarded-For` IP only from trusted proxies, otherwise falls back to `RemoteAddr`.
-- **`WithHostValidator(validator)`** — enables host allow-list validation, **off by default**. The check runs before route dispatch; failures return 400 (DNS rebinding guard). `AllowedHosts(patterns...)` supports exact matches and wildcard subdomains (`*.example.com` matches `foo.example.com` but not `example.com` itself); ports are stripped before comparison.
-
-```go
-s := ghttp.New(
-    ghttp.WithTrustedProxies("10.0.0.0/8"),
-    ghttp.WithHostValidator(ghttp.AllowedHosts("api.example.com", "*.example.com")),
-    // Reverse-proxy setups: read forwarded headers only from trusted proxies.
-    ghttp.WithHostResolver(ghttp.TrustedHostResolver(trustedCIDRs, []string{"X-Forwarded-Host"})),
-    ghttp.WithClientIPResolver(ghttp.TrustedClientIPResolver(trustedCIDRs, []string{"X-Forwarded-For"})),
-)
-```
-
-```go
-ln, err := net.Listen("tcp", "127.0.0.1:0")
-if err != nil {
-    return err
-}
-go s.Serve(ln)
-fmt.Println(s.Addr()) // 包含 :0 自动分配后的真实端口；includes the real port allocated for :0.
-
-err = s.ListenAndServeTLS(":8443", "server.crt", "server.key")
-```
-
-## Project Structure
-
-```
-ghttp/
-├── builder.go        # RouteBuilder 链式 API
-├── client.go         # HTTP 客户端
-├── codec*.go         # Codec 接口与实现（JSON/XML/Plain/Form）
-├── config.go         # 配置与选项
-├── constants.go      # MIME 类型常量
-├── error.go          # HTTP 错误类型
-├── form.go           # multipart/form 解析
-├── handler.go        # HandlerFunc 类型定义
-├── input.go          # 输入绑定引擎
-├── logger.go         # Logger 接口
-├── middleware.go     # 内建中间件
-├── openapi.go        # OpenAPI 3.1 生成
-├── output.go         # 响应输出与 Envelope
-├── render.go         # 模板渲染
-├── schema.go         # JSON Schema 生成
-├── server.go         # Server 核心
-├── sse.go            # SSE 支持
-├── static.go         # 静态文件服务
-├── internal/legacyrouter # 临时性能基线，不属于公开 API
-├── upload.go         # FileHeader（文件上传）
-├── util.go           # 工具函数
-├── validate.go       # Validator 接口
-├── writer.go         # ResponseWriter 包装
-├── *_test.go         # 测试文件
-└── README.md         # 本文件
-```
-
----
+This is an intentional pre-v1 breaking removal. Callers must migrate the endpoint as a whole and cannot mix the two models.
 
 ## License
 
-Same as [gk](https://github.com/sofiworker/gk) project.
-
-### Documentation and Verification
-
-Repository documentation and verification notes live under `docs/`; see [docs/language-sweep.md](docs/language-sweep.md) and `docs/superpowers/` for design and plan documents.
-
-
-
-```go
-ghttp.Route[CreateUserReq, UserDTO](app).
-    POST("/users").
-    Consumes(ghttp.MIMEJSON, ghttp.MIMEXML).
-    Produces(ghttp.MIMEJSON, ghttp.MIMEXML).
-    Doc(
-    ghttp.Summary("Create user"),
-    ghttp.Tags("users"),
-    ghttp.OperationID("createUser"),
-    ghttp.Success(ghttp.Code(0), ghttp.Message("created")),
-    ghttp.Errors(ErrInvalidInput),
-    ghttp.Deprecated("use /v2/users instead"),
-    ghttp.Sunset(time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)),
-    ghttp.ExternalDocs("migration guide", "https://example.com/migrate-users"),
-    ).
-    Validate(validateCreateUser).
-    To(createUser)
-```
+Same as the [gk](https://github.com/sofiworker/gk) project.

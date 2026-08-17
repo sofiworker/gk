@@ -28,8 +28,8 @@ func TestSkipUseExemptsExactRoute(t *testing.T) {
 	app.Use(authHeader)
 	app.SkipUse(authHeader, http.MethodGet, "/ping")
 
-	Route[map[string]string, map[string]string](app).GET("/ping").ToNoInput(skipPingHandler)
-	Route[map[string]string, map[string]string](app).GET("/secure").ToNoInput(skipPingHandler)
+	app.MustMount(HandleNoInput(Get("/ping"), JSONOutput[map[string]string](), skipPingHandler))
+	app.MustMount(HandleNoInput(Get("/secure"), JSONOutput[map[string]string](), skipPingHandler))
 
 	// /ping 应放行（豁免生效）
 	w := httptest.NewRecorder()
@@ -61,8 +61,8 @@ func TestSkipUseMethodSpecific(t *testing.T) {
 	// 只豁免 GET /ping，POST /ping 仍受鉴权
 	app.SkipUse(authHeader, http.MethodGet, "/ping")
 
-	Route[map[string]string, map[string]string](app).GET("/ping").ToNoInput(skipPingHandler)
-	Route[map[string]string, map[string]string](app).POST("/ping").ToNoInput(skipPingHandler)
+	app.MustMount(HandleNoInput(Get("/ping"), JSONOutput[map[string]string](), skipPingHandler))
+	app.MustMount(HandleNoInput(Post("/ping"), JSONOutput[map[string]string](), skipPingHandler))
 
 	w := httptest.NewRecorder()
 	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ping", nil))
@@ -84,10 +84,10 @@ func TestSkipUseGroupScoped(t *testing.T) {
 	public.Use(authHeader)
 	// 豁免匹配最终注册路径（含组前缀）
 	public.SkipUse(authHeader, http.MethodGet, "/public/ping")
-	Route[map[string]string, map[string]string](public).GET("/ping").ToNoInput(skipPingHandler)
-	Route[map[string]string, map[string]string](public).GET("/secure").ToNoInput(skipPingHandler)
+	public.MustMount(HandleNoInput(Get("/ping"), JSONOutput[map[string]string](), skipPingHandler))
+	public.MustMount(HandleNoInput(Get("/secure"), JSONOutput[map[string]string](), skipPingHandler))
 
-	Route[map[string]string, map[string]string](app).GET("/outside").ToNoInput(skipPingHandler)
+	app.MustMount(HandleNoInput(Get("/outside"), JSONOutput[map[string]string](), skipPingHandler))
 
 	// 组内豁免生效
 	w := httptest.NewRecorder()
@@ -110,7 +110,7 @@ func TestSkipUseNonMatchingMiddlewareKept(t *testing.T) {
 	// 豁免 authHeader，但保留 middlewareSetHeader
 	app.SkipUse(authHeader, "*", "/ping")
 
-	Route[map[string]string, map[string]string](app).GET("/ping").ToNoInput(skipPingHandler)
+	app.MustMount(HandleNoInput(Get("/ping"), JSONOutput[map[string]string](), skipPingHandler))
 
 	w := httptest.NewRecorder()
 	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ping", nil))

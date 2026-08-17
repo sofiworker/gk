@@ -13,11 +13,10 @@ func TestServerOpenAPISnapshotDoesNotFreezeRoutes(t *testing.T) {
 	t.Parallel()
 
 	server := New(WithOpenAPI("example", "1.0.0"))
-	Route[struct{}, struct{}](server).
-		GET("/health").
-		ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server.MustMount(RawOperation(http.MethodGet, "/health",
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
-		}))
+		})))
 
 	document, err := server.OpenAPI()
 	if err != nil {
@@ -39,11 +38,10 @@ func TestServerOpenAPISnapshotDoesNotFreezeRoutes(t *testing.T) {
 		t.Fatalf("paths = %#v, want /health", paths)
 	}
 
-	Route[struct{}, struct{}](server).
-		GET("/after-snapshot").
-		ToHTTP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server.MustMount(RawOperation(http.MethodGet, "/after-snapshot",
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
-		}))
+		})))
 }
 
 func TestServerOpenAPIDisabled(t *testing.T) {
@@ -59,12 +57,9 @@ func TestServerOpenAPIWritesCustomMethodsAsExtension(t *testing.T) {
 	t.Parallel()
 
 	server := New(WithOpenAPI("example", "1.0.0"))
-	Route[struct{}, struct{}](server).
-		CONNECT("/tunnel").
-		ToHTTP(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	Route[struct{}, struct{}](server).
-		CUSTOM("purge", "/cache").
-		ToHTTP(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	server.MustMount(RawOperation(http.MethodConnect, "/tunnel",
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))
+	server.MustMount(RawOperation("purge", "/cache", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))
 
 	document, err := server.OpenAPI()
 	if err != nil {
@@ -75,7 +70,7 @@ func TestServerOpenAPIWritesCustomMethodsAsExtension(t *testing.T) {
 		t.Fatalf("OpenAPI JSON error = %v", err)
 	}
 	paths := decoded["paths"].(map[string]any)
-	for path, method := range map[string]string{"/tunnel": http.MethodConnect, "/cache": "purge"} {
+	for path, method := range map[string]string{"/tunnel": http.MethodConnect, "/cache": "PURGE"} {
 		item := paths[path].(map[string]any)
 		if _, exists := item[strings.ToLower(method)]; exists {
 			t.Fatalf("path item contains invalid method key %q: %#v", strings.ToLower(method), item)
@@ -91,9 +86,8 @@ func TestServerOpenAPIDescribesRawCatchAllRouteBestEffort(t *testing.T) {
 	t.Parallel()
 
 	server := New(WithOpenAPI("example", "1.0.0"))
-	Route[struct{}, struct{}](server).
-		GET("/files/{path...}").
-		ToHTTP(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	server.MustMount(RawOperation(http.MethodGet, "/files/{path...}",
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))
 
 	document, err := server.OpenAPI()
 	if err != nil {
@@ -133,11 +127,9 @@ func TestServerOpenAPIMarksTypedCatchAllParameter(t *testing.T) {
 		Path string `path:"path"`
 	}
 	server := New(WithOpenAPI("example", "1.0.0"), WithProduces(MIMEJSON))
-	Route[request, struct{}](server).
-		GET("/files/{path...}").
-		To(func(context.Context, request) (struct{}, error) {
-			return struct{}{}, nil
-		})
+	server.MustMount(Handle(Get("/files/{path...}"), StructInput[request](), JSONOutput[struct{}](), func(context.Context, request) (struct{}, error) {
+		return struct{}{}, nil
+	}))
 
 	document, err := server.OpenAPI()
 	if err != nil {
@@ -162,9 +154,8 @@ func TestServerOpenAPIEscapesStaticBraces(t *testing.T) {
 	t.Parallel()
 
 	server := New(WithOpenAPI("example", "1.0.0"))
-	Route[struct{}, struct{}](server).
-		GET("/%7Bid%7D").
-		ToHTTP(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	server.MustMount(RawOperation(http.MethodGet, "/%7Bid%7D",
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))
 
 	document, err := server.OpenAPI()
 	if err != nil {
@@ -187,9 +178,8 @@ func TestServerOpenAPIEscapesStaticQueryAndFragmentDelimiters(t *testing.T) {
 	t.Parallel()
 
 	server := New(WithOpenAPI("example", "1.0.0"))
-	Route[struct{}, struct{}](server).
-		GET("/%3F%23").
-		ToHTTP(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	server.MustMount(RawOperation(http.MethodGet, "/%3F%23",
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))
 
 	document, err := server.OpenAPI()
 	if err != nil {
@@ -209,17 +199,16 @@ func TestServerOpenAPIDerivesContentFreeHEADFallback(t *testing.T) {
 	t.Parallel()
 
 	server := New(WithOpenAPI("example", "1.0.0"), WithProduces(MIMEJSON))
-	Route[struct{}, struct {
+
+	server.MustMount(Handle(Get("/users"), StructInput[struct{}](), JSONOutput[struct {
 		Name string `json:"name"`
-	}](server).
-		GET("/users").
-		To(func(context.Context, struct{}) (struct {
+	}](), func(context.Context, struct{}) (struct {
+		Name string `json:"name"`
+	}, error) {
+		return struct {
 			Name string `json:"name"`
-		}, error) {
-			return struct {
-				Name string `json:"name"`
-			}{}, nil
-		})
+		}{}, nil
+	}))
 
 	document, err := server.OpenAPI()
 	if err != nil {
@@ -251,9 +240,8 @@ func TestServerRejectsAnyUserMethodOnOpenAPIEndpointPath(t *testing.T) {
 			t.Fatalf("panic = %#v, want ErrRouteConflict", recovered)
 		}
 	}()
-	Route[struct{}, struct{}](server).
-		POST("/openapi.json").
-		ToHTTP(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	server.MustMount(RawOperation(http.MethodPost, "/openapi.json",
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))
 }
 
 type openAPIResp struct {
@@ -270,9 +258,9 @@ func TestOpenAPIEnvelopeErrorResponsesAndServers(t *testing.T) {
 		WithOpenAPIServers("https://api.example.com"),
 		WithOpenAPISecurity(map[string][]string{"apiKey": {}}),
 	)
-	Route[Params, openAPIResp](app).POST("/users").Status(http.StatusCreated).To(func(context.Context, Params) (openAPIResp, error) {
+	app.MustMount(Handle(Post("/users"), StructInput[Params](), WithStatus(http.StatusCreated, JSONOutput[openAPIResp]()), func(context.Context, Params) (openAPIResp, error) {
 		return openAPIResp{ID: "u-1"}, nil
-	})
+	}))
 
 	doc, err := app.OpenAPI()
 	if err != nil {

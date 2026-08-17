@@ -22,9 +22,9 @@ func TestOpenAPIBuildsValidSpec(t *testing.T) {
 		Name string `json:"name"`
 	}
 
-	Route[CreateUserReq, struct{ Body UserData }](app).POST("/orgs/{orgId}/users").To(func(ctx context.Context, req CreateUserReq) (struct{ Body UserData }, error) {
+	app.MustMount(Handle(Post("/orgs/{orgId}/users"), StructInput[CreateUserReq](), JSONOutput[struct{ Body UserData }](), func(ctx context.Context, req CreateUserReq) (struct{ Body UserData }, error) {
 		return struct{ Body UserData }{}, nil
-	})
+	}))
 
 	spec := serverOpenAPISpec(t, app)
 	if len(spec) == 0 {
@@ -50,12 +50,9 @@ func TestOpenAPIRequestBodyUsesConsumes(t *testing.T) {
 		}
 	}
 
-	Route[CreateUserReq, struct{}](app).
-		POST("/users").
-		Consumes(MIMEXML, MIMEJSON).
-		To(func(ctx context.Context, req CreateUserReq) (struct{}, error) {
-			return struct{}{}, nil
-		})
+	app.MustMount(Handle(Post("/users"), StructInput[CreateUserReq](MIMEXML, MIMEJSON), JSONOutput[struct{}](), func(ctx context.Context, req CreateUserReq) (struct{}, error) {
+		return struct{}{}, nil
+	}))
 
 	spec := serverOpenAPISpec(t, app)
 	var doc map[string]interface{}
@@ -112,20 +109,14 @@ func TestOpenAPIDocOptionsAndInferredRouteTypes(t *testing.T) {
 		Name string `json:"name"`
 	}
 
-	Route[createUserReq, userDTO](app).
-		POST("/orgs/{orgId}/users").
-		Consumes(MIMEJSON, MIMEXML).
-		Doc(
-			Summary("Create user"),
-			Description("Create one user"),
-			Tags("users", "admin"),
-			OperationID("createUser"),
-			Success(Code(0), Message("created")),
-			Errors(Err(4001, "invalid input")),
-		).
-		To(func(ctx context.Context, req createUserReq) (userDTO, error) {
-			return userDTO{ID: req.OrgID, Name: req.Body.Name}, nil
-		})
+	app.MustMount(Handle(Post("/orgs/{orgId}/users"), StructInput[createUserReq](MIMEJSON, MIMEXML), CodecOutput[userDTO](MIMEJSON, MIMEXML), func(ctx context.Context, req createUserReq) (userDTO, error) {
+		return userDTO{ID: req.OrgID, Name: req.Body.Name}, nil
+	}).Doc(Summary("Create user"),
+		Description("Create one user"),
+		Tags("users", "admin"),
+		OperationID("createUser"),
+		Success(Code(0), Message("created")),
+		Errors(Err(4001, "invalid input"))))
 
 	op := openAPIOperation(t, app, "/orgs/{orgId}/users", "post")
 	if got := op["summary"]; got != "Create user" {
@@ -195,15 +186,13 @@ func TestOpenAPIAutoDocumentsReqAndRespWithoutDoc(t *testing.T) {
 		Name string `json:"name"`
 	}
 
-	Route[getUserReq, getUserResp](app).
-		GET("/users/{id}").
-		To(func(ctx context.Context, req getUserReq) (getUserResp, error) {
-			return getUserResp{ID: req.ID, Name: "Alice"}, nil
-		})
+	app.MustMount(Handle(Get("/users/{id}"), StructInput[getUserReq](), JSONOutput[getUserResp](), func(ctx context.Context, req getUserReq) (getUserResp, error) {
+		return getUserResp{ID: req.ID, Name: "Alice"}, nil
+	}))
 
 	op := openAPIOperation(t, app, "/users/{id}", "get")
-	if _, ok := op["summary"]; ok {
-		t.Fatalf("summary = %v, want omitted", op["summary"])
+	if got := op["summary"]; got != "GET /users/{id}" {
+		t.Fatalf("summary = %v, want generated method and path", got)
 	}
 	params := op["parameters"].([]interface{})
 	assertOpenAPIParameter(t, params, "path", "id")
@@ -227,16 +216,11 @@ func TestOpenAPIDocLifecycleOptions(t *testing.T) {
 	app := New(WithOpenAPI("My API", "1.0.0"), WithProduces(MIMEJSON))
 	sunset := time.Date(2027, 1, 2, 3, 4, 5, 0, time.UTC)
 
-	Route[struct{}, struct{}](app).
-		GET("/users").
-		Doc(
-			Deprecated("use /v2/users instead"),
-			Sunset(sunset),
-			ExternalDocs("migration guide", "https://example.com/migrate-users"),
-		).
-		To(func(ctx context.Context, req struct{}) (struct{}, error) {
-			return struct{}{}, nil
-		})
+	app.MustMount(Handle(Get("/users"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
+		return struct{}{}, nil
+	}).Doc(Deprecated("use /v2/users instead"),
+		Sunset(sunset),
+		ExternalDocs("migration guide", "https://example.com/migrate-users")))
 
 	op := openAPIOperation(t, app, "/users", "get")
 	if got := op["deprecated"]; got != true {

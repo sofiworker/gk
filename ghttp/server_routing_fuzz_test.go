@@ -45,6 +45,7 @@ func FuzzRoutePathParserAndMatcher(f *testing.F) {
 		}
 
 		assertFuzzRouteMatchConsistent(t, matcher, path)
+		assertFuzzDirectParamConsistent(t, matcher, rawPath, path)
 		if patternErr == nil {
 			assertFuzzRouteMatchConsistent(t, newRouteMux([]routeDefinition{{
 				method:  http.MethodGet,
@@ -52,6 +53,28 @@ func FuzzRoutePathParserAndMatcher(f *testing.F) {
 			}}), path)
 		}
 	})
+}
+
+func assertFuzzDirectParamConsistent(t *testing.T, matcher *routeMux, rawPath string, path requestPath) {
+	t.Helper()
+	if strings.Contains(rawPath, "%") {
+		return
+	}
+	route, value, ok := matcher.matchDirectParam(http.MethodGet, rawPath)
+	if !ok {
+		return
+	}
+	matched := matcher.match(http.MethodGet, path)
+	if matched.kind != routeMatchFound || matched.route != route {
+		t.Fatalf("direct match(%q) = %q, full match = %#v", rawPath, route.definition.pattern.path, matched)
+	}
+	params, err := route.extract(path)
+	if err != nil {
+		t.Fatalf("direct route %q cannot extract %q: %v", route.definition.pattern.path, rawPath, err)
+	}
+	if params.Get(route.directName) != value {
+		t.Fatalf("direct value for %q = %q, extracted = %q", rawPath, value, params.Get(route.directName))
+	}
 }
 
 func newFuzzRouteMatcher(f *testing.F) *routeMux {

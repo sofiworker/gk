@@ -40,53 +40,53 @@ type outputXML struct {
 func registerOutput(server *ghttp.Server) {
 	sample := loadOutputFixture()
 
-	ghttp.Route[outputJSONRequest, outputJSON](server).GET("/output/json").Produces(ghttp.MIMEJSON).To(func(_ context.Context, request outputJSONRequest) (outputJSON, error) {
+	server.MustMount(ghttp.Handle(ghttp.Get("/output/json"), ghttp.StructInput[outputJSONRequest](), ghttp.JSONOutput[outputJSON](), func(_ context.Context, request outputJSONRequest) (outputJSON, error) {
 		if request.Missing {
 			return outputJSON{}, ghttp.Err(http.StatusNotFound, http.StatusText(http.StatusNotFound))
 		}
 		return outputJSON{Message: "hello", Tags: []string{"ghttp", "k6"}, Meta: outputJSONMeta{Source: "typed"}}, nil
-	})
-	ghttp.Route[struct{}, outputXML](server).GET("/output/xml").Produces(ghttp.MIMEXML).To(func(context.Context, struct{}) (outputXML, error) {
+	}))
+	server.MustMount(ghttp.Handle(ghttp.Get("/output/xml"), ghttp.StructInput[struct{}](), ghttp.XMLOutput[outputXML](), func(context.Context, struct{}) (outputXML, error) {
 		return outputXML{Message: "hello"}, nil
-	})
-	ghttp.Route[struct{}, string](server).GET("/output/text").Produces(ghttp.MIMEPlain).To(func(context.Context, struct{}) (string, error) {
+	}))
+	server.MustMount(ghttp.Handle(ghttp.Get("/output/text"), ghttp.StructInput[struct{}](), ghttp.TextOutput(), func(context.Context, struct{}) (string, error) {
 		return "hello text", nil
-	})
-	ghttp.Route[struct{}, struct{}](server).GET("/output/binary").ToRaw(func(w http.ResponseWriter, _ *http.Request) {
+	}))
+	server.MustMount(ghttp.RawOperation(http.MethodGet, "/output/binary", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/octet-stream")
 		_, _ = w.Write([]byte{0, 1, 'g', 'h', 't', 't', 'p', 0xff})
-	})
+	})))
 
-	ghttp.Route[struct{}, struct{}](server).POST("/output/created").Status(http.StatusCreated).ResponseHeader("Location", "/output/json").ToNoOutput(func(context.Context, struct{}) error {
+	server.MustMount(ghttp.Handle(ghttp.Post("/output/created"), ghttp.StructInput[struct{}](), ghttp.WithResponseHeader("Location", "/output/json", ghttp.WithStatus(http.StatusCreated, ghttp.NoContentOutput[struct{}]())), func(context.Context, struct{}) (struct{}, error) {
+		return struct{}{}, nil
+	}))
+	server.MustMount(ghttp.Handle(ghttp.Post("/output/accepted"), ghttp.StructInput[struct{}](), ghttp.WithStatus(http.StatusAccepted, ghttp.NoContentOutput[struct{}]()), func(context.Context, struct{}) (struct{}, error) {
+		return struct{}{}, nil
+	}))
+	server.MustMount(ghttp.HandleNoOutput(ghttp.Delete("/output/empty"), ghttp.StructInput[struct{}](), func(context.Context, struct{}) error {
 		return nil
-	})
-	ghttp.Route[struct{}, struct{}](server).POST("/output/accepted").Status(http.StatusAccepted).ToNoOutput(func(context.Context, struct{}) error {
-		return nil
-	})
-	ghttp.Route[struct{}, struct{}](server).DELETE("/output/empty").ToNoOutput(func(context.Context, struct{}) error {
-		return nil
-	})
-	ghttp.Route[struct{}, struct{}](server).GET("/output/redirect").ToRedirect(http.StatusTemporaryRedirect, "/output/json")
-	ghttp.Route[struct{}, struct{}](server).GET("/output/headers").ToRaw(func(w http.ResponseWriter, _ *http.Request) {
+	}))
+	server.MustMount(ghttp.RedirectOperation(http.MethodGet, "/output/redirect", http.StatusTemporaryRedirect, "/output/json"))
+	server.MustMount(ghttp.RawOperation(http.MethodGet, "/output/headers", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Add("Vary", "Accept")
 		w.Header().Add("Vary", "Accept-Encoding")
 		w.Header().Add("X-Multi", "one")
 		w.Header().Add("X-Multi", "two")
 		w.Header().Set("Content-Length", "5")
 		_, _ = w.Write([]byte("hello"))
-	})
+	})))
 
-	ghttp.Route[struct{}, struct{}](server).GET("/files/sample").ToRaw(func(w http.ResponseWriter, r *http.Request) {
+	server.MustMount(ghttp.RawOperation(http.MethodGet, "/files/sample", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", `attachment; filename="sample.txt"`)
 		http.ServeContent(w, r, "sample.txt", outputModifiedTime, bytes.NewReader(sample))
-	})
-	ghttp.Route[struct{}, struct{}](server).GET("/files/range").ToRaw(func(w http.ResponseWriter, r *http.Request) {
+	})))
+	server.MustMount(ghttp.RawOperation(http.MethodGet, "/files/range", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.ServeContent(w, r, "sample.txt", outputModifiedTime, bytes.NewReader(sample))
-	})
-	ghttp.Route[struct{}, struct{}](server).GET("/files/etag").ToRaw(func(w http.ResponseWriter, r *http.Request) {
+	})))
+	server.MustMount(ghttp.RawOperation(http.MethodGet, "/files/etag", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("ETag", outputETag)
 		http.ServeContent(w, r, "sample.txt", outputModifiedTime, bytes.NewReader(sample))
-	})
+	})))
 }
 
 func loadOutputFixture() []byte {

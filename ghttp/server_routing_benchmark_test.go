@@ -252,14 +252,10 @@ func registerBenchmarkServerRoutes(server *Server, routeCount int) {
 			method = http.MethodHead
 		}
 		if index%benchmarkRouteKinds == benchmarkRouteTyped {
-			Route[Params, struct{}](server).
-				CUSTOM(method, benchmarkRoutePattern(index)).
-				ToHTTPFunc(benchmarkTypedHandler)
+			server.MustMount(HandleHTTP(Endpoint(method, benchmarkRoutePattern(index)), StructInput[Params](), benchmarkTypedHandler))
 			continue
 		}
-		Route[struct{}, struct{}](server).
-			CUSTOM(method, benchmarkRoutePattern(index)).
-			ToHTTP(benchmarkRawHandler)
+		server.MustMount(RawOperation(method, benchmarkRoutePattern(index), benchmarkRawHandler))
 	}
 }
 

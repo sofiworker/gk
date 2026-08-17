@@ -14,7 +14,7 @@ func TestStaticServesFile(t *testing.T) {
 	_ = os.WriteFile(testFile, []byte("Hello, World!"), 0644)
 
 	app := New(WithProduces(MIMEJSON))
-	Route[struct{}, struct{}](app).GET("/static").ToStatic(tmpDir)
+	app.MustMount(StaticDirectory("/static", tmpDir))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/static/hello.txt", nil)
@@ -34,7 +34,7 @@ func TestStaticFileSingle(t *testing.T) {
 	_ = os.WriteFile(testFile, []byte("icon-data"), 0644)
 
 	app := New(WithProduces(MIMEJSON))
-	Route[struct{}, struct{}](app).GET("/favicon.ico").ToStaticFile(testFile)
+	app.MustMount(StaticFile("/favicon.ico", testFile))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/favicon.ico", nil)
@@ -48,14 +48,14 @@ func TestStaticFileSingle(t *testing.T) {
 	}
 }
 
-func TestStaticUsesConfiguredVFSPath(t *testing.T) {
+func TestStaticDirectoryServesConfiguredRoot(t *testing.T) {
 	tmpDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(tmpDir, "a.txt"), []byte("from-vfs"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	app := New(WithProduces(MIMEJSON), WithVFSPath(tmpDir))
-	Route[struct{}, struct{}](app).GET("/").ToStatic()
+	app := New(WithProduces(MIMEJSON))
+	app.MustMount(StaticDirectory("/", tmpDir))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/a.txt", nil)
@@ -76,8 +76,8 @@ func TestStaticRejectsEncodedTraversal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app := New(WithProduces(MIMEJSON), WithVFSPath(tmpDir))
-	Route[struct{}, struct{}](app).GET("/").ToStatic()
+	app := New(WithProduces(MIMEJSON))
+	app.MustMount(StaticDirectory("/", tmpDir))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/%2e%2e/outside.txt", nil)

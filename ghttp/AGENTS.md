@@ -44,23 +44,18 @@
 - Envelope 只改变 body 表示，不允许改写状态码；错误响应必须保留真实 4xx/5xx。
 - 类型化 handler 支持显式声明成功状态码（201/202/204 等），不强制退回 `ToHTTPFunc`；不通过响应结构体字段名隐式推断状态。
 
-### Go 1.27 泛型方法迁移
+### Go 1.27 泛型方法入口
 
-- 当前 `ghttp.Route[Req, Resp](target).METHOD(path).To(handler)` 是过渡形态，因 Go 1.27 前方法不支持类型参数。
-- Go 1.27 泛型方法可用后，演进为方法链 `target.Route().METHOD(path).To[Req, Resp](handler)`（类型由 handler 推断），不再经包级函数绕层。
-- **双版本共存（build tag 自动选择）**：本包同时保留两套 API，靠 `//go:build go1.27` / `//go:build !go1.27` 按工具链版本自动选择（类似 Go 标准库），使用者无需显式传 tag：
-  - `builder_pre127.go`：泛型 `RouteBuilder[Req, Resp]` + 包级 `Route[Req,Resp](target)`，Go 1.27 前编译；
-  - `builder_go127.go`：非泛型 `RouteBuilder` + 泛型终结方法（`To[Req,Resp]`、`ToNoInput[Resp]`、`ToNoOutput[Req]`、`ToHTTPFunc[Req]`、`ToRedirectFunc[Req]`）+ `Server/Group.GET/POST/...` 直接链式起点（根组语义，Server/Group 上**没有** `Route()` 方法，也没有小写快捷注册，统一 `动词(path).Doc(...).To(handler)`），Go 1.27+ 编译；
-  - 1.27 构建中包级 `Route[Req,Resp](target)` 仅保留为 **deprecated 兼容空壳**（忽略类型参数，直接返回同一个根组 builder，供 1.27 前代码/测试原样编译），新代码禁止使用；现有测试两套工具链下都必须通过。
-- 两个版本的 `RouteBuilder` 都提供 `.Group(prefix, mws...)` 分支（gin 的 `r.Group` 语义）：须在设置 method/path 之前调用，返回以当前 target 为根的 `*Group`，不转移已设置的路由级选项。
-- 两套 API 共享 `routeBuilderCore`（`builder_core.go`）与所有注册/语义/OpenAPI 内部模型；任何实现不得把泛型参数固化进 Server/Group 类型；相关计划须标注迁移意图。
-- 验证与格式化：Go 1.27 专用文件含泛型方法语法，**必须用 Go 1.27+ 工具链的 gofmt/gofmt 格式化**（旧 gofmt 无法解析）；两套工具链均需 `go test ./ghttp/` 与 `go vet ./ghttp/` 通过。
+- 服务端统一使用不可变 `Operation`，通过 `Server/Group.Mount` 或 `MustMount` 注册；不保留 `RouteBuilder` 或链式兼容层。
+- **双版本共存（build tag 自动选择）**：Go 1.27 前使用包级 `Handle(...)`；Go 1.27 起增加 `EndpointBuilder.Handle(...)` 泛型方法，同时保留包级 `Handle(...)` 供跨版本源码共用。
+- 两个版本只区分 `Handle` 入口，必须共享同一套 `Operation` 编译、输入输出契约、执行与 OpenAPI 管线。
+- Go 1.27 专用文件含泛型方法语法，必须用 Go 1.27+ 工具链格式化，并分别在两个工具链验证 `ghttp`。
 
-### 无输入 / 无输出终结器
+### 无输入 / 无输出契约
 
-- 无输入路由使用显式 `.ToNoInput(handler)`：不解析 body、不校验 Content-Type、不校验请求参数，handler 签名 `func(context.Context) (Resp, error)`。
-- 无输出路由使用显式 `.ToNoOutput(handler)`：handler 签名 `func(context.Context, Req) error`，成功默认 204（`.Status(code)` 可覆盖），错误走统一错误管线；OpenAPI 响应无 content。
-- 禁止用 `struct{}` 或“零值自动 204”等魔法代替显式终结器；`Route[Req, struct{}]` 中残余的 `struct{}` 只是 Go 1.27 前过渡形态的类型占位。
+- 无输入 Operation 使用 `NoInput()` 或 `HandleNoInput(...)`，不解析 body、不校验 Content-Type、不构造请求参数。
+- 无输出 Operation 使用 `NoContentOutput[T]()` 或 `HandleNoOutput(...)`，成功默认 204，错误走统一错误管线，OpenAPI 响应无 content。
+- 禁止用 `struct{}` 或零值推断 204；请求与响应行为必须由 `Input[T]`、`Output[T]` 明确声明。
 
 ### 中间件与 Group 语义
 

@@ -17,16 +17,16 @@ const (
 )
 
 func registerStreams(server *ghttp.Server, metrics *RuntimeMetrics) {
-	ghttp.Route[struct{}, struct{}](server).GET("/sse/once").ToSSE(trackedSSE(metrics, handleSSEOnce))
-	ghttp.Route[struct{}, struct{}](server).GET("/sse/multi").ToSSE(trackedSSE(metrics, handleSSEMulti))
-	ghttp.Route[struct{}, struct{}](server).GET("/sse/heartbeat").ToSSE(trackedSSE(metrics, handleSSEHeartbeat))
-	ghttp.Route[struct{}, struct{}](server).GET("/sse/slow").ToSSE(trackedSSE(metrics, handleSSESlow))
+	server.MustMount(ghttp.SSEOperation("/sse/once", ghttp.StructInput[ghttp.Params](), trackedSSE(metrics, handleSSEOnce)))
+	server.MustMount(ghttp.SSEOperation("/sse/multi", ghttp.StructInput[ghttp.Params](), trackedSSE(metrics, handleSSEMulti)))
+	server.MustMount(ghttp.SSEOperation("/sse/heartbeat", ghttp.StructInput[ghttp.Params](), trackedSSE(metrics, handleSSEHeartbeat)))
+	server.MustMount(ghttp.SSEOperation("/sse/slow", ghttp.StructInput[ghttp.Params](), trackedSSE(metrics, handleSSESlow)))
 
 	registerWebSocket(server, metrics, "/ws/echo", 0)
 	registerWebSocket(server, metrics, "/ws/binary", 0)
 	registerWebSocket(server, metrics, "/ws/multi", 0)
 	registerWebSocket(server, metrics, "/ws/slow", 0)
-	ghttp.Route[struct{}, struct{}](server).GET("/ws/close").ToWebSocket(trackedWebSocket(metrics, handleWebSocketClose))
+	server.MustMount(ghttp.WebSocketOperation("/ws/close", ghttp.StructInput[ghttp.Params](), trackedWebSocket(metrics, handleWebSocketClose)))
 }
 
 func trackedSSE(metrics *RuntimeMetrics, handler ghttp.SSEHandler) ghttp.SSEHandler {
@@ -114,7 +114,7 @@ func handleSSESlow(ctx context.Context, params ghttp.Params, stream *ghttp.SSEWr
 }
 
 func registerWebSocket(server *ghttp.Server, metrics *RuntimeMetrics, path string, _ time.Duration) {
-	ghttp.Route[struct{}, struct{}](server).GET(path).ToWebSocket(trackedWebSocket(metrics, handleWebSocketMessages))
+	server.MustMount(ghttp.WebSocketOperation(path, ghttp.StructInput[ghttp.Params](), trackedWebSocket(metrics, handleWebSocketMessages)))
 }
 
 func trackedWebSocket(metrics *RuntimeMetrics, handler ghttp.WebSocketHandler) ghttp.WebSocketHandler {

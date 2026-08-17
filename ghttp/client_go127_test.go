@@ -10,16 +10,16 @@ import (
 
 func TestGo127ClientGenericMethods(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[clientGreetReq, clientGreetResp](app).POST("/greet").To(func(ctx context.Context, req clientGreetReq) (clientGreetResp, error) {
+	app.MustMount(Handle(Post("/greet"), StructInput[clientGreetReq](), JSONOutput[clientGreetResp](), func(ctx context.Context, req clientGreetReq) (clientGreetResp, error) {
 		return clientGreetResp{Body: struct {
 			Message string `json:"message"`
 		}{Message: "Hello, " + req.Body.Name}}, nil
-	})
-	Route[struct{}, clientGreetResp](app).GET("/ping").To(func(ctx context.Context, _ struct{}) (clientGreetResp, error) {
+	}))
+	app.MustMount(Handle(Get("/ping"), StructInput[struct{}](), JSONOutput[clientGreetResp](), func(ctx context.Context, _ struct{}) (clientGreetResp, error) {
 		return clientGreetResp{Body: struct {
 			Message string `json:"message"`
 		}{Message: "pong"}}, nil
-	})
+	}))
 
 	ts := httptest.NewServer(app)
 	defer ts.Close()

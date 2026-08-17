@@ -8,8 +8,8 @@ const (
 	// renderAuto 未显式声明:走 Accept 协商(零值,等价裸 Resp)。
 	// renderAuto is the zero value: negotiate by Accept, like a bare Resp.
 	renderAuto renderFormat = iota
-	// renderJSON 强制 JSON(goccy)。
-	// renderJSON forces JSON (goccy).
+	// renderJSON 强制标准库 JSON。
+	// renderJSON forces standard-library JSON.
 	renderJSON
 	// renderXML 强制 XML。
 	// renderXML forces XML.
@@ -34,8 +34,8 @@ type Render[T any] struct {
 	ct     string // 仅 renderRaw 需要；used only by renderRaw.
 }
 
-// RenderJSON 声明响应按 JSON 序列化(goccy)。
-// RenderJSON declares the response serializes as JSON (goccy).
+// RenderJSON 声明响应按标准库 JSON 序列化。
+// RenderJSON declares the response is serialized with the standard-library JSON encoder.
 func RenderJSON[T any](data T) Render[T] { return Render[T]{Data: data, format: renderJSON} }
 
 // RenderXML 声明响应按 XML 序列化。

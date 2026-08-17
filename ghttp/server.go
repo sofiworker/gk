@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"mime/multipart"
 	"net"
 	"net/http"
-	"net/url"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -16,34 +14,9 @@ import (
 
 type requestStateContextKey struct{}
 
-type requestState struct {
-	server        *Server
-	responseState *responseWriteState
-	// req 是派发入口的原始请求;表单缓存解析都在它上面进行。
-	// req is the original request at dispatch entry; form parsing runs on it.
-	req *http.Request
-	// matched 在路由匹配成功后保存惰性路径参数源。
-	// matched holds the lazy path-param source after a successful route match.
-	matched *lazyPathParams
-	// body 缓存请求体字节,供 RawBody/Body[T] 共享。
-	// body memoizes the request body bytes for RawBody/Body[T] sharing.
-	body *memoBody
-
-	formMu     sync.Mutex
-	formParsed bool
-	form       url.Values
-	postForm   url.Values
-	formErr    error
-
-	multipartMu     sync.Mutex
-	multipartParsed bool
-	multipart       *multipart.Form
-	multipartErr    error
-
-	paramsMu    sync.Mutex
-	paramsBuilt bool
-	params      paramsState
-}
+// requestState is retained as an internal alias while handlers migrate to
+// executionContext-backed request storage.
+type requestState = executionContext
 
 func requestStateFromRequest(r *http.Request) *requestState {
 	if r == nil {
@@ -53,49 +26,14 @@ func requestStateFromRequest(r *http.Request) *requestState {
 	return state
 }
 
-// requestStatePool 复用每请求状态;reset 语义见 acquireRequestState。
-// requestStatePool reuses per-request state; see acquireRequestState for reset.
-var requestStatePool = sync.Pool{New: func() any { return &requestState{} }}
-
 func acquireRequestState(server *Server, responseState *responseWriteState) *requestState {
-	st := requestStatePool.Get().(*requestState)
-	st.server = server
-	st.responseState = responseState
-	st.req = nil
-	st.matched = nil
-	st.body = nil
-	st.formMu = sync.Mutex{}
-	st.formParsed = false
-	st.form = nil
-	st.postForm = nil
-	st.formErr = nil
-	st.multipartMu = sync.Mutex{}
-	st.multipartParsed = false
-	st.multipart = nil
-	st.multipartErr = nil
-	st.paramsMu = sync.Mutex{}
-	st.paramsBuilt = false
-	st.params = paramsState{}
-	return st
+	return acquireExecutionContext(server, responseState)
 }
 
 // releaseRequestState 回收请求状态;hijack 的长连接状态不回收。
 // releaseRequestState recycles request state; hijacked connections are kept.
 func releaseRequestState(st *requestState) {
-	if st == nil {
-		return
-	}
-	rs := st.responseState
-	if rs != nil && rs.hijacked {
-		return
-	}
-	st.server = nil
-	st.responseState = nil
-	st.req = nil
-	st.matched = nil
-	st.body = nil
-	releaseResponseWriteState(rs)
-	requestStatePool.Put(st)
+	releaseExecutionContext(st)
 }
 
 // Server 是核心 HTTP 服务器。
@@ -601,17 +539,52 @@ func compileState(server *Server, definitions []routeDefinition, serverMiddlewar
 		skips = append(append([]skipRule(nil), serverSkips...), skips...)
 		middlewares = filterSkippedMiddlewares(middlewares, route.definition.method, route.definition.pattern.path, skips)
 		terminal := route.definition.handler
+		_, route.stateFree = terminal.(stateIndependentTerminal)
+		if len(middlewares) == 0 && len(route.definition.contextMiddlewares) == 0 && errorHandler == nil &&
+			route.definition.errorWriter == nil && server.config.errorWriter == nil {
+			if direct, ok := terminal.(stateIndependentTerminal); ok {
+				route.directHandler = direct
+				if valueHandler, ok := terminal.(interface{ directValueHandler() directPathValueHandler }); ok {
+					route.directValueHandler = valueHandler.directValueHandler()
+				}
+				mux.addDirectParam(route)
+			}
+			// Raw handlers do not consume ghttp path parameters or request state.
+			// Index their simple trailing-parameter shape too, so raw dynamic
+			// routes avoid request-path parsing and radix traversal on the hot path.
+			if route.definition.terminal == routeTerminalRaw {
+				mux.addDirectParam(route)
+			}
+		}
 		if route.definition.needsExtractor {
 			terminal = extractorTerminal(route)
 		}
 		route.handler = Wrap(terminal, middlewares...)
+		if len(middlewares) == 0 && len(route.definition.contextMiddlewares) == 0 && route.definition.fastBuild != nil &&
+			errorHandler == nil && route.definition.errorWriter == nil && server.config.errorWriter == nil {
+			route.fastHandler = route.definition.fastBuild(server, nil)
+		}
+		if len(route.definition.contextMiddlewares) > 0 {
+			contextTerminal := ContextHandler(nil)
+			if route.definition.contextBuild != nil {
+				contextTerminal = route.definition.contextBuild(server, nil)
+			}
+			base := func(c *Context) error {
+				if contextTerminal != nil {
+					return contextTerminal(c)
+				}
+				route.handler.ServeHTTP(c.Writer, c.Request)
+				return nil
+			}
+			route.contextHandler = chainContext(route.definition.contextMiddlewares, base)
+		}
 		// 快路径:raw 终结器、无中间件、无错误模型、无固定状态码。
 		// fast path: raw terminal, no middleware, no error model, no fixed status.
-		route.fast = route.definition.terminal == routeTerminalRaw &&
+		route.fast = ((route.definition.terminal == routeTerminalRaw && len(middlewares) == 0) || route.stateFree) &&
 			route.definition.errorWriter == nil &&
 			errorHandler == nil &&
-			route.definition.responseStatus == 0 &&
-			len(middlewares) == 0
+			(route.stateFree || route.definition.responseStatus == 0) &&
+			server.config.errorWriter == nil
 	}
 	state := &compiledState{
 		server:       server,
@@ -681,21 +654,101 @@ func (s *compiledState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// release must follow recover: error handling still reads the state.
 		releaseRequestState(reqSt)
 	}()
-	requestPath, err := parseRequestPath(r.URL.EscapedPath(), s.strict)
-	if err != nil {
-		if s.outcomeFast && r.Method != http.MethodHead {
-			s.writeOutcomeError(w, r, http.StatusBadRequest, Err(http.StatusBadRequest, ErrInvalidRequestPath.Error()))
-			return
-		}
-		w, r = s.installState(w, r)
-		reqSt = requestStateFromRequest(r)
-		s.badRequest.ServeHTTP(w, r)
+	var (
+		requestPath requestPath
+		result      routeMatchResult
+	)
+	staticMatched := false
+	if s.mux.staticByMethod != nil && r.URL.RawPath == "" {
+		result, staticMatched = s.mux.matchStatic(r.Method, r.URL.Path)
+	}
+	if staticMatched && result.route.fastHandler != nil && r.Method != http.MethodHead &&
+		(r.Body == nil || r.Body == http.NoBody) {
+		result.route.fastHandler.ServeHTTP(w, r)
 		return
 	}
-	result := s.mux.match(r.Method, requestPath)
+	if staticMatched && result.route.directHandler != nil && r.Method != http.MethodHead &&
+		(r.Body == nil || r.Body == http.NoBody) {
+		result.route.handler.ServeHTTP(w, r)
+		return
+	}
+	if staticMatched && result.route.contextHandler != nil && result.route.stateFree &&
+		r.Method != http.MethodHead && (r.Body == nil || r.Body == http.NoBody) {
+		ctx := acquireContext(w, r, pathParamList{})
+		err := result.route.contextHandler(ctx)
+		releaseContext(ctx)
+		if err != nil && !ctx.Wrote {
+			s.writeOutcomeError(w, r, http.StatusInternalServerError, err)
+		}
+		return
+	}
+	if !staticMatched && r.URL.RawPath == "" && (r.Body == nil || r.Body == http.NoBody) {
+		if route, value, ok := s.mux.matchDirectParam(r.Method, r.URL.Path); ok {
+			if route.directValueHandler != nil {
+				route.directValueHandler.ServeHTTPWithPathValue(w, r, value)
+				return
+			}
+			if route.directHandler != nil {
+				var params pathParamList
+				params.Add(route.directName, value)
+				route.directHandler.ServeHTTPWithPathParams(w, r, params)
+			} else {
+				route.handler.ServeHTTP(w, r)
+			}
+			return
+		}
+	}
+	if !staticMatched {
+		var err error
+		requestPath, err = parseRequestPath(r.URL.EscapedPath(), s.strict)
+		if err != nil {
+			if s.outcomeFast && r.Method != http.MethodHead {
+				s.writeOutcomeError(w, r, http.StatusBadRequest, Err(http.StatusBadRequest, ErrInvalidRequestPath.Error()))
+				return
+			}
+			w, r = s.installState(w, r)
+			reqSt = requestStateFromRequest(r)
+			s.badRequest.ServeHTTP(w, r)
+			return
+		}
+		result = s.mux.match(r.Method, requestPath)
+	}
 	switch result.kind {
 	case routeMatchFound:
 		route := result.route
+		// path-only 类型化终结器直接接收内联参数，避免为不可见的请求状态
+		// 克隆 *http.Request。HEAD 仍走包装 writer 以抑制响应体。
+		// Path-only typed terminals consume inline params directly instead of
+		// cloning *http.Request for invisible state. HEAD still uses the wrapped
+		// writer to suppress the response body.
+		if route.directHandler != nil && r.Method != http.MethodHead &&
+			(r.Body == nil || r.Body == http.NoBody) {
+			params, err := route.extractMatched(requestPath)
+			if err != nil {
+				s.writeOutcomeError(w, r, http.StatusBadRequest, err)
+				return
+			}
+			route.directHandler.ServeHTTPWithPathParams(w, r, params)
+			return
+		}
+		if route.contextHandler != nil && route.stateFree && r.Method != http.MethodHead &&
+			(r.Body == nil || r.Body == http.NoBody) {
+			var params pathParamList
+			if route.definition.needsExtractor {
+				var err error
+				params, err = route.extractMatched(requestPath)
+				if err != nil {
+					s.writeOutcomeError(w, r, http.StatusBadRequest, err)
+					return
+				}
+			}
+			ctx := acquireContext(w, r, params)
+			defer releaseContext(ctx)
+			if err := route.contextHandler(ctx); err != nil && !ctx.Wrote {
+				s.writeOutcomeError(w, r, http.StatusInternalServerError, err)
+			}
+			return
+		}
 		// 无 body、非 HEAD 的快路径直接执行,零状态注入。
 		// run body-less non-HEAD fast routes directly with zero state injection.
 		if route.fast && r.Method != http.MethodHead && (r.Body == nil || r.Body == http.NoBody) {
@@ -743,16 +796,19 @@ func (s *compiledState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // installState 为需要状态的路径注入 requestState 并包装 writer。
 // installState injects requestState and wraps the writer for stateful paths.
 func (s *compiledState) installState(w http.ResponseWriter, r *http.Request) (http.ResponseWriter, *http.Request) {
+	// Stateful paths always retain the response wrapper: Timeout, Hijack and
+	// committed-error detection depend on it even when the request has no body.
 	responseState, w := newResponseWriteState(w, r.Method == http.MethodHead)
 	st := acquireRequestState(s.server, responseState)
 	ctx := context.WithValue(r.Context(), requestStateContextKey{}, st)
 	if r.Body != nil && r.Body != http.NoBody {
-		// 只在有 body 时克隆请求再挂 memo,避免改写调用方的 *http.Request。
-		// clone the request only when wrapping the body, so the caller's
-		// *http.Request is never mutated.
+		// 只复制请求头结构再挂 memo；原始请求的 Body 字段不被改写，避免深 Clone
+		// 在 typed/body 热路径复制 URL、Header 和其它请求元数据。
+		// copy only the request shell before installing memo; the caller's Body
+		// field remains untouched without deep-cloning URL, Header, and metadata.
 		memo := &memoBody{src: r.Body}
 		st.body = memo
-		r = r.Clone(ctx)
+		r = r.WithContext(ctx)
 		r.Body = memo
 	} else {
 		r = r.WithContext(ctx)

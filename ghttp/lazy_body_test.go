@@ -79,41 +79,37 @@ func TestParamsRawBodySharedWithMiddleware(t *testing.T) {
 	}
 
 	app := New(WithProduces(MIMEJSON))
-	Route[viewReq, testOutput](app).
-		POST("/users/{id}").
-		Consumes(MIMEJSON).
-		Use(func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				raw, err := RawBody(r)
-				if err != nil {
-					t.Errorf("middleware raw body: %v", err)
-					return
-				}
-				got.mwRaw = append([]byte(nil), raw...)
-				next.ServeHTTP(w, r)
-			})
-		}).
-		To(func(ctx context.Context, req viewReq) (testOutput, error) {
-			if req.Request() == nil {
-				t.Error("request is nil")
-			}
-			raw, err := req.RawBody()
+	app.MustMount(Handle(Post("/users/{id}"), StructInput[viewReq](MIMEJSON), JSONOutput[testOutput](), func(ctx context.Context, req viewReq) (testOutput, error) {
+		if req.Request() == nil {
+			t.Error("request is nil")
+		}
+		raw, err := req.RawBody()
+		if err != nil {
+			return testOutput{}, err
+		}
+		got.handlerRaw = append([]byte(nil), raw...)
+		got.method = req.Method()
+		got.ct = req.ContentType()
+		if req.URL() != nil {
+			got.urlPath = req.URL().Path
+		}
+		detachedRaw, _ := req.Params.Detach().RawBody()
+		got.detached = append([]byte(nil), detachedRaw...)
+		return testOutput{Body: struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}{ID: req.Path("id"), Name: "ok"}}, nil
+	}).WithMiddleware(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			raw, err := RawBody(r)
 			if err != nil {
-				return testOutput{}, err
+				t.Errorf("middleware raw body: %v", err)
+				return
 			}
-			got.handlerRaw = append([]byte(nil), raw...)
-			got.method = req.Method()
-			got.ct = req.ContentType()
-			if req.URL() != nil {
-				got.urlPath = req.URL().Path
-			}
-			detachedRaw, _ := req.Params.Detach().RawBody()
-			got.detached = append([]byte(nil), detachedRaw...)
-			return testOutput{Body: struct {
-				ID   string `json:"id"`
-				Name string `json:"name"`
-			}{ID: req.Path("id"), Name: "ok"}}, nil
+			got.mwRaw = append([]byte(nil), raw...)
+			next.ServeHTTP(w, r)
 		})
+	}))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/users/42", body)
@@ -172,30 +168,27 @@ func TestBodyFieldDecodeLazyAndCached(t *testing.T) {
 
 	var names []string
 	app := New(WithProduces(MIMEJSON))
-	Route[lazyBodyFieldReq, testOutput](app).
-		POST("/p").
-		Consumes(MIMEJSON).
-		To(func(ctx context.Context, req lazyBodyFieldReq) (testOutput, error) {
-			if n := body.reads.Load(); n != 0 {
-				t.Errorf("body read before Decode: %d bytes", n)
-			}
-			a, err := req.Payload.Decode()
-			if err != nil {
-				return testOutput{}, err
-			}
-			b, err := req.Payload.Decode()
-			if err != nil {
-				return testOutput{}, err
-			}
-			if a != b {
-				t.Errorf("decoded values differ: %+v vs %+v", a, b)
-			}
-			names = append(names, a.Name, b.Name)
-			return testOutput{Body: struct {
-				ID   string `json:"id"`
-				Name string `json:"name"`
-			}{Name: "ok"}}, nil
-		})
+	app.MustMount(Handle(Post("/p"), StructInput[lazyBodyFieldReq](MIMEJSON), JSONOutput[testOutput](), func(ctx context.Context, req lazyBodyFieldReq) (testOutput, error) {
+		if n := body.reads.Load(); n != 0 {
+			t.Errorf("body read before Decode: %d bytes", n)
+		}
+		a, err := req.Payload.Decode()
+		if err != nil {
+			return testOutput{}, err
+		}
+		b, err := req.Payload.Decode()
+		if err != nil {
+			return testOutput{}, err
+		}
+		if a != b {
+			t.Errorf("decoded values differ: %+v vs %+v", a, b)
+		}
+		names = append(names, a.Name, b.Name)
+		return testOutput{Body: struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}{Name: "ok"}}, nil
+	}))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/p", body)
@@ -221,36 +214,32 @@ func TestBodyFieldRawSharedWithMiddlewareAndDecode(t *testing.T) {
 		mw, raw, name []byte
 	}
 	app := New(WithProduces(MIMEJSON))
-	Route[lazyBodyFieldReq, testOutput](app).
-		POST("/p").
-		Consumes(MIMEJSON).
-		Use(func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				raw, err := RawBody(r)
-				if err != nil {
-					t.Errorf("middleware raw body: %v", err)
-					return
-				}
-				got.mw = append([]byte(nil), raw...)
-				next.ServeHTTP(w, r)
-			})
-		}).
-		To(func(ctx context.Context, req lazyBodyFieldReq) (testOutput, error) {
-			raw, err := req.Payload.Raw()
+	app.MustMount(Handle(Post("/p"), StructInput[lazyBodyFieldReq](MIMEJSON), JSONOutput[testOutput](), func(ctx context.Context, req lazyBodyFieldReq) (testOutput, error) {
+		raw, err := req.Payload.Raw()
+		if err != nil {
+			return testOutput{}, err
+		}
+		got.raw = append([]byte(nil), raw...)
+		p, err := req.Payload.Decode()
+		if err != nil {
+			return testOutput{}, err
+		}
+		got.name = append(got.name, p.Name...)
+		return testOutput{Body: struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}{Name: p.Name}}, nil
+	}).WithMiddleware(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			raw, err := RawBody(r)
 			if err != nil {
-				return testOutput{}, err
+				t.Errorf("middleware raw body: %v", err)
+				return
 			}
-			got.raw = append([]byte(nil), raw...)
-			p, err := req.Payload.Decode()
-			if err != nil {
-				return testOutput{}, err
-			}
-			got.name = append(got.name, p.Name...)
-			return testOutput{Body: struct {
-				ID   string `json:"id"`
-				Name string `json:"name"`
-			}{Name: p.Name}}, nil
+			got.mw = append([]byte(nil), raw...)
+			next.ServeHTTP(w, r)
 		})
+	}))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/p", body)
@@ -273,22 +262,19 @@ func TestBodyFieldRawSharedWithMiddlewareAndDecode(t *testing.T) {
 
 func TestBodyTopLevelShorthand(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[Body[bodyPayload], testOutput](app).
-		POST("/top").
-		Consumes(MIMEJSON).
-		To(func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
-			p, err := b.Decode()
-			if err != nil {
-				return testOutput{}, err
-			}
-			if p.Name != "alice" {
-				t.Errorf("name = %q", p.Name)
-			}
-			return testOutput{Body: struct {
-				ID   string `json:"id"`
-				Name string `json:"name"`
-			}{Name: p.Name}}, nil
-		})
+	app.MustMount(Handle(Post("/top"), StructInput[Body[bodyPayload]](MIMEJSON), JSONOutput[testOutput](), func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
+		p, err := b.Decode()
+		if err != nil {
+			return testOutput{}, err
+		}
+		if p.Name != "alice" {
+			t.Errorf("name = %q", p.Name)
+		}
+		return testOutput{Body: struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}{Name: p.Name}}, nil
+	}))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/top", strings.NewReader(`{"name":"alice"}`))
@@ -315,22 +301,19 @@ func TestBodyZeroValueErrors(t *testing.T) {
 
 func TestBodyDecodeXMLContentType(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[Body[bodyPayload], testOutput](app).
-		POST("/xml").
-		Consumes(MIMEXML).
-		To(func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
-			p, err := b.Decode()
-			if err != nil {
-				return testOutput{}, err
-			}
-			if p.Name != "alice" {
-				t.Errorf("name = %q", p.Name)
-			}
-			return testOutput{Body: struct {
-				ID   string `json:"id"`
-				Name string `json:"name"`
-			}{Name: p.Name}}, nil
-		})
+	app.MustMount(Handle(Post("/xml"), StructInput[Body[bodyPayload]](MIMEXML), JSONOutput[testOutput](), func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
+		p, err := b.Decode()
+		if err != nil {
+			return testOutput{}, err
+		}
+		if p.Name != "alice" {
+			t.Errorf("name = %q", p.Name)
+		}
+		return testOutput{Body: struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}{Name: p.Name}}, nil
+	}))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/xml", strings.NewReader(`<bodyPayload><Name>alice</Name></bodyPayload>`))
@@ -344,21 +327,19 @@ func TestBodyDecodeXMLContentType(t *testing.T) {
 
 func TestBodyDecodeMissingContentTypeFallsBackToJSON(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[Body[bodyPayload], testOutput](app).
-		POST("/noct").
-		To(func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
-			p, err := b.Decode()
-			if err != nil {
-				return testOutput{}, err
-			}
-			if p.Name != "alice" {
-				t.Errorf("name = %q", p.Name)
-			}
-			return testOutput{Body: struct {
-				ID   string `json:"id"`
-				Name string `json:"name"`
-			}{Name: p.Name}}, nil
-		})
+	app.MustMount(Handle(Post("/noct"), StructInput[Body[bodyPayload]](), JSONOutput[testOutput](), func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
+		p, err := b.Decode()
+		if err != nil {
+			return testOutput{}, err
+		}
+		if p.Name != "alice" {
+			t.Errorf("name = %q", p.Name)
+		}
+		return testOutput{Body: struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}{Name: p.Name}}, nil
+	}))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/noct", strings.NewReader(`{"name":"alice"}`))
@@ -371,15 +352,13 @@ func TestBodyDecodeMissingContentTypeFallsBackToJSON(t *testing.T) {
 
 func TestBodyDecodeUnsupportedContentType(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[Body[bodyPayload], testOutput](app).
-		POST("/bin").
-		To(func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
-			_, err := b.Decode()
-			if !errors.Is(err, ErrInvalidBody) {
-				t.Errorf("error = %v, want ErrInvalidBody", err)
-			}
-			return testOutput{}, nil
-		})
+	app.MustMount(Handle(Post("/bin"), StructInput[Body[bodyPayload]](), JSONOutput[testOutput](), func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
+		_, err := b.Decode()
+		if !errors.Is(err, ErrInvalidBody) {
+			t.Errorf("error = %v, want ErrInvalidBody", err)
+		}
+		return testOutput{}, nil
+	}))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/bin", strings.NewReader("data"))
@@ -393,19 +372,16 @@ func TestBodyDecodeUnsupportedContentType(t *testing.T) {
 
 func TestBodyDecodeURLEncodedForm(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[Body[formPayload], testOutput](app).
-		POST("/form").
-		Consumes(MIMEPOSTForm).
-		To(func(ctx context.Context, b Body[formPayload]) (testOutput, error) {
-			p, err := b.Decode()
-			if err != nil {
-				return testOutput{}, err
-			}
-			if p.Name != "alice" || p.Age != 7 {
-				t.Errorf("payload = %+v", p)
-			}
-			return testOutput{}, nil
-		})
+	app.MustMount(Handle(Post("/form"), StructInput[Body[formPayload]](MIMEPOSTForm), JSONOutput[testOutput](), func(ctx context.Context, b Body[formPayload]) (testOutput, error) {
+		p, err := b.Decode()
+		if err != nil {
+			return testOutput{}, err
+		}
+		if p.Name != "alice" || p.Age != 7 {
+			t.Errorf("payload = %+v", p)
+		}
+		return testOutput{}, nil
+	}))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/form", strings.NewReader("name=alice&age=7"))
@@ -436,25 +412,22 @@ func TestBodyDecodeMultipartForm(t *testing.T) {
 	}
 
 	app := New(WithProduces(MIMEJSON))
-	Route[Body[multipartPayload], testOutput](app).
-		POST("/mp").
-		Consumes(MIMEMultipartPOSTForm).
-		To(func(ctx context.Context, b Body[multipartPayload]) (testOutput, error) {
-			p, err := b.Decode()
-			if err != nil {
-				return testOutput{}, err
-			}
-			if p.Name != "alice" || p.Age != 7 {
-				t.Errorf("payload = %+v", p)
-			}
-			if len(p.Tags) != 2 || p.Tags[0] != "a" || p.Tags[1] != "b" {
-				t.Errorf("tags = %v", p.Tags)
-			}
-			if p.Avatar == nil || p.Avatar.Filename != "a.txt" {
-				t.Errorf("avatar = %+v", p.Avatar)
-			}
-			return testOutput{}, nil
-		})
+	app.MustMount(Handle(Post("/mp"), StructInput[Body[multipartPayload]](MIMEMultipartPOSTForm), JSONOutput[testOutput](), func(ctx context.Context, b Body[multipartPayload]) (testOutput, error) {
+		p, err := b.Decode()
+		if err != nil {
+			return testOutput{}, err
+		}
+		if p.Name != "alice" || p.Age != 7 {
+			t.Errorf("payload = %+v", p)
+		}
+		if len(p.Tags) != 2 || p.Tags[0] != "a" || p.Tags[1] != "b" {
+			t.Errorf("tags = %v", p.Tags)
+		}
+		if p.Avatar == nil || p.Avatar.Filename != "a.txt" {
+			t.Errorf("avatar = %+v", p.Avatar)
+		}
+		return testOutput{}, nil
+	}))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/mp", &buf)
@@ -475,28 +448,24 @@ func TestMiddlewarePostFormSharedWithHandlerDecode(t *testing.T) {
 		name   string
 	}
 	app := New(WithProduces(MIMEJSON))
-	Route[Body[formPayload], testOutput](app).
-		POST("/form").
-		Consumes(MIMEPOSTForm).
-		Use(func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				values, err := PostFormValues(r)
-				if err != nil {
-					t.Errorf("middleware post form: %v", err)
-					return
-				}
-				got.mwName = values.Get("name")
-				next.ServeHTTP(w, r)
-			})
-		}).
-		To(func(ctx context.Context, b Body[formPayload]) (testOutput, error) {
-			p, err := b.Decode()
+	app.MustMount(Handle(Post("/form"), StructInput[Body[formPayload]](MIMEPOSTForm), JSONOutput[testOutput](), func(ctx context.Context, b Body[formPayload]) (testOutput, error) {
+		p, err := b.Decode()
+		if err != nil {
+			return testOutput{}, err
+		}
+		got.name = p.Name
+		return testOutput{}, nil
+	}).WithMiddleware(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			values, err := PostFormValues(r)
 			if err != nil {
-				return testOutput{}, err
+				t.Errorf("middleware post form: %v", err)
+				return
 			}
-			got.name = p.Name
-			return testOutput{}, nil
+			got.mwName = values.Get("name")
+			next.ServeHTTP(w, r)
 		})
+	}))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/form", body)
@@ -528,28 +497,24 @@ func TestMultipartSharedBetweenMiddlewareAndHandler(t *testing.T) {
 		name   string
 	}
 	app := New(WithProduces(MIMEJSON))
-	Route[Body[multipartPayload], testOutput](app).
-		POST("/mp").
-		Consumes(MIMEMultipartPOSTForm).
-		Use(func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				form, err := MultipartForm(r, defaultMaxMemory)
-				if err != nil {
-					t.Errorf("middleware multipart: %v", err)
-					return
-				}
-				got.mwName = form.Value["name"][0]
-				next.ServeHTTP(w, r)
-			})
-		}).
-		To(func(ctx context.Context, b Body[multipartPayload]) (testOutput, error) {
-			p, err := b.Decode()
+	app.MustMount(Handle(Post("/mp"), StructInput[Body[multipartPayload]](MIMEMultipartPOSTForm), JSONOutput[testOutput](), func(ctx context.Context, b Body[multipartPayload]) (testOutput, error) {
+		p, err := b.Decode()
+		if err != nil {
+			return testOutput{}, err
+		}
+		got.name = p.Name
+		return testOutput{}, nil
+	}).WithMiddleware(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			form, err := MultipartForm(r, defaultMaxMemory)
 			if err != nil {
-				return testOutput{}, err
+				t.Errorf("middleware multipart: %v", err)
+				return
 			}
-			got.name = p.Name
-			return testOutput{}, nil
+			got.mwName = form.Value["name"][0]
+			next.ServeHTTP(w, r)
 		})
+	}))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/mp", body)
@@ -572,28 +537,24 @@ func TestURLEncodedFormDecodesAfterRawDrain(t *testing.T) {
 	body := &countingReadCloser{Reader: strings.NewReader(bodyBytes)}
 
 	app := New(WithProduces(MIMEJSON))
-	Route[Body[formPayload], testOutput](app).
-		POST("/form").
-		Consumes(MIMEPOSTForm).
-		Use(func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if _, err := RawBody(r); err != nil {
-					t.Errorf("middleware raw body: %v", err)
-					return
-				}
-				next.ServeHTTP(w, r)
-			})
-		}).
-		To(func(ctx context.Context, b Body[formPayload]) (testOutput, error) {
-			p, err := b.Decode()
-			if err != nil {
-				return testOutput{}, err
+	app.MustMount(Handle(Post("/form"), StructInput[Body[formPayload]](MIMEPOSTForm), JSONOutput[testOutput](), func(ctx context.Context, b Body[formPayload]) (testOutput, error) {
+		p, err := b.Decode()
+		if err != nil {
+			return testOutput{}, err
+		}
+		if p.Name != "alice" || p.Age != 7 {
+			t.Errorf("payload = %+v", p)
+		}
+		return testOutput{}, nil
+	}).WithMiddleware(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if _, err := RawBody(r); err != nil {
+				t.Errorf("middleware raw body: %v", err)
+				return
 			}
-			if p.Name != "alice" || p.Age != 7 {
-				t.Errorf("payload = %+v", p)
-			}
-			return testOutput{}, nil
+			next.ServeHTTP(w, r)
 		})
+	}))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/form", body)
@@ -610,25 +571,22 @@ func TestURLEncodedFormDecodesAfterRawDrain(t *testing.T) {
 
 func TestParamsFormAccessors(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[viewReq, testOutput](app).
-		POST("/form").
-		Consumes(MIMEPOSTForm).
-		To(func(ctx context.Context, req viewReq) (testOutput, error) {
-			if got := req.PostForm("name"); got != "alice" {
-				t.Errorf("PostForm = %q", got)
-			}
-			if got := req.Form("q"); got != "1" {
-				t.Errorf("merged Form q = %q", got)
-			}
-			if got := req.Form("name"); got != "alice" {
-				t.Errorf("merged Form name = %q", got)
-			}
-			values, err := req.PostFormValues()
-			if err != nil || values.Get("name") != "alice" {
-				t.Errorf("PostFormValues = %v, %v", values, err)
-			}
-			return testOutput{}, nil
-		})
+	app.MustMount(Handle(Post("/form"), StructInput[viewReq](MIMEPOSTForm), JSONOutput[testOutput](), func(ctx context.Context, req viewReq) (testOutput, error) {
+		if got := req.PostForm("name"); got != "alice" {
+			t.Errorf("PostForm = %q", got)
+		}
+		if got := req.Form("q"); got != "1" {
+			t.Errorf("merged Form q = %q", got)
+		}
+		if got := req.Form("name"); got != "alice" {
+			t.Errorf("merged Form name = %q", got)
+		}
+		values, err := req.PostFormValues()
+		if err != nil || values.Get("name") != "alice" {
+			t.Errorf("PostFormValues = %v, %v", values, err)
+		}
+		return testOutput{}, nil
+	}))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/form?q=1", strings.NewReader("name=alice"))
@@ -642,18 +600,15 @@ func TestParamsFormAccessors(t *testing.T) {
 
 func TestParamsFormMalformedReturnsError(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[viewReq, testOutput](app).
-		POST("/form").
-		Consumes(MIMEPOSTForm).
-		To(func(ctx context.Context, req viewReq) (testOutput, error) {
-			if _, err := req.PostFormValues(); err == nil {
-				t.Error("malformed form should return an error")
-			}
-			if got := req.PostForm("name"); got != "" {
-				t.Errorf("silent PostForm = %q on malformed body", got)
-			}
-			return testOutput{}, nil
-		})
+	app.MustMount(Handle(Post("/form"), StructInput[viewReq](MIMEPOSTForm), JSONOutput[testOutput](), func(ctx context.Context, req viewReq) (testOutput, error) {
+		if _, err := req.PostFormValues(); err == nil {
+			t.Error("malformed form should return an error")
+		}
+		if got := req.PostForm("name"); got != "" {
+			t.Errorf("silent PostForm = %q on malformed body", got)
+		}
+		return testOutput{}, nil
+	}))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/form", strings.NewReader("name=%zz"))
@@ -667,17 +622,14 @@ func TestParamsFormMalformedReturnsError(t *testing.T) {
 
 func TestFormBodyRespectsMaxBodyBytes(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[Body[formPayload], testOutput](app).
-		POST("/form").
-		MaxBodyBytes(8).
-		To(func(ctx context.Context, b Body[formPayload]) (testOutput, error) {
-			_, err := b.Decode()
-			var maxErr *http.MaxBytesError
-			if !errors.As(err, &maxErr) {
-				t.Errorf("error = %v, want *http.MaxBytesError", err)
-			}
-			return testOutput{}, nil
-		})
+	app.MustMount(Handle(Post("/form"), StructInput[Body[formPayload]](), JSONOutput[testOutput](), func(ctx context.Context, b Body[formPayload]) (testOutput, error) {
+		_, err := b.Decode()
+		var maxErr *http.MaxBytesError
+		if !errors.As(err, &maxErr) {
+			t.Errorf("error = %v, want *http.MaxBytesError", err)
+		}
+		return testOutput{}, nil
+	}).WithMaxBodyBytes(8))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/form", strings.NewReader("name=alice&age=7"))
@@ -698,25 +650,21 @@ func TestMultipartAfterRawDrainRejected(t *testing.T) {
 	}
 
 	app := New(WithProduces(MIMEJSON))
-	Route[Body[multipartPayload], testOutput](app).
-		POST("/mp").
-		Consumes(MIMEMultipartPOSTForm).
-		Use(func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if _, err := RawBody(r); err != nil {
-					t.Errorf("middleware raw body: %v", err)
-					return
-				}
-				next.ServeHTTP(w, r)
-			})
-		}).
-		To(func(ctx context.Context, b Body[multipartPayload]) (testOutput, error) {
-			_, err := b.Decode()
-			if !errors.Is(err, ErrInvalidBody) {
-				t.Errorf("error = %v, want ErrInvalidBody", err)
+	app.MustMount(Handle(Post("/mp"), StructInput[Body[multipartPayload]](MIMEMultipartPOSTForm), JSONOutput[testOutput](), func(ctx context.Context, b Body[multipartPayload]) (testOutput, error) {
+		_, err := b.Decode()
+		if !errors.Is(err, ErrInvalidBody) {
+			t.Errorf("error = %v, want ErrInvalidBody", err)
+		}
+		return testOutput{}, nil
+	}).WithMiddleware(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if _, err := RawBody(r); err != nil {
+				t.Errorf("middleware raw body: %v", err)
+				return
 			}
-			return testOutput{}, nil
+			next.ServeHTTP(w, r)
 		})
+	}))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/mp", &buf)
@@ -737,17 +685,14 @@ func TestMultipartRespectsMaxBodyBytes(t *testing.T) {
 	}
 
 	app := New(WithProduces(MIMEJSON))
-	Route[Body[multipartPayload], testOutput](app).
-		POST("/mp").
-		MaxBodyBytes(32).
-		To(func(ctx context.Context, b Body[multipartPayload]) (testOutput, error) {
-			_, err := b.Decode()
-			var maxErr *http.MaxBytesError
-			if !errors.As(err, &maxErr) {
-				t.Errorf("error = %v, want *http.MaxBytesError", err)
-			}
-			return testOutput{}, nil
-		})
+	app.MustMount(Handle(Post("/mp"), StructInput[Body[multipartPayload]](), JSONOutput[testOutput](), func(ctx context.Context, b Body[multipartPayload]) (testOutput, error) {
+		_, err := b.Decode()
+		var maxErr *http.MaxBytesError
+		if !errors.As(err, &maxErr) {
+			t.Errorf("error = %v, want *http.MaxBytesError", err)
+		}
+		return testOutput{}, nil
+	}).WithMaxBodyBytes(32))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/mp", &buf)
@@ -776,18 +721,16 @@ func TestBodyDecodeWithBodyDecoderOverride(t *testing.T) {
 			return json.Unmarshal(data, target)
 		}),
 	)
-	Route[Body[bodyPayload], testOutput](app).
-		POST("/custom").
-		To(func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
-			p, err := b.Decode()
-			if err != nil {
-				return testOutput{}, err
-			}
-			if p.Name != "alice" {
-				t.Errorf("name = %q", p.Name)
-			}
-			return testOutput{}, nil
-		})
+	app.MustMount(Handle(Post("/custom"), StructInput[Body[bodyPayload]](), JSONOutput[testOutput](), func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
+		p, err := b.Decode()
+		if err != nil {
+			return testOutput{}, err
+		}
+		if p.Name != "alice" {
+			t.Errorf("name = %q", p.Name)
+		}
+		return testOutput{}, nil
+	}))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/custom", strings.NewReader(`{"name":"alice"}`))
@@ -807,15 +750,13 @@ func TestBodyDecodeWithBodyDecoderOverride(t *testing.T) {
 
 func TestBodyDecodeMalformedJSONWrapsErrInvalidBody(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[Body[bodyPayload], testOutput](app).
-		POST("/bad").
-		To(func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
-			_, err := b.Decode()
-			if !errors.Is(err, ErrInvalidBody) {
-				t.Errorf("error = %v, want ErrInvalidBody", err)
-			}
-			return testOutput{}, nil
-		})
+	app.MustMount(Handle(Post("/bad"), StructInput[Body[bodyPayload]](), JSONOutput[testOutput](), func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
+		_, err := b.Decode()
+		if !errors.Is(err, ErrInvalidBody) {
+			t.Errorf("error = %v, want ErrInvalidBody", err)
+		}
+		return testOutput{}, nil
+	}))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/bad", strings.NewReader(`{"name":`))
@@ -880,31 +821,28 @@ func TestCompileJSONPathNilAndInvalidData(t *testing.T) {
 func TestRouteRejectsMultipleLazyBodyFields(t *testing.T) {
 	app := New()
 	assertRoutePanic(t, ErrMultipleBodyFields, func() {
-		Route[multiBodyReq, testOutput](app).POST("/m").To(func(ctx context.Context, req multiBodyReq) (testOutput, error) {
+		app.MustMount(Handle(Post("/m"), StructInput[multiBodyReq](), JSONOutput[testOutput](), func(ctx context.Context, req multiBodyReq) (testOutput, error) {
 			return testOutput{}, nil
-		})
+		}))
 	})
 }
 
 func TestRouteRejectsPointerBodyField(t *testing.T) {
 	app := New()
 	assertRoutePanic(t, ErrBodyFieldMustBeValue, func() {
-		Route[ptrBodyReq, testOutput](app).POST("/p").To(func(ctx context.Context, req ptrBodyReq) (testOutput, error) {
+		app.MustMount(Handle(Post("/p"), StructInput[ptrBodyReq](), JSONOutput[testOutput](), func(ctx context.Context, req ptrBodyReq) (testOutput, error) {
 			return testOutput{}, nil
-		})
+		}))
 	})
 }
 
 func TestBodyTopLevelConsumesRejectsOtherContentType(t *testing.T) {
 	called := false
 	app := New(WithProduces(MIMEJSON))
-	Route[Body[bodyPayload], testOutput](app).
-		POST("/c").
-		Consumes(MIMEJSON).
-		To(func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
-			called = true
-			return testOutput{}, nil
-		})
+	app.MustMount(Handle(Post("/c"), StructInput[Body[bodyPayload]](MIMEJSON), JSONOutput[testOutput](), func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
+		called = true
+		return testOutput{}, nil
+	}))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/c", strings.NewReader(`{"name":"alice"}`))
@@ -948,17 +886,14 @@ func bodySchemaProps(t *testing.T, schema interface{}) map[string]interface{} {
 
 func TestBodyDecodeEnforcesMaxBodyBytes(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[Body[bodyPayload], testOutput](app).
-		POST("/limited").
-		MaxBodyBytes(8).
-		To(func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
-			_, err := b.Decode()
-			var maxErr *http.MaxBytesError
-			if !errors.As(err, &maxErr) {
-				t.Errorf("error = %v, want *http.MaxBytesError", err)
-			}
-			return testOutput{}, nil
-		})
+	app.MustMount(Handle(Post("/limited"), StructInput[Body[bodyPayload]](), JSONOutput[testOutput](), func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
+		_, err := b.Decode()
+		var maxErr *http.MaxBytesError
+		if !errors.As(err, &maxErr) {
+			t.Errorf("error = %v, want *http.MaxBytesError", err)
+		}
+		return testOutput{}, nil
+	}).WithMaxBodyBytes(8))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/limited", strings.NewReader(`{"name":"alice-with-a-long-name"}`))
@@ -973,12 +908,9 @@ func TestBodyDecodeEnforcesMaxBodyBytes(t *testing.T) {
 func TestBodyNeverReadDoesNotTriggerLimit(t *testing.T) {
 	body := &countingReadCloser{Reader: strings.NewReader(`{"name":"this is way over the limit"}`)}
 	app := New(WithProduces(MIMEJSON))
-	Route[Body[bodyPayload], testOutput](app).
-		POST("/skip").
-		MaxBodyBytes(4).
-		To(func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
-			return testOutput{}, nil
-		})
+	app.MustMount(Handle(Post("/skip"), StructInput[Body[bodyPayload]](), JSONOutput[testOutput](), func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
+		return testOutput{}, nil
+	}).WithMaxBodyBytes(4))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/skip", body)
@@ -995,18 +927,16 @@ func TestBodyNeverReadDoesNotTriggerLimit(t *testing.T) {
 
 func TestBodyDecodeJSONIgnoresContentType(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[Body[bodyPayload], testOutput](app).
-		POST("/p").
-		To(func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
-			p, err := b.DecodeJSON()
-			if err != nil {
-				return testOutput{}, err
-			}
-			if p.Name != "alice" {
-				t.Errorf("name = %q", p.Name)
-			}
-			return testOutput{}, nil
-		})
+	app.MustMount(Handle(Post("/p"), StructInput[Body[bodyPayload]](), JSONOutput[testOutput](), func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
+		p, err := b.DecodeJSON()
+		if err != nil {
+			return testOutput{}, err
+		}
+		if p.Name != "alice" {
+			t.Errorf("name = %q", p.Name)
+		}
+		return testOutput{}, nil
+	}))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/p", strings.NewReader(`{"name":"alice"}`))
@@ -1020,18 +950,16 @@ func TestBodyDecodeJSONIgnoresContentType(t *testing.T) {
 
 func TestBodyDecodeXMLIgnoresContentType(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[Body[bodyPayload], testOutput](app).
-		POST("/p").
-		To(func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
-			p, err := b.DecodeXML()
-			if err != nil {
-				return testOutput{}, err
-			}
-			if p.Name != "alice" {
-				t.Errorf("name = %q", p.Name)
-			}
-			return testOutput{}, nil
-		})
+	app.MustMount(Handle(Post("/p"), StructInput[Body[bodyPayload]](), JSONOutput[testOutput](), func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
+		p, err := b.DecodeXML()
+		if err != nil {
+			return testOutput{}, err
+		}
+		if p.Name != "alice" {
+			t.Errorf("name = %q", p.Name)
+		}
+		return testOutput{}, nil
+	}))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/p", strings.NewReader(`<bodyPayload><Name>alice</Name></bodyPayload>`))
@@ -1045,18 +973,16 @@ func TestBodyDecodeXMLIgnoresContentType(t *testing.T) {
 
 func TestBodyDecodeFormIgnoresContentType(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	Route[Body[formPayload], testOutput](app).
-		POST("/p").
-		To(func(ctx context.Context, b Body[formPayload]) (testOutput, error) {
-			p, err := b.DecodeForm()
-			if err != nil {
-				return testOutput{}, err
-			}
-			if p.Name != "alice" || p.Age != 7 {
-				t.Errorf("payload = %+v", p)
-			}
-			return testOutput{}, nil
-		})
+	app.MustMount(Handle(Post("/p"), StructInput[Body[formPayload]](), JSONOutput[testOutput](), func(ctx context.Context, b Body[formPayload]) (testOutput, error) {
+		p, err := b.DecodeForm()
+		if err != nil {
+			return testOutput{}, err
+		}
+		if p.Name != "alice" || p.Age != 7 {
+			t.Errorf("payload = %+v", p)
+		}
+		return testOutput{}, nil
+	}))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/p", strings.NewReader("name=alice&age=7"))
@@ -1074,22 +1000,20 @@ func TestBodyDecodeSharesCacheAcrossKinds(t *testing.T) {
 	// the first DecodeJSON fixes the format and result; a later Decode() hits
 	// the cache instead of re-decoding by Content-Type (XML) and failing.
 	app := New(WithProduces(MIMEJSON))
-	Route[Body[bodyPayload], testOutput](app).
-		POST("/p").
-		To(func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
-			a, err := b.DecodeJSON()
-			if err != nil {
-				return testOutput{}, err
-			}
-			c, err := b.Decode()
-			if err != nil {
-				return testOutput{}, err
-			}
-			if a != c || a.Name != "alice" {
-				t.Errorf("DecodeJSON = %+v, Decode = %+v", a, c)
-			}
-			return testOutput{}, nil
-		})
+	app.MustMount(Handle(Post("/p"), StructInput[Body[bodyPayload]](), JSONOutput[testOutput](), func(ctx context.Context, b Body[bodyPayload]) (testOutput, error) {
+		a, err := b.DecodeJSON()
+		if err != nil {
+			return testOutput{}, err
+		}
+		c, err := b.Decode()
+		if err != nil {
+			return testOutput{}, err
+		}
+		if a != c || a.Name != "alice" {
+			t.Errorf("DecodeJSON = %+v, Decode = %+v", a, c)
+		}
+		return testOutput{}, nil
+	}))
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/p", strings.NewReader(`{"name":"alice"}`))
