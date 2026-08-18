@@ -40,6 +40,8 @@ import (
 	"github.com/sofiworker/gk/ghttp"
 	"github.com/uptrace/bunrouter"
 	"github.com/valyala/fasthttp"
+
+	web "example.com/web"
 )
 
 // microAPI exercises the fundamental matching shapes in isolation.
@@ -235,27 +237,18 @@ var noopHTTP = http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 
 func buildGhttpMatch(routes []apiRoute) matchRunner {
 	s := ghttp.New(ghttp.WithProduces(ghttp.MIMEJSON))
-	handler := func(context.Context, ghttp.Params) (struct{}, error) {
-		return struct{}{}, nil
-	}
 	for _, rt := range routes {
-		path := curlyPath(rt.path)
-		switch rt.method {
-		case http.MethodGet:
-			ghttp.Route[ghttp.Params, struct{}](s).GET(path).To(handler)
-		case http.MethodPost:
-			ghttp.Route[ghttp.Params, struct{}](s).POST(path).To(handler)
-		case http.MethodPut:
-			ghttp.Route[ghttp.Params, struct{}](s).PUT(path).To(handler)
-		case http.MethodDelete:
-			ghttp.Route[ghttp.Params, struct{}](s).DELETE(path).To(handler)
-		case http.MethodPatch:
-			ghttp.Route[ghttp.Params, struct{}](s).PATCH(path).To(handler)
-		default:
-			panic(fmt.Sprintf("ghttp: unsupported benchmark method %s", rt.method))
-		}
+		s.MustMount(ghttp.RawOperation(rt.method, curlyPath(rt.path), noopHTTP))
 	}
 	return httpMatchRunner{h: s}
+}
+
+func buildWebMatch(routes []apiRoute) matchRunner {
+	app := web.New()
+	for _, rt := range routes {
+		app.Must(web.Raw(rt.method, curlyPath(rt.path), func(*web.Ctx) error { return nil }))
+	}
+	return httpMatchRunner{h: app}
 }
 
 func buildStdMuxMatch(routes []apiRoute) matchRunner {
@@ -415,6 +408,7 @@ var routingAdapters = []routingAdapter{
 	{"httprouter", buildHTTPRouterMatch},
 	{"huma", buildHumaMatch},
 	{"stdmux", buildStdMuxMatch},
+	{"web", buildWebMatch},
 }
 
 // Routers are built once per (adapter, table) and reused by every benchmark.
