@@ -524,8 +524,8 @@ func TestOperationConvenienceInputsOnlyCompileStateIndependentTerminals(t *testi
 			if state == nil || len(state.mux.routes) != 1 {
 				t.Fatalf("compiled routes = %#v, want one route", state)
 			}
-			if state.mux.routes[0].directHandler != nil {
-				t.Fatal("request-state-dependent convenience input compiled as direct terminal")
+			if state.mux.routes[0].fastDirect != nil {
+				t.Fatal("request-state-dependent convenience input compiled as stateless direct")
 			}
 		})
 	}

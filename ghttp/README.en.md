@@ -171,6 +171,11 @@ The package-level `Handle` remains available on Go 1.27 for source migration. Go
 | `PathRemainder` | `string` | A `{name...}` catch-all parameter. |
 | `QueryString/QueryInt/QueryBool/QueryFloat64` | Scalars | Required query parameters. |
 | `QueryIntDefault` | `int` | Uses a default when absent. |
+| `QueryStringDefault` | `string` | Uses a default when absent. |
+| `QueryBoolDefault` | `bool` | Uses a default when absent. |
+| `QueryFloat64Default` | `float64` | Uses a default when absent. |
+| `HeaderStringDefault` | `string` | Uses a default when absent. |
+| `CookieStringDefault` | `string` | Uses a default when absent. |
 | `QueryStrings` | `[]string` | Repeated query values. |
 | `HeaderString` | `string` | A required request header. |
 | `CookieString` | `string` | A required Cookie. |
@@ -202,7 +207,7 @@ input := ghttp.MapInputs3(
 )
 ```
 
-`CombineInputs`/`CombineInputs3` return `InputPair`/`InputTriple`; `MapInputs`/`MapInputs3` construct a business type. Composed inputs share one request state, so query, body, form, and multipart data are parsed once.
+`CombineInputs`/`CombineInputs3` return `InputPair`/`InputTriple`; `MapInputs`/`MapInputs3`/`MapInputs4`/`MapInputs5` construct a business type directly (the 3/4/5-way versions are flat implementations without intermediate Pair nesting). Composed inputs share one request state, so query, body, form, and multipart data are parsed once.
 
 Use `InputFunc` for arbitrary input. Add OpenAPI metadata with `InputFuncWithMetadata`:
 
@@ -385,6 +390,15 @@ defer server.Shutdown(context.Background())
 ```
 
 `Server.Use`, `Group`, and `Operation.WithMiddleware` all use `func(http.Handler) http.Handler`. Execution order is server, group, then Operation from outermost to innermost.
+
+Typed keys ride the standard request context, readable and writable by plain net/http middleware:
+
+```go
+var requestID = ghttp.NewKey[string]("request-id") // package-level; the type is fixed at compile time
+
+ctx = requestID.Set(ctx, "abc123")
+id, ok := requestID.Get(ctx)
+```
 
 ## Client
 

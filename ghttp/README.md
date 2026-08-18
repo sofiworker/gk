@@ -171,6 +171,11 @@ Go 1.27 仍保留包级 `Handle`，便于同一份源码跨版本迁移。Go 1.2
 | `PathRemainder` | `string` | `{name...}` catch-all 参数 |
 | `QueryString/QueryInt/QueryBool/QueryFloat64` | 对应标量 | 必需 query 参数 |
 | `QueryIntDefault` | `int` | 缺失时使用默认值 |
+| `QueryStringDefault` | `string` | 缺失时使用默认值 |
+| `QueryBoolDefault` | `bool` | 缺失时使用默认值 |
+| `QueryFloat64Default` | `float64` | 缺失时使用默认值 |
+| `HeaderStringDefault` | `string` | 缺失时使用默认值 |
+| `CookieStringDefault` | `string` | 缺失时使用默认值 |
 | `QueryStrings` | `[]string` | 可重复 query 参数 |
 | `HeaderString` | `string` | 必需请求头 |
 | `CookieString` | `string` | 必需 Cookie |
@@ -202,7 +207,7 @@ input := ghttp.MapInputs3(
 )
 ```
 
-`CombineInputs`/`CombineInputs3` 返回 `InputPair`/`InputTriple`；`MapInputs`/`MapInputs3` 直接构造业务类型。组合器共享一个请求状态，query、body、form 和 multipart 不会被重复解析。
+`CombineInputs`/`CombineInputs3` 返回 `InputPair`/`InputTriple`；`MapInputs`/`MapInputs3`/`MapInputs4`/`MapInputs5` 直接构造业务类型（三/四/五元版本为扁平实现，无中间 Pair 嵌套）。组合器共享一个请求状态，query、body、form 和 multipart 不会被重复解析。
 
 任意复杂输入使用 `InputFunc`。需要 OpenAPI 时使用 `InputFuncWithMetadata`：
 
@@ -387,6 +392,15 @@ defer server.Shutdown(context.Background())
 ```
 
 `Server.Use`、`Group` 和 `Operation.WithMiddleware` 均使用标准 `func(http.Handler) http.Handler`。顺序为 server、group、operation，由外向内执行。
+
+类型安全键挂在标准 request context 上，net/http 中间件可直接读写：
+
+```go
+var requestID = ghttp.NewKey[string]("request-id") // 包级变量,类型编译期固定
+
+ctx = requestID.Set(ctx, "abc123")
+id, ok := requestID.Get(ctx)
+```
 
 ## 客户端
 

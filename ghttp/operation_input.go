@@ -116,6 +116,102 @@ type inputFunc[T any] struct {
 	fn       func(*operationRequest) (T, error)
 	metadata InputMetadata
 	setupErr error
+	// requestOnly 标记输入只读请求头/query/path 等非 body 数据且不依赖
+	// requestState;满足条件时整条输入链可走无状态快路径。
+	// requestOnly marks an input that reads only non-body request data and
+	// never depends on requestState; a fully marked chain can take the
+	// stateless fast path.
+	requestOnly bool
+	// stateIndependent 标记输入完全不读 requestState(标量参数组合),
+	// 组合器传播后整条链可免状态注入。
+	// stateIndependent marks an input that never reads requestState (scalar
+	// parameter compositions); combinators propagate it so the whole chain
+	// can skip state injection.
+	stateIndependent bool
+}
+
+func (f inputFunc[T]) requestOnlyInput() bool { return f.requestOnly }
+
+func (f inputFunc[T]) stateIndependentInput() bool { return f.stateIndependent }
+
+// requestOnlyInput 是输入契约的可选标记接口。
+// requestOnlyInput is the optional marker for request-only input contracts.
+type requestOnlyInput interface {
+	requestOnlyInput() bool
+}
+
+// isRequestOnlyInput 报告输入是否只读请求元数据(不读 body、不依赖状态)。
+// isRequestOnlyInput reports whether the input reads only request metadata
+// (no body, no requestState dependency).
+func isRequestOnlyInput(input any) bool {
+	marker, ok := input.(requestOnlyInput)
+	return ok && marker.requestOnlyInput()
+}
+
+// isStateIndependentInput 报告输入是否完全不读 requestState。
+// isStateIndependentInput reports whether the input never reads requestState.
+func isStateIndependentInput(input any) bool {
+	marker, ok := input.(stateIndependentInputBuilder)
+	return ok && marker.stateIndependentInput()
+}
+
+// mergeSixMetadata 链式合并六个输入描述器的元数据。
+// mergeSixMetadata merges six input descriptors' metadata in order.
+func mergeSixMetadata(m1, m2, m3, m4, m5, m6 InputMetadata) (InputMetadata, error) {
+	merged, err := mergeInputMetadata(m1, m2)
+	if err == nil {
+		merged, err = mergeInputMetadata(merged, m3)
+	}
+	if err == nil {
+		merged, err = mergeInputMetadata(merged, m4)
+	}
+	if err == nil {
+		merged, err = mergeInputMetadata(merged, m5)
+	}
+	if err == nil {
+		merged, err = mergeInputMetadata(merged, m6)
+	}
+	return merged, err
+}
+
+// mergeSevenMetadata 链式合并七个输入描述器的元数据。
+// mergeSevenMetadata merges seven input descriptors' metadata in order.
+func mergeSevenMetadata(m1, m2, m3, m4, m5, m6, m7 InputMetadata) (InputMetadata, error) {
+	merged, err := mergeSixMetadata(m1, m2, m3, m4, m5, m6)
+	if err == nil {
+		merged, err = mergeInputMetadata(merged, m7)
+	}
+	return merged, err
+}
+
+// mergeEightMetadata 链式合并八个输入描述器的元数据。
+// mergeEightMetadata merges eight input descriptors' metadata in order.
+func mergeEightMetadata(m1, m2, m3, m4, m5, m6, m7, m8 InputMetadata) (InputMetadata, error) {
+	merged, err := mergeSevenMetadata(m1, m2, m3, m4, m5, m6, m7)
+	if err == nil {
+		merged, err = mergeInputMetadata(merged, m8)
+	}
+	return merged, err
+}
+
+// mergeNineMetadata 链式合并九个输入描述器的元数据。
+// mergeNineMetadata merges nine input descriptors' metadata in order.
+func mergeNineMetadata(m1, m2, m3, m4, m5, m6, m7, m8, m9 InputMetadata) (InputMetadata, error) {
+	merged, err := mergeEightMetadata(m1, m2, m3, m4, m5, m6, m7, m8)
+	if err == nil {
+		merged, err = mergeInputMetadata(merged, m9)
+	}
+	return merged, err
+}
+
+// mergeTenMetadata 链式合并十个输入描述器的元数据。
+// mergeTenMetadata merges ten input descriptors' metadata in order.
+func mergeTenMetadata(m1, m2, m3, m4, m5, m6, m7, m8, m9, m10 InputMetadata) (InputMetadata, error) {
+	merged, err := mergeNineMetadata(m1, m2, m3, m4, m5, m6, m7, m8, m9)
+	if err == nil {
+		merged, err = mergeInputMetadata(merged, m10)
+	}
+	return merged, err
 }
 
 type directPathInput[T any] struct {
@@ -403,6 +499,8 @@ type validatedInput[T any] struct {
 // ErrOperationValidatorNil indicates that an input validator is nil.
 var ErrOperationValidatorNil = errors.New("operation input validator is nil")
 
+func (i validatedInput[T]) requestOnlyInput() bool { return isRequestOnlyInput(i.input) }
+
 func (i validatedInput[T]) build(request *operationRequest) (T, error) {
 	var zero T
 	if i.setupErr != nil {
@@ -536,7 +634,9 @@ func validateStringConstraints(name, value string, constraints []StringConstrain
 
 func parameterInput[T any](name string, location ParameterLocation, required bool, schema map[string]any, build func(*operationRequest) (T, error)) Input[T] {
 	return inputFunc[T]{
-		fn: build,
+		fn:               build,
+		requestOnly:      true,
+		stateIndependent: true,
 		metadata: InputMetadata{Parameters: []InputParameter{{
 			Name: name, Location: location, Required: required, Schema: schema,
 		}}},
@@ -685,6 +785,79 @@ func QueryFloat64(name string, constraints ...NumberConstraint) Input[float64] {
 func QueryStrings(name string) Input[[]string] {
 	return parameterInput(name, ParameterLocationQuery, false, map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, func(request *operationRequest) ([]string, error) {
 		return request.queryValues()[name], nil
+	})
+}
+
+// QueryStringDefault 声明一个可缺省、缺失时回退默认值的字符串查询参数。
+// QueryStringDefault declares an optional string query parameter falling back
+// to defaultValue when absent.
+func QueryStringDefault(name string, defaultValue string, constraints ...StringConstraint) Input[string] {
+	return parameterInput(name, ParameterLocationQuery, false, constrainedStringSchema(map[string]any{"type": "string", "default": defaultValue}, constraints), func(request *operationRequest) (string, error) {
+		value := request.queryValues().Get(name)
+		if value == "" {
+			return defaultValue, validateStringConstraints(name, defaultValue, constraints)
+		}
+		return value, validateStringConstraints(name, value, constraints)
+	})
+}
+
+// QueryBoolDefault 声明一个可缺省、缺失时回退默认值的 bool 查询参数。
+// QueryBoolDefault declares an optional bool query parameter falling back to
+// defaultValue when absent.
+func QueryBoolDefault(name string, defaultValue bool) Input[bool] {
+	return parameterInput(name, ParameterLocationQuery, false, map[string]any{"type": "boolean", "default": defaultValue}, func(request *operationRequest) (bool, error) {
+		value := request.queryValues().Get(name)
+		if value == "" {
+			return defaultValue, nil
+		}
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return false, Err(http.StatusBadRequest, fmt.Sprintf("query parameter %q is invalid", name), WithCause(err))
+		}
+		return parsed, nil
+	})
+}
+
+// QueryFloat64Default 声明一个可缺省、缺失时回退默认值的 float64 查询参数。
+// QueryFloat64Default declares an optional float64 query parameter falling
+// back to defaultValue when absent.
+func QueryFloat64Default(name string, defaultValue float64, constraints ...NumberConstraint) Input[float64] {
+	return parameterInput(name, ParameterLocationQuery, false, constrainedNumberSchema(map[string]any{"type": "number", "format": "double", "default": defaultValue}, constraints), func(request *operationRequest) (float64, error) {
+		value := request.queryValues().Get(name)
+		if value == "" {
+			return defaultValue, validateNumberConstraints(name, defaultValue, constraints)
+		}
+		parsed, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return 0, Err(http.StatusBadRequest, fmt.Sprintf("query parameter %q is invalid", name), WithCause(err))
+		}
+		return parsed, validateNumberConstraints(name, parsed, constraints)
+	})
+}
+
+// HeaderStringDefault 声明一个可缺省、缺失时回退默认值的字符串请求头。
+// HeaderStringDefault declares an optional string header falling back to
+// defaultValue when absent.
+func HeaderStringDefault(name string, defaultValue string, constraints ...StringConstraint) Input[string] {
+	return parameterInput(name, ParameterLocationHeader, false, constrainedStringSchema(map[string]any{"type": "string", "default": defaultValue}, constraints), func(request *operationRequest) (string, error) {
+		value := request.request.Header.Get(name)
+		if value == "" {
+			return defaultValue, validateStringConstraints(name, defaultValue, constraints)
+		}
+		return value, validateStringConstraints(name, value, constraints)
+	})
+}
+
+// CookieStringDefault 声明一个可缺省、缺失时回退默认值的字符串 Cookie。
+// CookieStringDefault declares an optional string cookie falling back to
+// defaultValue when absent.
+func CookieStringDefault(name string, defaultValue string, constraints ...StringConstraint) Input[string] {
+	return parameterInput(name, ParameterLocationCookie, false, constrainedStringSchema(map[string]any{"type": "string", "default": defaultValue}, constraints), func(request *operationRequest) (string, error) {
+		cookie, err := request.request.Cookie(name)
+		if err != nil {
+			return defaultValue, validateStringConstraints(name, defaultValue, constraints)
+		}
+		return cookie.Value, validateStringConstraints(name, cookie.Value, constraints)
 	})
 }
 
@@ -868,6 +1041,8 @@ func MapInputs[A, B, T any](first Input[A], second Input[B], mapFunc func(A, B) 
 		setupErr = errors.Join(setupErr, ErrInputMapperNil)
 	}
 	return inputFunc[T]{
+		requestOnly:      isRequestOnlyInput(first) && isRequestOnlyInput(second),
+		stateIndependent: isStateIndependentInput(first) && isStateIndependentInput(second),
 		fn: func(request *operationRequest) (T, error) {
 			var zero T
 			if first == nil || second == nil {
@@ -893,9 +1068,537 @@ func MapInputs[A, B, T any](first Input[A], second Input[B], mapFunc func(A, B) 
 
 // MapInputs3 按顺序构造三个输入，并映射为业务输入类型。
 // MapInputs3 builds three inputs in order and maps them into a business input type.
+// 扁平实现：直接顺序构造三个输入，不经过 CombineInputs 的中间 Pair 层。
+// flat implementation: builds the three inputs directly without the
+// intermediate Pair layer of CombineInputs.
 func MapInputs3[A, B, C, T any](first Input[A], second Input[B], third Input[C], mapFunc func(A, B, C) T) Input[T] {
-	firstPair := CombineInputs(first, second)
-	return MapInputs(firstPair, third, func(pair InputPair[A, B], thirdValue C) T {
-		return mapFunc(pair.First, pair.Second, thirdValue)
-	})
+	firstMetadata, firstErr := metadataOfInput(first)
+	secondMetadata, secondErr := metadataOfInput(second)
+	thirdMetadata, thirdErr := metadataOfInput(third)
+	pairMetadata, pairErr := mergeInputMetadata(firstMetadata, secondMetadata)
+	metadata, metadataErr := mergeInputMetadata(pairMetadata, thirdMetadata)
+	setupErr := errors.Join(firstErr, secondErr, thirdErr, pairErr, metadataErr)
+	if first == nil || second == nil || third == nil {
+		setupErr = errors.Join(setupErr, ErrOperationInputNil)
+	}
+	if mapFunc == nil {
+		setupErr = errors.Join(setupErr, ErrInputMapperNil)
+	}
+	return inputFunc[T]{
+		requestOnly:      isRequestOnlyInput(first) && isRequestOnlyInput(second) && isRequestOnlyInput(third),
+		stateIndependent: isStateIndependentInput(first) && isStateIndependentInput(second) && isStateIndependentInput(third),
+		fn: func(request *operationRequest) (T, error) {
+			var zero T
+			if first == nil || second == nil || third == nil {
+				return zero, ErrOperationInputNil
+			}
+			if mapFunc == nil {
+				return zero, ErrInputMapperNil
+			}
+			firstValue, err := first.build(request)
+			if err != nil {
+				return zero, err
+			}
+			secondValue, err := second.build(request)
+			if err != nil {
+				return zero, err
+			}
+			thirdValue, err := third.build(request)
+			if err != nil {
+				return zero, err
+			}
+			return mapFunc(firstValue, secondValue, thirdValue), nil
+		},
+		metadata: metadata,
+		setupErr: setupErr,
+	}
+}
+
+// MapInputs4 按顺序构造四个输入，并映射为业务输入类型。
+// MapInputs4 builds four inputs in order and maps them into a business type.
+func MapInputs4[A, B, C, D, T any](first Input[A], second Input[B], third Input[C], fourth Input[D], mapFunc func(A, B, C, D) T) Input[T] {
+	firstMetadata, firstErr := metadataOfInput(first)
+	secondMetadata, secondErr := metadataOfInput(second)
+	thirdMetadata, thirdErr := metadataOfInput(third)
+	fourthMetadata, fourthErr := metadataOfInput(fourth)
+	pairMetadata, pairErr := mergeInputMetadata(firstMetadata, secondMetadata)
+	pairMetadata, pairErr2 := mergeInputMetadata(pairMetadata, thirdMetadata)
+	metadata, metadataErr := mergeInputMetadata(pairMetadata, fourthMetadata)
+	setupErr := errors.Join(firstErr, secondErr, thirdErr, fourthErr, pairErr, pairErr2, metadataErr)
+	if first == nil || second == nil || third == nil || fourth == nil {
+		setupErr = errors.Join(setupErr, ErrOperationInputNil)
+	}
+	if mapFunc == nil {
+		setupErr = errors.Join(setupErr, ErrInputMapperNil)
+	}
+	return inputFunc[T]{
+		requestOnly: isRequestOnlyInput(first) && isRequestOnlyInput(second) &&
+			isRequestOnlyInput(third) && isRequestOnlyInput(fourth),
+		stateIndependent: isStateIndependentInput(first) && isStateIndependentInput(second) &&
+			isStateIndependentInput(third) && isStateIndependentInput(fourth),
+		fn: func(request *operationRequest) (T, error) {
+			var zero T
+			if first == nil || second == nil || third == nil || fourth == nil {
+				return zero, ErrOperationInputNil
+			}
+			if mapFunc == nil {
+				return zero, ErrInputMapperNil
+			}
+			firstValue, err := first.build(request)
+			if err != nil {
+				return zero, err
+			}
+			secondValue, err := second.build(request)
+			if err != nil {
+				return zero, err
+			}
+			thirdValue, err := third.build(request)
+			if err != nil {
+				return zero, err
+			}
+			fourthValue, err := fourth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			return mapFunc(firstValue, secondValue, thirdValue, fourthValue), nil
+		},
+		metadata: metadata,
+		setupErr: setupErr,
+	}
+}
+
+// MapInputs5 按顺序构造五个输入，并映射为业务输入类型。
+// MapInputs5 builds five inputs in order and maps them into a business type.
+func MapInputs5[A, B, C, D, E, T any](first Input[A], second Input[B], third Input[C], fourth Input[D], fifth Input[E], mapFunc func(A, B, C, D, E) T) Input[T] {
+	firstMetadata, firstErr := metadataOfInput(first)
+	secondMetadata, secondErr := metadataOfInput(second)
+	thirdMetadata, thirdErr := metadataOfInput(third)
+	fourthMetadata, fourthErr := metadataOfInput(fourth)
+	fifthMetadata, fifthErr := metadataOfInput(fifth)
+	pairMetadata, pairErr := mergeInputMetadata(firstMetadata, secondMetadata)
+	pairMetadata, pairErr2 := mergeInputMetadata(pairMetadata, thirdMetadata)
+	pairMetadata, pairErr3 := mergeInputMetadata(pairMetadata, fourthMetadata)
+	metadata, metadataErr := mergeInputMetadata(pairMetadata, fifthMetadata)
+	setupErr := errors.Join(firstErr, secondErr, thirdErr, fourthErr, fifthErr, pairErr, pairErr2, pairErr3, metadataErr)
+	if first == nil || second == nil || third == nil || fourth == nil || fifth == nil {
+		setupErr = errors.Join(setupErr, ErrOperationInputNil)
+	}
+	if mapFunc == nil {
+		setupErr = errors.Join(setupErr, ErrInputMapperNil)
+	}
+	return inputFunc[T]{
+		requestOnly: isRequestOnlyInput(first) && isRequestOnlyInput(second) &&
+			isRequestOnlyInput(third) && isRequestOnlyInput(fourth) && isRequestOnlyInput(fifth),
+		stateIndependent: isStateIndependentInput(first) && isStateIndependentInput(second) &&
+			isStateIndependentInput(third) && isStateIndependentInput(fourth) && isStateIndependentInput(fifth),
+		fn: func(request *operationRequest) (T, error) {
+			var zero T
+			if first == nil || second == nil || third == nil || fourth == nil || fifth == nil {
+				return zero, ErrOperationInputNil
+			}
+			if mapFunc == nil {
+				return zero, ErrInputMapperNil
+			}
+			firstValue, err := first.build(request)
+			if err != nil {
+				return zero, err
+			}
+			secondValue, err := second.build(request)
+			if err != nil {
+				return zero, err
+			}
+			thirdValue, err := third.build(request)
+			if err != nil {
+				return zero, err
+			}
+			fourthValue, err := fourth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			fifthValue, err := fifth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			return mapFunc(firstValue, secondValue, thirdValue, fourthValue, fifthValue), nil
+		},
+		metadata: metadata,
+		setupErr: setupErr,
+	}
+}
+
+// MapInputs6 按顺序构造六个输入，并映射为业务输入类型。
+// MapInputs6 builds six inputs in order and maps them into a business type.
+func MapInputs6[A, B, C, D, E, F, T any](first Input[A], second Input[B], third Input[C], fourth Input[D], fifth Input[E], sixth Input[F], mapFunc func(A, B, C, D, E, F) T) Input[T] {
+	firstMetadata, firstErr := metadataOfInput(first)
+	secondMetadata, secondErr := metadataOfInput(second)
+	thirdMetadata, thirdErr := metadataOfInput(third)
+	fourthMetadata, fourthErr := metadataOfInput(fourth)
+	fifthMetadata, fifthErr := metadataOfInput(fifth)
+	sixthMetadata, sixthErr := metadataOfInput(sixth)
+	metadata, mergeErr := mergeSixMetadata(firstMetadata, secondMetadata, thirdMetadata, fourthMetadata, fifthMetadata, sixthMetadata)
+	setupErr := errors.Join(firstErr, secondErr, thirdErr, fourthErr, fifthErr, sixthErr, mergeErr)
+	if first == nil || second == nil || third == nil || fourth == nil || fifth == nil || sixth == nil {
+		setupErr = errors.Join(setupErr, ErrOperationInputNil)
+	}
+	if mapFunc == nil {
+		setupErr = errors.Join(setupErr, ErrInputMapperNil)
+	}
+	return inputFunc[T]{
+		requestOnly: isRequestOnlyInput(first) && isRequestOnlyInput(second) &&
+			isRequestOnlyInput(third) && isRequestOnlyInput(fourth) &&
+			isRequestOnlyInput(fifth) && isRequestOnlyInput(sixth),
+		stateIndependent: isStateIndependentInput(first) && isStateIndependentInput(second) &&
+			isStateIndependentInput(third) && isStateIndependentInput(fourth) &&
+			isStateIndependentInput(fifth) && isStateIndependentInput(sixth),
+		fn: func(request *operationRequest) (T, error) {
+			var zero T
+			if first == nil || second == nil || third == nil || fourth == nil || fifth == nil || sixth == nil {
+				return zero, ErrOperationInputNil
+			}
+			if mapFunc == nil {
+				return zero, ErrInputMapperNil
+			}
+			firstValue, err := first.build(request)
+			if err != nil {
+				return zero, err
+			}
+			secondValue, err := second.build(request)
+			if err != nil {
+				return zero, err
+			}
+			thirdValue, err := third.build(request)
+			if err != nil {
+				return zero, err
+			}
+			fourthValue, err := fourth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			fifthValue, err := fifth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			sixthValue, err := sixth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			return mapFunc(firstValue, secondValue, thirdValue, fourthValue, fifthValue, sixthValue), nil
+		},
+		metadata: metadata,
+		setupErr: setupErr,
+	}
+}
+
+// MapInputs7 按顺序构造七个输入，并映射为业务输入类型。
+// MapInputs7 builds seven inputs in order and maps them into a business type.
+func MapInputs7[A, B, C, D, E, F, G, T any](first Input[A], second Input[B], third Input[C], fourth Input[D], fifth Input[E], sixth Input[F], seventh Input[G], mapFunc func(A, B, C, D, E, F, G) T) Input[T] {
+	firstMetadata, firstErr := metadataOfInput(first)
+	secondMetadata, secondErr := metadataOfInput(second)
+	thirdMetadata, thirdErr := metadataOfInput(third)
+	fourthMetadata, fourthErr := metadataOfInput(fourth)
+	fifthMetadata, fifthErr := metadataOfInput(fifth)
+	sixthMetadata, sixthErr := metadataOfInput(sixth)
+	seventhMetadata, seventhErr := metadataOfInput(seventh)
+	metadata, mergeErr := mergeSevenMetadata(firstMetadata, secondMetadata, thirdMetadata, fourthMetadata, fifthMetadata, sixthMetadata, seventhMetadata)
+	setupErr := errors.Join(firstErr, secondErr, thirdErr, fourthErr, fifthErr, sixthErr, seventhErr, mergeErr)
+	if first == nil || second == nil || third == nil || fourth == nil || fifth == nil || sixth == nil || seventh == nil {
+		setupErr = errors.Join(setupErr, ErrOperationInputNil)
+	}
+	if mapFunc == nil {
+		setupErr = errors.Join(setupErr, ErrInputMapperNil)
+	}
+
+	return inputFunc[T]{
+		requestOnly: isRequestOnlyInput(first) && isRequestOnlyInput(second) &&
+			isRequestOnlyInput(third) && isRequestOnlyInput(fourth) &&
+			isRequestOnlyInput(fifth) && isRequestOnlyInput(sixth) && isRequestOnlyInput(seventh),
+		stateIndependent: isStateIndependentInput(first) && isStateIndependentInput(second) &&
+			isStateIndependentInput(third) && isStateIndependentInput(fourth) &&
+			isStateIndependentInput(fifth) && isStateIndependentInput(sixth) && isStateIndependentInput(seventh),
+		fn: func(request *operationRequest) (T, error) {
+			var zero T
+			if first == nil || second == nil || third == nil || fourth == nil || fifth == nil || sixth == nil || seventh == nil {
+				return zero, ErrOperationInputNil
+			}
+			if mapFunc == nil {
+				return zero, ErrInputMapperNil
+			}
+			firstValue, err := first.build(request)
+			if err != nil {
+				return zero, err
+			}
+			secondValue, err := second.build(request)
+			if err != nil {
+				return zero, err
+			}
+			thirdValue, err := third.build(request)
+			if err != nil {
+				return zero, err
+			}
+			fourthValue, err := fourth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			fifthValue, err := fifth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			sixthValue, err := sixth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			seventhValue, err := seventh.build(request)
+			if err != nil {
+				return zero, err
+			}
+			return mapFunc(firstValue, secondValue, thirdValue, fourthValue, fifthValue, sixthValue, seventhValue), nil
+		},
+		metadata: metadata,
+		setupErr: setupErr,
+	}
+}
+
+// MapInputs8 按顺序构造八个输入，并映射为业务输入类型。
+// MapInputs8 builds eight inputs in order and maps them into a business type.
+func MapInputs8[A, B, C, D, E, F, G, H, T any](first Input[A], second Input[B], third Input[C], fourth Input[D], fifth Input[E], sixth Input[F], seventh Input[G], eighth Input[H], mapFunc func(A, B, C, D, E, F, G, H) T) Input[T] {
+	firstMetadata, firstErr := metadataOfInput(first)
+	secondMetadata, secondErr := metadataOfInput(second)
+	thirdMetadata, thirdErr := metadataOfInput(third)
+	fourthMetadata, fourthErr := metadataOfInput(fourth)
+	fifthMetadata, fifthErr := metadataOfInput(fifth)
+	sixthMetadata, sixthErr := metadataOfInput(sixth)
+	seventhMetadata, seventhErr := metadataOfInput(seventh)
+	eighthMetadata, eighthErr := metadataOfInput(eighth)
+	metadata, mergeErr := mergeEightMetadata(firstMetadata, secondMetadata, thirdMetadata, fourthMetadata, fifthMetadata, sixthMetadata, seventhMetadata, eighthMetadata)
+	setupErr := errors.Join(firstErr, secondErr, thirdErr, fourthErr, fifthErr, sixthErr, seventhErr, eighthErr, mergeErr)
+	if first == nil || second == nil || third == nil || fourth == nil || fifth == nil || sixth == nil || seventh == nil || eighth == nil {
+		setupErr = errors.Join(setupErr, ErrOperationInputNil)
+	}
+	if mapFunc == nil {
+		setupErr = errors.Join(setupErr, ErrInputMapperNil)
+	}
+
+	return inputFunc[T]{
+		requestOnly: isRequestOnlyInput(first) && isRequestOnlyInput(second) &&
+			isRequestOnlyInput(third) && isRequestOnlyInput(fourth) &&
+			isRequestOnlyInput(fifth) && isRequestOnlyInput(sixth) &&
+			isRequestOnlyInput(seventh) && isRequestOnlyInput(eighth),
+		stateIndependent: isStateIndependentInput(first) && isStateIndependentInput(second) &&
+			isStateIndependentInput(third) && isStateIndependentInput(fourth) &&
+			isStateIndependentInput(fifth) && isStateIndependentInput(sixth) &&
+			isStateIndependentInput(seventh) && isStateIndependentInput(eighth),
+		fn: func(request *operationRequest) (T, error) {
+			var zero T
+			if first == nil || second == nil || third == nil || fourth == nil || fifth == nil || sixth == nil || seventh == nil || eighth == nil {
+				return zero, ErrOperationInputNil
+			}
+			if mapFunc == nil {
+				return zero, ErrInputMapperNil
+			}
+			firstValue, err := first.build(request)
+			if err != nil {
+				return zero, err
+			}
+			secondValue, err := second.build(request)
+			if err != nil {
+				return zero, err
+			}
+			thirdValue, err := third.build(request)
+			if err != nil {
+				return zero, err
+			}
+			fourthValue, err := fourth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			fifthValue, err := fifth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			sixthValue, err := sixth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			seventhValue, err := seventh.build(request)
+			if err != nil {
+				return zero, err
+			}
+			eighthValue, err := eighth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			return mapFunc(firstValue, secondValue, thirdValue, fourthValue, fifthValue, sixthValue, seventhValue, eighthValue), nil
+		},
+		metadata: metadata,
+		setupErr: setupErr,
+	}
+}
+
+// MapInputs9 按顺序构造九个输入，并映射为业务输入类型。
+// MapInputs9 builds nine inputs in order and maps them into a business type.
+func MapInputs9[A, B, C, D, E, F, G, H, I, T any](first Input[A], second Input[B], third Input[C], fourth Input[D], fifth Input[E], sixth Input[F], seventh Input[G], eighth Input[H], ninth Input[I], mapFunc func(A, B, C, D, E, F, G, H, I) T) Input[T] {
+	firstMetadata, firstErr := metadataOfInput(first)
+	secondMetadata, secondErr := metadataOfInput(second)
+	thirdMetadata, thirdErr := metadataOfInput(third)
+	fourthMetadata, fourthErr := metadataOfInput(fourth)
+	fifthMetadata, fifthErr := metadataOfInput(fifth)
+	sixthMetadata, sixthErr := metadataOfInput(sixth)
+	seventhMetadata, seventhErr := metadataOfInput(seventh)
+	eighthMetadata, eighthErr := metadataOfInput(eighth)
+	ninthMetadata, ninthErr := metadataOfInput(ninth)
+	metadata, mergeErr := mergeNineMetadata(firstMetadata, secondMetadata, thirdMetadata, fourthMetadata, fifthMetadata, sixthMetadata, seventhMetadata, eighthMetadata, ninthMetadata)
+	setupErr := errors.Join(firstErr, secondErr, thirdErr, fourthErr, fifthErr, sixthErr, seventhErr, eighthErr, ninthErr, mergeErr)
+	if first == nil || second == nil || third == nil || fourth == nil || fifth == nil || sixth == nil || seventh == nil || eighth == nil || ninth == nil {
+		setupErr = errors.Join(setupErr, ErrOperationInputNil)
+	}
+	if mapFunc == nil {
+		setupErr = errors.Join(setupErr, ErrInputMapperNil)
+	}
+
+	return inputFunc[T]{
+		requestOnly: isRequestOnlyInput(first) && isRequestOnlyInput(second) &&
+			isRequestOnlyInput(third) && isRequestOnlyInput(fourth) &&
+			isRequestOnlyInput(fifth) && isRequestOnlyInput(sixth) &&
+			isRequestOnlyInput(seventh) && isRequestOnlyInput(eighth) && isRequestOnlyInput(ninth),
+		stateIndependent: isStateIndependentInput(first) && isStateIndependentInput(second) &&
+			isStateIndependentInput(third) && isStateIndependentInput(fourth) &&
+			isStateIndependentInput(fifth) && isStateIndependentInput(sixth) &&
+			isStateIndependentInput(seventh) && isStateIndependentInput(eighth) && isStateIndependentInput(ninth),
+		fn: func(request *operationRequest) (T, error) {
+			var zero T
+			if first == nil || second == nil || third == nil || fourth == nil || fifth == nil || sixth == nil || seventh == nil || eighth == nil || ninth == nil {
+				return zero, ErrOperationInputNil
+			}
+			if mapFunc == nil {
+				return zero, ErrInputMapperNil
+			}
+			firstValue, err := first.build(request)
+			if err != nil {
+				return zero, err
+			}
+			secondValue, err := second.build(request)
+			if err != nil {
+				return zero, err
+			}
+			thirdValue, err := third.build(request)
+			if err != nil {
+				return zero, err
+			}
+			fourthValue, err := fourth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			fifthValue, err := fifth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			sixthValue, err := sixth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			seventhValue, err := seventh.build(request)
+			if err != nil {
+				return zero, err
+			}
+			eighthValue, err := eighth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			ninthValue, err := ninth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			return mapFunc(firstValue, secondValue, thirdValue, fourthValue, fifthValue, sixthValue, seventhValue, eighthValue, ninthValue), nil
+		},
+		metadata: metadata,
+		setupErr: setupErr,
+	}
+}
+
+// MapInputs10 按顺序构造十个输入，并映射为业务输入类型。
+// MapInputs10 builds ten inputs in order and maps them into a business type.
+func MapInputs10[A, B, C, D, E, F, G, H, I, J, T any](first Input[A], second Input[B], third Input[C], fourth Input[D], fifth Input[E], sixth Input[F], seventh Input[G], eighth Input[H], ninth Input[I], tenth Input[J], mapFunc func(A, B, C, D, E, F, G, H, I, J) T) Input[T] {
+	firstMetadata, firstErr := metadataOfInput(first)
+	secondMetadata, secondErr := metadataOfInput(second)
+	thirdMetadata, thirdErr := metadataOfInput(third)
+	fourthMetadata, fourthErr := metadataOfInput(fourth)
+	fifthMetadata, fifthErr := metadataOfInput(fifth)
+	sixthMetadata, sixthErr := metadataOfInput(sixth)
+	seventhMetadata, seventhErr := metadataOfInput(seventh)
+	eighthMetadata, eighthErr := metadataOfInput(eighth)
+	ninthMetadata, ninthErr := metadataOfInput(ninth)
+	tenthMetadata, tenthErr := metadataOfInput(tenth)
+	metadata, mergeErr := mergeTenMetadata(firstMetadata, secondMetadata, thirdMetadata, fourthMetadata, fifthMetadata, sixthMetadata, seventhMetadata, eighthMetadata, ninthMetadata, tenthMetadata)
+	setupErr := errors.Join(firstErr, secondErr, thirdErr, fourthErr, fifthErr, sixthErr, seventhErr, eighthErr, ninthErr, tenthErr, mergeErr)
+	if first == nil || second == nil || third == nil || fourth == nil || fifth == nil || sixth == nil || seventh == nil || eighth == nil || ninth == nil || tenth == nil {
+		setupErr = errors.Join(setupErr, ErrOperationInputNil)
+	}
+	if mapFunc == nil {
+		setupErr = errors.Join(setupErr, ErrInputMapperNil)
+	}
+
+	return inputFunc[T]{
+		requestOnly: isRequestOnlyInput(first) && isRequestOnlyInput(second) &&
+			isRequestOnlyInput(third) && isRequestOnlyInput(fourth) &&
+			isRequestOnlyInput(fifth) && isRequestOnlyInput(sixth) &&
+			isRequestOnlyInput(seventh) && isRequestOnlyInput(eighth) &&
+			isRequestOnlyInput(ninth) && isRequestOnlyInput(tenth),
+		stateIndependent: isStateIndependentInput(first) && isStateIndependentInput(second) &&
+			isStateIndependentInput(third) && isStateIndependentInput(fourth) &&
+			isStateIndependentInput(fifth) && isStateIndependentInput(sixth) &&
+			isStateIndependentInput(seventh) && isStateIndependentInput(eighth) &&
+			isStateIndependentInput(ninth) && isStateIndependentInput(tenth),
+		fn: func(request *operationRequest) (T, error) {
+			var zero T
+			if first == nil || second == nil || third == nil || fourth == nil || fifth == nil || sixth == nil || seventh == nil || eighth == nil || ninth == nil || tenth == nil {
+				return zero, ErrOperationInputNil
+			}
+			if mapFunc == nil {
+				return zero, ErrInputMapperNil
+			}
+			firstValue, err := first.build(request)
+			if err != nil {
+				return zero, err
+			}
+			secondValue, err := second.build(request)
+			if err != nil {
+				return zero, err
+			}
+			thirdValue, err := third.build(request)
+			if err != nil {
+				return zero, err
+			}
+			fourthValue, err := fourth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			fifthValue, err := fifth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			sixthValue, err := sixth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			seventhValue, err := seventh.build(request)
+			if err != nil {
+				return zero, err
+			}
+			eighthValue, err := eighth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			ninthValue, err := ninth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			tenthValue, err := tenth.build(request)
+			if err != nil {
+				return zero, err
+			}
+			return mapFunc(firstValue, secondValue, thirdValue, fourthValue, fifthValue, sixthValue, seventhValue, eighthValue, ninthValue, tenthValue), nil
+		},
+		metadata: metadata,
+		setupErr: setupErr,
+	}
 }

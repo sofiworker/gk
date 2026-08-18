@@ -88,13 +88,30 @@ func validateRequestContentType(request *http.Request, hasBody bool, consumes []
 	if strings.TrimSpace(contentType) == "" {
 		return Err(http.StatusUnsupportedMediaType, "missing Content-Type", WithCause(ErrUnsupportedMediaType))
 	}
-	mediaType := normalizeContentType(contentType)
+	mediaType := fastNormalizeContentType(contentType)
 	for _, allowed := range consumes {
 		if mediaTypeMatches(allowed, mediaType) {
 			return nil
 		}
 	}
 	return Err(http.StatusUnsupportedMediaType, fmt.Sprintf("unsupported media type %q", contentType), WithCause(ErrUnsupportedMediaType))
+}
+
+// fastNormalizeContentType 对最常见的媒体类型形态做 O(1) 精确比较,避免每请求
+// mime.ParseMediaType 的完整解析;其它形态回退完整归一化。
+// fastNormalizeContentType matches the most common media-type spellings with
+// O(1) comparisons, avoiding a full mime.ParseMediaType per request; other
+// shapes fall back to full normalization.
+func fastNormalizeContentType(contentType string) string {
+	switch contentType {
+	case "application/json", "application/json; charset=utf-8":
+		return "application/json"
+	case "application/x-www-form-urlencoded", "application/x-www-form-urlencoded; charset=utf-8":
+		return "application/x-www-form-urlencoded"
+	case "multipart/form-data", "multipart/form-data; charset=utf-8":
+		return "multipart/form-data"
+	}
+	return normalizeContentType(contentType)
 }
 
 func normalizeContentTypes(contentTypes []string) []string {

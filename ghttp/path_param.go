@@ -81,12 +81,6 @@ type pathParamHandler interface {
 	ServeHTTPWithPathParams(http.ResponseWriter, *http.Request, pathParamList)
 }
 
-// directPathValueHandler 接收已匹配的单个末尾路径参数，避免构造参数列表。
-// directPathValueHandler receives a matched trailing path value without building a parameter list.
-type directPathValueHandler interface {
-	ServeHTTPWithPathValue(http.ResponseWriter, *http.Request, string)
-}
-
 type directPathValueHandlerFunc func(http.ResponseWriter, *http.Request, string)
 
 func (f directPathValueHandlerFunc) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -99,10 +93,6 @@ func (f directPathValueHandlerFunc) ServeHTTPWithPathParams(w http.ResponseWrite
 		return
 	}
 	f(w, r, params.values[0].Value)
-}
-
-func (f directPathValueHandlerFunc) ServeHTTPWithPathValue(w http.ResponseWriter, r *http.Request, value string) {
-	f(w, r, value)
 }
 
 type pathParamHandlerFunc func(http.ResponseWriter, *http.Request, pathParamList)
@@ -125,10 +115,7 @@ type stateIndependentTerminal interface {
 
 type stateIndependentTerminalAdapter struct {
 	pathParamHandler
-	direct directPathValueHandler
 }
-
-func (a stateIndependentTerminalAdapter) directValueHandler() directPathValueHandler { return a.direct }
 
 func (stateIndependentTerminalAdapter) stateIndependentTerminal() {}
 
@@ -137,11 +124,7 @@ func markStateIndependentTerminal(handler http.Handler) http.Handler {
 	if !ok {
 		return handler
 	}
-	adapter := stateIndependentTerminalAdapter{pathParamHandler: pathHandler}
-	if direct, ok := handler.(directPathValueHandler); ok {
-		adapter.direct = direct
-	}
-	return adapter
+	return stateIndependentTerminalAdapter{pathParamHandler: pathHandler}
 }
 
 // lazyPathParams 是路径参数的惰性视图:首次按 key 访问时才解码对应段并缓存。

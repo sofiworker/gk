@@ -36,7 +36,7 @@ func FuzzRoutePathParserAndMatcher(f *testing.F) {
 			t.Fatalf("parseRoutePattern(%q) error = %v, want ErrRoutePathInvalid", rawPath, patternErr)
 		}
 
-		path, pathErr := parseRequestPath(rawPath, false)
+		_, pathErr := parseRequestPath(rawPath, false)
 		if pathErr != nil && !errors.Is(pathErr, ErrInvalidRequestPath) {
 			t.Fatalf("parseRequestPath(%q) error = %v, want ErrInvalidRequestPath", rawPath, pathErr)
 		}
@@ -44,18 +44,18 @@ func FuzzRoutePathParserAndMatcher(f *testing.F) {
 			return
 		}
 
-		assertFuzzRouteMatchConsistent(t, matcher, path)
-		assertFuzzDirectParamConsistent(t, matcher, rawPath, path)
+		assertFuzzRouteMatchConsistent(t, matcher, rawPath)
+		assertFuzzDirectParamConsistent(t, matcher, rawPath)
 		if patternErr == nil {
 			assertFuzzRouteMatchConsistent(t, newRouteMux([]routeDefinition{{
 				method:  http.MethodGet,
 				pattern: pattern,
-			}}), path)
+			}}), rawPath)
 		}
 	})
 }
 
-func assertFuzzDirectParamConsistent(t *testing.T, matcher *routeMux, rawPath string, path requestPath) {
+func assertFuzzDirectParamConsistent(t *testing.T, matcher *routeMux, rawPath string) {
 	t.Helper()
 	if strings.Contains(rawPath, "%") {
 		return
@@ -64,11 +64,11 @@ func assertFuzzDirectParamConsistent(t *testing.T, matcher *routeMux, rawPath st
 	if !ok {
 		return
 	}
-	matched := matcher.match(http.MethodGet, path)
+	matched := matcher.match(http.MethodGet, rawPath, false)
 	if matched.kind != routeMatchFound || matched.route != route {
 		t.Fatalf("direct match(%q) = %q, full match = %#v", rawPath, route.definition.pattern.path, matched)
 	}
-	params, err := route.extract(path)
+	params, err := route.extract(matched.path)
 	if err != nil {
 		t.Fatalf("direct route %q cannot extract %q: %v", route.definition.pattern.path, rawPath, err)
 	}
@@ -94,33 +94,33 @@ func newFuzzRouteMatcher(f *testing.F) *routeMux {
 	return newRouteMux(definitions)
 }
 
-func assertFuzzRouteMatchConsistent(t *testing.T, matcher *routeMux, path requestPath) {
+func assertFuzzRouteMatchConsistent(t *testing.T, matcher *routeMux, rawPath string) {
 	t.Helper()
 
-	first := matcher.match(http.MethodGet, path)
-	second := matcher.match(http.MethodGet, path)
+	first := matcher.match(http.MethodGet, rawPath, false)
+	second := matcher.match(http.MethodGet, rawPath, false)
 	if first.kind != second.kind || first.suppressBody != second.suppressBody || !reflect.DeepEqual(first.allow, second.allow) {
-		t.Fatalf("match(%#v) is inconsistent: first = %#v, second = %#v", path, first, second)
+		t.Fatalf("match(%q) is inconsistent: first = %#v, second = %#v", rawPath, first, second)
 	}
 	if first.kind != routeMatchFound {
 		return
 	}
 	if first.route == nil || second.route == nil {
-		t.Fatalf("match(%#v) returned a nil route", path)
+		t.Fatalf("match(%q) returned a nil route", rawPath)
 	}
 	if first.route.definition.pattern.path != second.route.definition.pattern.path {
-		t.Fatalf("match(%#v) route = %q then %q", path, first.route.definition.pattern.path, second.route.definition.pattern.path)
+		t.Fatalf("match(%q) route = %q then %q", rawPath, first.route.definition.pattern.path, second.route.definition.pattern.path)
 	}
 
-	params, err := first.route.extract(path)
+	params, err := first.route.extract(first.path)
 	if err != nil {
-		t.Fatalf("matched route %q cannot extract %#v: %v", first.route.definition.pattern.path, path, err)
+		t.Fatalf("matched route %q cannot extract %q: %v", first.route.definition.pattern.path, rawPath, err)
 	}
-	repeatedParams, err := first.route.extract(path)
+	repeatedParams, err := first.route.extract(first.path)
 	if err != nil {
-		t.Fatalf("matched route %q cannot repeat extraction for %#v: %v", first.route.definition.pattern.path, path, err)
+		t.Fatalf("matched route %q cannot repeat extraction for %q: %v", first.route.definition.pattern.path, rawPath, err)
 	}
 	if !reflect.DeepEqual(params, repeatedParams) {
-		t.Fatalf("extract(%#v) is inconsistent: first = %#v, second = %#v", path, params, repeatedParams)
+		t.Fatalf("extract(%q) is inconsistent: first = %#v, second = %#v", rawPath, params, repeatedParams)
 	}
 }

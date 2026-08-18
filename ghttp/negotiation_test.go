@@ -8,12 +8,40 @@ import (
 	"testing"
 )
 
-func TestStrictContentNegotiationReturns406(t *testing.T) {
+// TestExplicitOutputContractIgnoresAccept 验证显式输出契约不协商:JSONOutput
+// 已声明响应格式,Accept 头不改变输出。
+// TestExplicitOutputContractIgnoresAccept verifies explicit output contracts
+// do not negotiate: JSONOutput already declares the format, so Accept does not
+// change the output.
+func TestExplicitOutputContractIgnoresAccept(t *testing.T) {
 	type pingResp struct {
 		Name string `json:"name"`
 	}
 	app := New(WithProduces(MIMEJSON), WithStrictContentNegotiation())
 	app.MustMount(Handle(Get("/ping"), StructInput[Params](), JSONOutput[pingResp](), func(context.Context, Params) (pingResp, error) {
+		return pingResp{Name: "pong"}, nil
+	}))
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	req.Header.Set("Accept", "text/html")
+	app.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusOK, w.Body.String())
+	}
+}
+
+// TestStrictContentNegotiationReturns406 验证 CodecOutput(显式协商契约)在严格
+// 模式下 Accept 不匹配返回 406。
+// TestStrictContentNegotiationReturns406 verifies CodecOutput, the explicit
+// negotiation contract, returns 406 when Accept does not match in strict mode.
+func TestStrictContentNegotiationReturns406(t *testing.T) {
+	type pingResp struct {
+		Name string `json:"name"`
+	}
+	app := New(WithProduces(MIMEJSON), WithStrictContentNegotiation())
+	app.MustMount(Handle(Get("/ping"), StructInput[Params](), CodecOutput[pingResp](MIMEJSON), func(context.Context, Params) (pingResp, error) {
 		return pingResp{Name: "pong"}, nil
 	}))
 

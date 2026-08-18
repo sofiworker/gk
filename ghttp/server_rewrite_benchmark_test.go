@@ -231,25 +231,6 @@ func BenchmarkOperationFiveMiddlewareReference(b *testing.B) {
 	}
 }
 
-func BenchmarkOperationFiveContextMiddlewareReference(b *testing.B) {
-	noop := func(next ContextHandler) ContextHandler {
-		return func(c *Context) error { return next(c) }
-	}
-	operation := GetText("/hello", NoInput(), func(context.Context, EmptyInput) (string, error) {
-		return "Hello, World!", nil
-	}).WithContextMiddleware(noop, noop, noop, noop, noop)
-	server := New()
-	server.MustMount(operation)
-	req := httptest.NewRequest(http.MethodGet, "/hello", nil)
-	w := &rewriteBenchmarkWriter{header: make(http.Header)}
-	server.ServeHTTP(w, req)
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		server.ServeHTTP(w, req)
-	}
-}
-
 func BenchmarkOperationNotFoundReference(b *testing.B) {
 	server := New()
 	server.MustMount(GetText("/hello", NoInput(), func(context.Context, EmptyInput) (string, error) {

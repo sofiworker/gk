@@ -51,28 +51,30 @@ type operationHandlerFactory func(*Server, *Operation) http.Handler
 // Operation 是不可变、可复用的一等 HTTP endpoint 描述。
 // Operation is an immutable, reusable first-class HTTP endpoint description.
 type Operation struct {
-	method             string
-	path               string
-	build              operationHandlerFactory
-	contextBuild       func(*Server, *Operation) ContextHandler
-	fastBuild          func(*Server, *Operation) http.HandlerFunc
-	middlewares        []Middleware
-	contextMiddlewares []ContextMiddleware
-	doc                RouteDoc
-	consumes           []string
-	produces           []string
-	openAPI            routeOpenAPIMetadata
-	terminal           routeTerminalKind
-	stateIndependent   bool
-	setupErr           error
-	status             int
-	headers            []responseHeader
-	wsCheckOrigin      func(*http.Request) bool
-	maxBodyBytes       int64
-	maxBodyBytesSet    bool
-	errorWriter        ErrorWriter
-	problemDetails     bool
-	skipValidation     bool
+	method           string
+	path             string
+	build            operationHandlerFactory
+	fastBuild        func(*Server, *Operation) http.HandlerFunc
+	middlewares      []Middleware
+	doc              RouteDoc
+	consumes         []string
+	produces         []string
+	openAPI          routeOpenAPIMetadata
+	terminal         routeTerminalKind
+	stateIndependent bool
+	// requestOnly 标记输入链只读请求元数据;满足其它条件时可跳过请求状态注入。
+	// requestOnly marks an input chain reading only request metadata; with the
+	// other preconditions met, request-state injection can be skipped.
+	requestOnly     bool
+	setupErr        error
+	status          int
+	headers         []responseHeader
+	wsCheckOrigin   func(*http.Request) bool
+	maxBodyBytes    int64
+	maxBodyBytesSet bool
+	errorWriter     ErrorWriter
+	problemDetails  bool
+	skipValidation  bool
 }
 
 // Method 返回 HTTP 方法。
@@ -101,17 +103,6 @@ func (o *Operation) WithMiddleware(middlewares ...Middleware) *Operation {
 	}
 	cloned := o.clone()
 	cloned.middlewares = append(cloned.middlewares, middlewares...)
-	return cloned
-}
-
-// WithContextMiddleware adds pooled-context middleware to a copy of the operation.
-// WithContextMiddleware adds pooled-context middleware to an operation copy.
-func (o *Operation) WithContextMiddleware(middlewares ...ContextMiddleware) *Operation {
-	if o == nil {
-		return nil
-	}
-	cloned := o.clone()
-	cloned.contextMiddlewares = append(cloned.contextMiddlewares, middlewares...)
 	return cloned
 }
 
@@ -217,7 +208,6 @@ func (o *Operation) WithoutServerValidation() *Operation {
 func (o *Operation) clone() *Operation {
 	cloned := *o
 	cloned.middlewares = append([]Middleware(nil), o.middlewares...)
-	cloned.contextMiddlewares = append([]ContextMiddleware(nil), o.contextMiddlewares...)
 	cloned.doc = o.doc.clone()
 	cloned.consumes = append([]string(nil), o.consumes...)
 	cloned.produces = append([]string(nil), o.produces...)
@@ -321,24 +311,23 @@ func mountOperation(target routeTarget, operation *Operation) error {
 		doc.OperationID = inferOperationID(method, pattern)
 	}
 	definition := routeDefinition{
-		method:             method,
-		pattern:            pattern,
-		handler:            handler,
-		contextBuild:       mounted.contextBuild,
-		fastBuild:          mounted.fastBuild,
-		middlewares:        append([]Middleware(nil), mounted.middlewares...),
-		contextMiddlewares: append([]ContextMiddleware(nil), mounted.contextMiddlewares...),
-		group:              target.routeGroup(),
-		needsExtractor:     pattern.hasParams(),
-		terminal:           mounted.terminal,
-		responseStatus:     mounted.status,
-		responseHeaders:    append([]responseHeader(nil), mounted.headers...),
-		errorWriter:        mounted.errorWriter,
-		problemDetails:     mounted.problemDetails,
-		doc:                doc,
-		consumes:           append([]string(nil), mounted.consumes...),
-		produces:           append([]string(nil), mounted.produces...),
-		openAPI:            mounted.openAPI.clone(),
+		method:          method,
+		pattern:         pattern,
+		handler:         handler,
+		fastBuild:       mounted.fastBuild,
+		middlewares:     append([]Middleware(nil), mounted.middlewares...),
+		group:           target.routeGroup(),
+		needsExtractor:  pattern.hasParams(),
+		requestOnly:     mounted.requestOnly,
+		terminal:        mounted.terminal,
+		responseStatus:  mounted.status,
+		responseHeaders: append([]responseHeader(nil), mounted.headers...),
+		errorWriter:     mounted.errorWriter,
+		problemDetails:  mounted.problemDetails,
+		doc:             doc,
+		consumes:        append([]string(nil), mounted.consumes...),
+		produces:        append([]string(nil), mounted.produces...),
+		openAPI:         mounted.openAPI.clone(),
 	}
 	return server.registerDefinitions(definition)
 }

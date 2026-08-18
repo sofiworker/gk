@@ -2,80 +2,40 @@ package ghttp
 
 import (
 	"context"
-	"net/http"
-	"sync"
 )
 
-// Context 是 ghttp 的池化请求上下文；Context is ghttp's pooled request context.
-// 仅允许在当前请求执行期间使用；it is valid only while the request is executing.
-type Context struct {
-	Writer  http.ResponseWriter
-	Request *http.Request
-	Params  pathParamList
-	Status  int
-	Wrote   bool
+// Key 是类型安全的请求级键,挂在标准 request context 上。与 gin 的 c.Set/c.Get
+// 不同,值类型在编译期固定,键自身携带读写操作;net/http 中间件可直接使用。
+// Key is a typed request-scoped key carried on the standard request context.
+// Unlike gin's c.Set/c.Get, the value type is fixed at compile time and the key
+// carries the operation; plain net/http middleware can use it directly.
+//
+//	var requestID = ghttp.NewKey[string]("request-id")
+//	ctx = requestID.Set(ctx, "abc123")
+//	id, ok := requestID.Get(ctx)
+type Key[T any] struct {
+	name string
 }
 
-// ContextHandler 处理一个池化请求上下文；ContextHandler handles a pooled request context.
-type ContextHandler func(*Context) error
+// NewKey 创建类型安全键。键应为包级变量,保证所有 setter/getter 使用同一类型。
+// NewKey creates a typed key. Keys should be package-level variables so every
+// setter and getter uses the same T.
+func NewKey[T any](name string) Key[T] { return Key[T]{name: name} }
 
-// ContextMiddleware 包装池化请求处理器；ContextMiddleware wraps a pooled request handler.
-type ContextMiddleware func(ContextHandler) ContextHandler
-
-var contextPool = sync.Pool{New: func() any { return new(Context) }}
-
-func acquireContext(w http.ResponseWriter, r *http.Request, params pathParamList) *Context {
-	c := contextPool.Get().(*Context)
-	c.Writer = w
-	c.Request = r
-	c.Params = params
-	c.Status = http.StatusOK
-	c.Wrote = false
-	return c
+// Set 在请求生命周期内存储 v,返回携带该值的新 context。
+// Set stores v for the lifetime of this request and returns a new context
+// carrying the value.
+func (k Key[T]) Set(ctx context.Context, v T) context.Context {
+	return context.WithValue(ctx, k, v)
 }
 
-func releaseContext(c *Context) {
-	if c == nil {
-		return
+// Get 返回存储的值与是否存在的标记。
+// Get returns the stored value and whether it was present.
+func (k Key[T]) Get(ctx context.Context) (T, bool) {
+	v := ctx.Value(k)
+	if v == nil {
+		var zero T
+		return zero, false
 	}
-	c.Writer = nil
-	c.Request = nil
-	c.Params = pathParamList{}
-	contextPool.Put(c)
-}
-
-// Context returns the request cancellation context.
-func (c *Context) Context() context.Context { return c.Request.Context() }
-
-// Header returns response headers.
-func (c *Context) Header() http.Header { return c.Writer.Header() }
-
-// WriteHeader commits the response status.
-func (c *Context) WriteHeader(status int) {
-	if c.Wrote {
-		return
-	}
-	c.Wrote = true
-	c.Status = status
-	c.Writer.WriteHeader(status)
-}
-
-// Write writes response data and commits status 200 when needed.
-func (c *Context) Write(data []byte) (int, error) {
-	if !c.Wrote {
-		c.WriteHeader(http.StatusOK)
-	}
-	return c.Writer.Write(data)
-}
-
-// Param returns a matched path parameter.
-func (c *Context) Param(name string) string { return c.Params.Get(name) }
-
-func chainContext(mws []ContextMiddleware, next ContextHandler) ContextHandler {
-	for i := len(mws) - 1; i >= 0; i-- {
-		if mws[i] != nil {
-			next = mws[i](next)
-		}
-	}
-	return next
+	return v.(T), true
 }

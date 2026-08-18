@@ -137,8 +137,8 @@ const (
 
 // Decode 按 Content-Type 自动派发解码请求体;首次调用执行解码并缓存结果。
 // Decode decodes the body by Content-Type; the first call decodes and caches.
-	// 这是便捷层:JSON 走标准库,其余类型经 CodecManager 派发,缺失回退 JSON。
-	// This is the convenience path: JSON uses the standard library, other types dispatch through
+// 这是便捷层:JSON 走标准库,其余类型经 CodecManager 派发,缺失回退 JSON。
+// This is the convenience path: JSON uses the standard library, other types dispatch through
 // CodecManager, and a missing Content-Type falls back to JSON.
 // 显式声明格式请用 DecodeJSON/DecodeXML/DecodeForm。所有方法共享同一份缓存,
 // 首次调用(无论哪个方法)决定解码格式与结果。
@@ -146,8 +146,8 @@ const (
 // share one cache; the first call (whichever) fixes the format and result.
 func (b Body[T]) Decode() (T, error) { return b.decodeWith(bodyDecodeAuto) }
 
-	// DecodeJSON 强制按标准库 JSON 解码,无视 Content-Type;首次调用缓存结果。
-	// DecodeJSON forces standard-library JSON decoding, ignoring Content-Type; the first call caches.
+// DecodeJSON 强制按标准库 JSON 解码,无视 Content-Type;首次调用缓存结果。
+// DecodeJSON forces standard-library JSON decoding, ignoring Content-Type; the first call caches.
 func (b Body[T]) DecodeJSON() (T, error) { return b.decodeWith(bodyDecodeJSON) }
 
 // DecodeXML 强制按 XML 解码,无视 Content-Type;首次调用缓存结果。

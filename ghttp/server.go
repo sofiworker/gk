@@ -2,6 +2,7 @@ package ghttp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -521,10 +522,26 @@ type compiledState struct {
 	// outcomeFast marks the 400/404/405 branches as stateless (no middleware,
 	// no error model).
 	outcomeFast bool
-	badRequest  http.Handler
-	notFound    http.Handler
-	notAllowed  http.Handler
+	// outcomes 缓存 400/404/405 的预序列化响应;条件不满足时为 nil。
+	// outcomes caches pre-serialized 400/404/405 responses; nil when the
+	// preconditions do not hold.
+	outcomes   map[int]*compiledOutcome
+	badRequest http.Handler
+	notFound   http.Handler
+	notAllowed http.Handler
 }
+
+// compiledOutcome 是 400/404/405 的预序列化响应。
+// compiledOutcome is a pre-serialized 400/404/405 response.
+type compiledOutcome struct {
+	status      int
+	contentType string
+	body        []byte
+}
+
+// jsonContentTypeHeader 是缓存响应共享的 Content-Type 头值,避免每请求分配。
+// jsonContentTypeHeader is the shared Content-Type value for cached responses.
+var jsonContentTypeHeader = []string{MIMEJSON}
 
 func compileState(server *Server, definitions []routeDefinition, serverMiddlewares []Middleware, serverSkips []skipRule, strict bool, errorHandler ErrorHandler) *compiledState {
 	mux := newRouteMux(definitions)
@@ -539,52 +556,69 @@ func compileState(server *Server, definitions []routeDefinition, serverMiddlewar
 		skips = append(append([]skipRule(nil), serverSkips...), skips...)
 		middlewares = filterSkippedMiddlewares(middlewares, route.definition.method, route.definition.pattern.path, skips)
 		terminal := route.definition.handler
-		_, route.stateFree = terminal.(stateIndependentTerminal)
-		if len(middlewares) == 0 && len(route.definition.contextMiddlewares) == 0 && errorHandler == nil &&
+		stateIndependent, _ := terminal.(stateIndependentTerminal)
+		// 无状态直调编译:无中间件、无错误模型时按形态生成 fastDirect,
+		// 运行时零分支直调。五个历史快路径字段(fastHandler/noStateFast/
+		// directHandler/contextHandler/fast)已统一为该单一入口。
+		// stateless direct compilation: without middleware or an error model,
+		// build fastDirect per shape for a branch-free runtime call. The five
+		// historical fast-path fields (fastHandler/noStateFast/directHandler/
+		// contextHandler/fast) have unified into this single entry.
+		if errorHandler == nil &&
 			route.definition.errorWriter == nil && server.config.errorWriter == nil {
-			if direct, ok := terminal.(stateIndependentTerminal); ok {
-				route.directHandler = direct
-				if valueHandler, ok := terminal.(interface{ directValueHandler() directPathValueHandler }); ok {
-					route.directValueHandler = valueHandler.directValueHandler()
+			switch {
+			case route.definition.fastBuild != nil && len(middlewares) == 0:
+				// NoInput + JSON/Text 的注册期直编。
+				// registration-time direct compile of NoInput + JSON/Text.
+				fast := route.definition.fastBuild(server, nil)
+				route.fastDirect = func(w http.ResponseWriter, r *http.Request, _ pathParamList) { fast(w, r) }
+			case route.definition.terminal == routeTerminalRaw && len(middlewares) == 0:
+				// raw handler 不消费参数,但保留单参数形态的直达索引。
+				// raw handlers ignore params but keep the direct index shape.
+				mux.addDirectParam(route)
+				route.fastDirect = func(w http.ResponseWriter, r *http.Request, _ pathParamList) { route.handler.ServeHTTP(w, r) }
+			case stateIndependent != nil && len(middlewares) == 0:
+				// path-only 类型化终结器:params 由匹配结果预提取传入。
+				// path-only typed terminals: params arrive pre-extracted.
+				mux.addDirectParam(route)
+				route.needsParams = true
+				route.fastDirect = func(w http.ResponseWriter, r *http.Request, params pathParamList) {
+					stateIndependent.ServeHTTPWithPathParams(w, r, params)
 				}
-				mux.addDirectParam(route)
-			}
-			// Raw handlers do not consume ghttp path parameters or request state.
-			// Index their simple trailing-parameter shape too, so raw dynamic
-			// routes avoid request-path parsing and radix traversal on the hot path.
-			if route.definition.terminal == routeTerminalRaw {
-				mux.addDirectParam(route)
+			case stateIndependent != nil:
+				// 有中间件仍免状态注入:输入不读 requestState,中间件经
+				// route.handler 链执行,extractorTerminal 的防御性回退负责
+				// 参数提取(与历史 fast 分支语义一致)。
+				// middleware does not force state injection: the input never
+				// reads requestState, middleware runs through the route.handler
+				// chain, and the extractorTerminal fallback extracts params.
+				route.fastDirect = func(w http.ResponseWriter, r *http.Request, _ pathParamList) { route.handler.ServeHTTP(w, r) }
+			case route.definition.terminal == routeTerminalTyped &&
+				route.definition.requestOnly && !route.definition.needsExtractor && len(middlewares) == 0:
+				// 只读请求元数据的 typed 路由(query 场景):直接执行,无状态注入。
+				// request-only typed routes (query scenarios): run directly with
+				// no state injection.
+				route.fastDirect = func(w http.ResponseWriter, r *http.Request, _ pathParamList) { route.handler.ServeHTTP(w, r) }
 			}
 		}
-		if route.definition.needsExtractor {
+		// raw 快路径路由不需要参数提取:handler 自身读 r.URL.Path,提取链的
+		// 防御性重建(parseRequestPath + extract)是纯浪费。有中间件时保留,
+		// 中间件可能通过 MatchedParams 读取参数。
+		// fast raw routes do not need parameter extraction: the handler reads
+		// r.URL.Path itself, and the extractor's defensive rebuild
+		// (parseRequestPath + extract) is pure waste. Extraction stays when
+		// middleware is present, since middleware may read MatchedParams.
+		needsExtractor := route.definition.needsExtractor
+		if needsExtractor && route.definition.terminal == routeTerminalRaw &&
+			len(middlewares) == 0 &&
+			errorHandler == nil && route.definition.errorWriter == nil &&
+			server.config.errorWriter == nil {
+			needsExtractor = false
+		}
+		if needsExtractor {
 			terminal = extractorTerminal(route)
 		}
 		route.handler = Wrap(terminal, middlewares...)
-		if len(middlewares) == 0 && len(route.definition.contextMiddlewares) == 0 && route.definition.fastBuild != nil &&
-			errorHandler == nil && route.definition.errorWriter == nil && server.config.errorWriter == nil {
-			route.fastHandler = route.definition.fastBuild(server, nil)
-		}
-		if len(route.definition.contextMiddlewares) > 0 {
-			contextTerminal := ContextHandler(nil)
-			if route.definition.contextBuild != nil {
-				contextTerminal = route.definition.contextBuild(server, nil)
-			}
-			base := func(c *Context) error {
-				if contextTerminal != nil {
-					return contextTerminal(c)
-				}
-				route.handler.ServeHTTP(c.Writer, c.Request)
-				return nil
-			}
-			route.contextHandler = chainContext(route.definition.contextMiddlewares, base)
-		}
-		// 快路径:raw 终结器、无中间件、无错误模型、无固定状态码。
-		// fast path: raw terminal, no middleware, no error model, no fixed status.
-		route.fast = ((route.definition.terminal == routeTerminalRaw && len(middlewares) == 0) || route.stateFree) &&
-			route.definition.errorWriter == nil &&
-			errorHandler == nil &&
-			(route.stateFree || route.definition.responseStatus == 0) &&
-			server.config.errorWriter == nil
 	}
 	state := &compiledState{
 		server:       server,
@@ -593,6 +627,7 @@ func compileState(server *Server, definitions []routeDefinition, serverMiddlewar
 		errorHandler: errorHandler,
 		outcomeFast:  len(serverMiddlewares) == 0 && errorHandler == nil && server.config.errorWriter == nil,
 	}
+	state.outcomes = buildOutcomeCache(server, state.outcomeFast)
 	state.badRequest = Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state.writeOutcomeError(w, r, http.StatusBadRequest, Err(http.StatusBadRequest, ErrInvalidRequestPath.Error()))
 	}), serverMiddlewares...)
@@ -605,9 +640,86 @@ func compileState(server *Server, definitions []routeDefinition, serverMiddlewar
 	return state
 }
 
+// buildOutcomeCache 在响应确定时预序列化 400/404/405 响应。
+// buildOutcomeCache pre-serializes 400/404/405 responses when they are
+// deterministic. 每请求序列化错误体 + Accept 协商是 miss 路径的主要开销
+// (NotFound 场景 8 次分配);缓存后 miss 路径零分配。
+// per-request error serialization plus Accept negotiation dominates the miss
+// path (8 allocs in the NotFound scenario); caching makes the miss path
+// allocation-free.
+func buildOutcomeCache(server *Server, outcomeFast bool) map[int]*compiledOutcome {
+	if !outcomeFast || server == nil || server.config == nil {
+		return nil
+	}
+	// 任何参与错误输出的配置都会使响应非确定,放弃缓存。
+	// any configuration that participates in error output makes the response
+	// non-deterministic; skip caching.
+	if server.envelope != nil || server.config.problemDetails {
+		return nil
+	}
+	for _, contentType := range server.produces {
+		if contentType != MIMEJSON {
+			return nil
+		}
+	}
+	codec, ok := server.codecMgr.Resolve(MIMEJSON)
+	if !ok {
+		return nil
+	}
+	if _, isJSON := codec.(*JSONCodec); !isJSON {
+		return nil
+	}
+	// 与 writeErrorWithCodec 的 body 构造保持一致:Err 字段不参与序列化。
+	// mirror writeErrorWithCodec's body construction: Err is not serialized.
+	cache := make(map[int]*compiledOutcome, 3)
+	statuses := []struct {
+		status  int
+		message string
+	}{
+		{http.StatusBadRequest, ErrInvalidRequestPath.Error()},
+		{http.StatusNotFound, http.StatusText(http.StatusNotFound)},
+		{http.StatusMethodNotAllowed, http.StatusText(http.StatusMethodNotAllowed)},
+	}
+	for _, entry := range statuses {
+		body, err := json.Marshal(HTTPError{Code: entry.status, Message: entry.message})
+		if err != nil {
+			return nil
+		}
+		// JSONCodec.Marshal 追加换行;缓存字节必须逐字节一致。
+		// JSONCodec.Marshal appends a newline; cached bytes must match it.
+		body = append(body, '\n')
+		cache[entry.status] = &compiledOutcome{
+			status:      entry.status,
+			contentType: MIMEJSON,
+			body:        body,
+		}
+	}
+	return cache
+}
+
+// writeCachedOutcome 写预序列化响应;无缓存条目时返回 false。
+// writeCachedOutcome writes a cached response; false when no entry exists.
+func (s *compiledState) writeCachedOutcome(w http.ResponseWriter, code int) bool {
+	cached := s.outcomes[code]
+	if cached == nil {
+		return false
+	}
+	// 直接赋值 header 切片,跳过 Set 的规范化分配。
+	// assign the header slice directly, skipping Set's normalization alloc.
+	w.Header()[cached.contentType] = jsonContentTypeHeader
+	w.WriteHeader(cached.status)
+	_, _ = w.Write(cached.body)
+	return true
+}
+
 func extractorTerminal(route *compiledRoute) http.Handler {
+	// 注册期断言一次:typed 路由的 build 产物必然实现 pathParamHandler,
+	// 每请求断言的历史实现已改为字段直调。
+	// assert once at registration time: typed builds always implement
+	// pathParamHandler; the historical per-request assertion is now a direct
+	// field call.
+	handler, ok := route.definition.handler.(pathParamHandler)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handler, ok := route.definition.handler.(pathParamHandler)
 		if !ok {
 			writeRouteError(w, r, serverFromRequest(r), route.definition.errorWriter, route.definition.produces, http.StatusInternalServerError, Err(http.StatusInternalServerError, http.StatusText(http.StatusInternalServerError)))
 			return
@@ -639,6 +751,18 @@ func extractorTerminal(route *compiledRoute) http.Handler {
 				return
 			}
 			reqState.matched = &lazyPathParams{route: route, path: requestPath}
+		} else {
+			// 惰性源已就绪时一次性预提取参数:多参数路由(5 参数场景)避免
+			// 每个 key 一次 paramPos map 查找 + 惰性缓存扫描,handler 的内联
+			// params 直接命中。提取失败保持空,行为与惰性 get 一致。
+			// with the lazy source ready, pre-extract params once: multi-param
+			// routes avoid one paramPos map lookup plus lazy-cache scans per
+			// key, and the handler's inline params hit directly. Extraction
+			// failure keeps the list empty, matching lazy get behavior.
+			params, err := route.extractMatched(reqState.matched.path)
+			if err == nil {
+				fallback = params
+			}
 		}
 		handler.ServeHTTPWithPathParams(w, r, fallback)
 	})
@@ -654,55 +778,35 @@ func (s *compiledState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// release must follow recover: error handling still reads the state.
 		releaseRequestState(reqSt)
 	}()
-	var (
-		requestPath requestPath
-		result      routeMatchResult
-	)
+	var requestPath requestPath
+	// 静态路径先走 O(1) 直达索引,未转义的单参数路径走前缀直达索引;其余
+	// 走 radix 树一次遍历完成匹配、段偏移收集与路径校验;badPath 走 400。
+	// static paths take the O(1) direct index and unescaped single-param
+	// paths take the prefix index; everything else falls through to one radix
+	// traversal that matches, collects segment offsets and validates the path.
+	var result routeMatchResult
 	staticMatched := false
-	if s.mux.staticByMethod != nil && r.URL.RawPath == "" {
-		result, staticMatched = s.mux.matchStatic(r.Method, r.URL.Path)
-	}
-	if staticMatched && result.route.fastHandler != nil && r.Method != http.MethodHead &&
-		(r.Body == nil || r.Body == http.NoBody) {
-		result.route.fastHandler.ServeHTTP(w, r)
-		return
-	}
-	if staticMatched && result.route.directHandler != nil && r.Method != http.MethodHead &&
-		(r.Body == nil || r.Body == http.NoBody) {
-		result.route.handler.ServeHTTP(w, r)
-		return
-	}
-	if staticMatched && result.route.contextHandler != nil && result.route.stateFree &&
-		r.Method != http.MethodHead && (r.Body == nil || r.Body == http.NoBody) {
-		ctx := acquireContext(w, r, pathParamList{})
-		err := result.route.contextHandler(ctx)
-		releaseContext(ctx)
-		if err != nil && !ctx.Wrote {
-			s.writeOutcomeError(w, r, http.StatusInternalServerError, err)
+	if r.URL.RawPath == "" {
+		if staticResult, ok := s.mux.matchStatic(r.Method, r.URL.Path); ok {
+			result = staticResult
+			staticMatched = true
 		}
-		return
 	}
 	if !staticMatched && r.URL.RawPath == "" && (r.Body == nil || r.Body == http.NoBody) {
 		if route, value, ok := s.mux.matchDirectParam(r.Method, r.URL.Path); ok {
-			if route.directValueHandler != nil {
-				route.directValueHandler.ServeHTTPWithPathValue(w, r, value)
-				return
-			}
-			if route.directHandler != nil {
-				var params pathParamList
-				params.Add(route.directName, value)
-				route.directHandler.ServeHTTPWithPathParams(w, r, params)
-			} else {
-				route.handler.ServeHTTP(w, r)
-			}
+			var params pathParamList
+			params.Add(route.directName, value)
+			route.fastDirect(w, r, params)
 			return
 		}
 	}
 	if !staticMatched {
-		var err error
-		requestPath, err = parseRequestPath(r.URL.EscapedPath(), s.strict)
-		if err != nil {
+		result = s.mux.match(r.Method, r.URL.EscapedPath(), s.strict)
+		if result.kind == routeMatchBadPath {
 			if s.outcomeFast && r.Method != http.MethodHead {
+				if s.writeCachedOutcome(w, http.StatusBadRequest) {
+					return
+				}
 				s.writeOutcomeError(w, r, http.StatusBadRequest, Err(http.StatusBadRequest, ErrInvalidRequestPath.Error()))
 				return
 			}
@@ -711,30 +815,20 @@ func (s *compiledState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.badRequest.ServeHTTP(w, r)
 			return
 		}
-		result = s.mux.match(r.Method, requestPath)
+		requestPath = result.path
 	}
 	switch result.kind {
 	case routeMatchFound:
 		route := result.route
-		// path-only 类型化终结器直接接收内联参数，避免为不可见的请求状态
-		// 克隆 *http.Request。HEAD 仍走包装 writer 以抑制响应体。
-		// Path-only typed terminals consume inline params directly instead of
-		// cloning *http.Request for invisible state. HEAD still uses the wrapped
-		// writer to suppress the response body.
-		if route.directHandler != nil && r.Method != http.MethodHead &&
-			(r.Body == nil || r.Body == http.NoBody) {
-			params, err := route.extractMatched(requestPath)
-			if err != nil {
-				s.writeOutcomeError(w, r, http.StatusBadRequest, err)
-				return
-			}
-			route.directHandler.ServeHTTPWithPathParams(w, r, params)
-			return
-		}
-		if route.contextHandler != nil && route.stateFree && r.Method != http.MethodHead &&
+		// 无状态直调:无 body、非 HEAD 时预提取参数后一次函数调用,零状态
+		// 注入。不可直调(有中间件/错误模型/body)时走状态注入路径。
+		// stateless direct call: for body-less non-HEAD requests, pre-extract
+		// params and call once with zero state injection. The state path serves
+		// everything else (middleware, error models, bodies).
+		if route.fastDirect != nil && r.Method != http.MethodHead &&
 			(r.Body == nil || r.Body == http.NoBody) {
 			var params pathParamList
-			if route.definition.needsExtractor {
+			if route.needsParams {
 				var err error
 				params, err = route.extractMatched(requestPath)
 				if err != nil {
@@ -742,17 +836,7 @@ func (s *compiledState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
-			ctx := acquireContext(w, r, params)
-			defer releaseContext(ctx)
-			if err := route.contextHandler(ctx); err != nil && !ctx.Wrote {
-				s.writeOutcomeError(w, r, http.StatusInternalServerError, err)
-			}
-			return
-		}
-		// 无 body、非 HEAD 的快路径直接执行,零状态注入。
-		// run body-less non-HEAD fast routes directly with zero state injection.
-		if route.fast && r.Method != http.MethodHead && (r.Body == nil || r.Body == http.NoBody) {
-			route.handler.ServeHTTP(w, r)
+			route.fastDirect(w, r, params)
 			return
 		}
 		w, r = s.installState(w, r)
@@ -776,6 +860,9 @@ func (s *compiledState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case routeMatchMethodNotAllowed:
 		w.Header().Set("Allow", strings.Join(result.allow, ", "))
 		if s.outcomeFast && r.Method != http.MethodHead {
+			if s.writeCachedOutcome(w, http.StatusMethodNotAllowed) {
+				return
+			}
 			s.writeOutcomeError(w, r, http.StatusMethodNotAllowed, Err(http.StatusMethodNotAllowed, http.StatusText(http.StatusMethodNotAllowed)))
 			return
 		}
@@ -784,6 +871,9 @@ func (s *compiledState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.notAllowed.ServeHTTP(w, r)
 	default:
 		if s.outcomeFast && r.Method != http.MethodHead {
+			if s.writeCachedOutcome(w, http.StatusNotFound) {
+				return
+			}
 			s.writeOutcomeError(w, r, http.StatusNotFound, Err(http.StatusNotFound, http.StatusText(http.StatusNotFound)))
 			return
 		}

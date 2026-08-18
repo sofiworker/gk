@@ -317,12 +317,16 @@ func TestServerRewritePathOnlyInputCompilesDirectTerminal(t *testing.T) {
 	if state == nil || len(state.mux.routes) != 1 {
 		t.Fatalf("compiled routes = %#v, want one route", state)
 	}
-	if state.mux.routes[0].directHandler == nil {
-		t.Fatal("path-only input did not compile a direct terminal")
+	if state.mux.routes[0].fastDirect == nil {
+		t.Fatal("path-only input did not compile a stateless direct call")
 	}
-	matched, value, ok := state.mux.matchDirectParam(http.MethodGet, "/items/42")
-	if !ok || matched != state.mux.routes[0] || value != "42" {
-		t.Fatalf("direct param match = (%p, %q, %v), want (%p, %q, true)", matched, value, ok, state.mux.routes[0], "42")
+	matched := state.mux.match(http.MethodGet, "/items/42", false)
+	if matched.kind != routeMatchFound || matched.route != state.mux.routes[0] {
+		t.Fatalf("direct param match = %#v, want route %p", matched, state.mux.routes[0])
+	}
+	params, err := matched.route.extract(matched.path)
+	if err != nil || params.Get("id") != "42" {
+		t.Fatalf("extracted params = %#v, err = %v, want id=42", params, err)
 	}
 }
 
@@ -337,8 +341,8 @@ func TestServerRewriteNoInputGenericOperationCompilesStaticFastHandler(t *testin
 	if state == nil || len(state.mux.routes) != 1 {
 		t.Fatalf("compiled routes = %#v, want one route", state)
 	}
-	if state.mux.routes[0].fastHandler == nil {
-		t.Fatal("generic no-input operation did not compile a static fast handler")
+	if state.mux.routes[0].fastDirect == nil {
+		t.Fatal("generic no-input operation did not compile a stateless direct call")
 	}
 
 	recorder := httptest.NewRecorder()
@@ -348,34 +352,21 @@ func TestServerRewriteNoInputGenericOperationCompilesStaticFastHandler(t *testin
 	}
 }
 
-func TestServerRewriteNoInputGenericOperationSkipsStaticFastHandlerWithMiddleware(t *testing.T) {
-	server := New()
-	server.MustMount(Handle(Get("/ready"), NoInput(), TextOutput(), func(context.Context, EmptyInput) (string, error) {
-		return "ready", nil
-	}).WithMiddleware(func(next http.Handler) http.Handler {
-		return next
-	}))
-
-	server.finalizeRoutes()
-	state := server.compiled.Load()
-	if state == nil || len(state.mux.routes) != 1 {
-		t.Fatalf("compiled routes = %#v, want one route", state)
-	}
-	if state.mux.routes[0].fastHandler != nil {
-		t.Fatal("generic operation with middleware unexpectedly compiled a static fast handler")
-	}
-}
-
-func TestServerRewriteNoInputGenericOperationUsesContextTerminal(t *testing.T) {
+func TestServerRewriteNoInputGenericOperationKeepsStatelessDirectWithMiddleware(t *testing.T) {
+	// stateFree 输入(NoInput)不读 requestState,即使有中间件也免状态注入:
+	// fastDirect 经 route.handler 执行中间件链,与历史 fast 分支语义一致。
+	// a stateFree input (NoInput) never reads requestState, so middleware does
+	// not force state injection: fastDirect runs the middleware chain through
+	// route.handler, matching the historical fast-branch semantics.
 	called := false
 	server := New()
 	server.MustMount(Handle(Get("/ready"), NoInput(), TextOutput(), func(context.Context, EmptyInput) (string, error) {
 		return "ready", nil
-	}).WithContextMiddleware(func(next ContextHandler) ContextHandler {
-		return func(c *Context) error {
+	}).WithMiddleware(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			called = true
-			return next(c)
-		}
+			next.ServeHTTP(w, r)
+		})
 	}))
 
 	server.finalizeRoutes()
@@ -383,48 +374,17 @@ func TestServerRewriteNoInputGenericOperationUsesContextTerminal(t *testing.T) {
 	if state == nil || len(state.mux.routes) != 1 {
 		t.Fatalf("compiled routes = %#v, want one route", state)
 	}
-	if state.mux.routes[0].contextHandler == nil {
-		t.Fatal("generic no-input operation did not compile a context terminal")
+	if state.mux.routes[0].fastDirect == nil {
+		t.Fatal("state-free operation with middleware did not compile a stateless direct call")
 	}
 
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/ready", nil))
 	if !called {
-		t.Fatal("context middleware was not called")
+		t.Fatal("middleware was not called")
 	}
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "ready" {
-		t.Fatalf("context response = %d %q", recorder.Code, recorder.Body.String())
-	}
-}
-
-func TestServerRewriteDirectPathGenericOperationUsesContextTerminal(t *testing.T) {
-	called := false
-	server := New()
-	server.MustMount(Handle(Get("/items/{id}"), PathInt64("id"), TextOutput(), func(_ context.Context, id int64) (string, error) {
-		return strconv.FormatInt(id, 10), nil
-	}).WithContextMiddleware(func(next ContextHandler) ContextHandler {
-		return func(c *Context) error {
-			called = true
-			return next(c)
-		}
-	}))
-
-	server.finalizeRoutes()
-	state := server.compiled.Load()
-	if state == nil || len(state.mux.routes) != 1 {
-		t.Fatalf("compiled routes = %#v, want one route", state)
-	}
-	if state.mux.routes[0].contextHandler == nil {
-		t.Fatal("generic direct-path operation did not compile a context terminal")
-	}
-
-	recorder := httptest.NewRecorder()
-	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/items/42", nil))
-	if !called {
-		t.Fatal("context middleware was not called")
-	}
-	if recorder.Code != http.StatusOK || recorder.Body.String() != "42" {
-		t.Fatalf("context response = %d %q", recorder.Code, recorder.Body.String())
+		t.Fatalf("response = %d %q", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -440,12 +400,12 @@ func TestServerRewriteRawSimpleParamCompilesDirectTerminal(t *testing.T) {
 		t.Fatalf("compiled routes = %#v, want one route", state)
 	}
 	route := state.mux.routes[0]
-	if route.directHandler != nil {
-		t.Fatal("raw route unexpectedly exposed a typed direct handler")
+	if route.fastDirect == nil {
+		t.Fatal("raw route did not compile a stateless direct call")
 	}
-	matched, value, ok := state.mux.matchDirectParam(http.MethodGet, "/items/42")
-	if !ok || matched != route || value != "42" {
-		t.Fatalf("raw direct param match = (%p, %q, %v), want (%p, %q, true)", matched, value, ok, route, "42")
+	matched := state.mux.match(http.MethodGet, "/items/42", false)
+	if matched.kind != routeMatchFound || matched.route != route {
+		t.Fatalf("raw direct param match = %#v, want route %p", matched, route)
 	}
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/items/42", nil))
@@ -691,15 +651,12 @@ func TestServerRewriteWideStaticNodeMatchesEscapedLeadingByte(t *testing.T) {
 
 func TestServerRewriteStaticIndexPreservesExplicitHEADResult(t *testing.T) {
 	mux := newTestRouteMux(t, testRouteDefinition(t, http.MethodHead, "/health"))
-	result, matched := mux.matchStatic(http.MethodHead, "/health")
-	if !matched {
-		t.Fatal("matchStatic did not match explicit HEAD route")
-	}
+	result := mux.match(http.MethodHead, "/health", false)
 	if result.kind != routeMatchFound || result.route.definition.method != http.MethodHead {
-		t.Fatalf("matchStatic result = %#v, want explicit HEAD route", result)
+		t.Fatalf("match result = %#v, want explicit HEAD route", result)
 	}
 	if !result.suppressBody {
-		t.Fatal("matchStatic explicit HEAD result must suppress the response body")
+		t.Fatal("explicit HEAD result must suppress the response body")
 	}
 }
 

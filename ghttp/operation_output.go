@@ -529,6 +529,7 @@ func compileOperation[I, O any](builder *EndpointBuilder, input Input[I], output
 		path:             builder.path,
 		terminal:         routeTerminalTyped,
 		stateIndependent: supportsDirectOperationInput(input),
+		requestOnly:      isRequestOnlyInput(input),
 		status:           status,
 	}
 	if contentType := normalizeContentType(output.ContentType()); contentType != "" {
@@ -554,7 +555,7 @@ func compileOperation[I, O any](builder *EndpointBuilder, input Input[I], output
 	if responses, ok := any(output).(outputResponsesProvider); ok {
 		operation.openAPI.responses = responses.documentedResponses()
 	}
-	valueCapabilities := compileOutputValueCapabilities[O]()
+	plan := compileOutputPlan(output)
 	// 无请求输入的通用 Operation 直接编译为 HTTP handler，避开旧适配链。
 	// Compile request-independent generic operations directly to HTTP handlers,
 	// avoiding the legacy adapter chain while preserving their semantics.
@@ -577,7 +578,7 @@ func compileOperation[I, O any](builder *EndpointBuilder, input Input[I], output
 					writeRouteError(writer, request, server, mounted.errorWriter, mounted.produces, http.StatusInternalServerError, err)
 					return
 				}
-				handleOperationOutputError(writer, request, server, mounted, writeOperationOutput(writer, request, server, mounted.errorWriter, response, output, valueCapabilities))
+				handleOperationOutputError(writer, request, server, mounted, writePlannedOutput(writer, request, server, mounted.errorWriter, response, plan))
 			}
 		}
 		// JSONOutput/TextOutput are fully known at registration time. Avoid the
@@ -641,51 +642,6 @@ func compileOperation[I, O any](builder *EndpointBuilder, input Input[I], output
 				}
 			}
 		}
-		operation.contextBuild = func(server *Server, mounted *Operation) ContextHandler {
-			if mounted == nil {
-				mounted = operation
-			}
-			return func(c *Context) error {
-				value, err := directInput.buildRequestIndependentValue()
-				if err != nil {
-					writeRouteError(c.Writer, c.Request, server, mounted.errorWriter, mounted.produces, http.StatusBadRequest, err)
-					return nil
-				}
-				if !validateOperationInput(c.Writer, c.Request, server, mounted, value) {
-					return nil
-				}
-				response, err := handler(c.Request.Context(), value)
-				if err != nil {
-					writeRouteError(c.Writer, c.Request, server, mounted.errorWriter, mounted.produces, http.StatusInternalServerError, err)
-					return nil
-				}
-				handleOperationOutputError(c.Writer, c.Request, server, mounted, writeOperationOutput(c.Writer, c.Request, server, mounted.errorWriter, response, output, valueCapabilities))
-				return nil
-			}
-		}
-	} else if directInput, ok := input.(directPathInputBuilder[I]); ok {
-		operation.contextBuild = func(server *Server, mounted *Operation) ContextHandler {
-			if mounted == nil {
-				mounted = operation
-			}
-			return func(c *Context) error {
-				value, err := directInput.buildDirectPathValue(c.Param(directInput.directPathName()))
-				if err != nil {
-					writeRouteError(c.Writer, c.Request, server, mounted.errorWriter, mounted.produces, http.StatusBadRequest, err)
-					return nil
-				}
-				if !validateOperationInput(c.Writer, c.Request, server, mounted, value) {
-					return nil
-				}
-				response, err := handler(c.Request.Context(), value)
-				if err != nil {
-					writeRouteError(c.Writer, c.Request, server, mounted.errorWriter, mounted.produces, http.StatusInternalServerError, err)
-					return nil
-				}
-				handleOperationOutputError(c.Writer, c.Request, server, mounted, writeOperationOutput(c.Writer, c.Request, server, mounted.errorWriter, response, output, valueCapabilities))
-				return nil
-			}
-		}
 	}
 	operation.build = func(server *Server, mounted *Operation) http.Handler {
 		if mounted.stateIndependent {
@@ -704,7 +660,7 @@ func compileOperation[I, O any](builder *EndpointBuilder, input Input[I], output
 						writeRouteError(writer, request, server, mounted.errorWriter, mounted.produces, http.StatusInternalServerError, err)
 						return
 					}
-					handleOperationOutputError(writer, request, server, mounted, writeOperationOutput(writer, request, server, mounted.errorWriter, response, output, valueCapabilities))
+					handleOperationOutputError(writer, request, server, mounted, writePlannedOutput(writer, request, server, mounted.errorWriter, response, plan))
 				})
 			}
 			if directInput, ok := input.(directPathInputBuilder[I]); ok {
@@ -772,9 +728,59 @@ func compileOperation[I, O any](builder *EndpointBuilder, input Input[I], output
 						writeRouteError(writer, request, server, mounted.errorWriter, mounted.produces, http.StatusInternalServerError, err)
 						return
 					}
-					handleOperationOutputError(writer, request, server, mounted, writeOperationOutput(writer, request, server, mounted.errorWriter, response, output, valueCapabilities))
+					handleOperationOutputError(writer, request, server, mounted, writePlannedOutput(writer, request, server, mounted.errorWriter, response, plan))
 				})
 			}
+		}
+		// JSON/Text 输出在注册期直编,与快捷 Operation(GetJSON/GetText)的编译
+		// 路径一致:json.Marshal/io.WriteString 直接写,跳过 outputPlan 的通用
+		// 执行与协商检查。两个入口从此共享同一编译产物,不再有性能分叉。
+		// JSON and Text outputs compile directly at registration time, sharing
+		// the fast Operation (GetJSON/GetText) code shape: json.Marshal and
+		// io.WriteString write straight through, skipping outputPlan's generic
+		// execution and negotiation checks. Both entry points now share one
+		// compiled shape with no performance fork.
+		if _, specialized := any(output).(jsonOutput[O]); specialized {
+			return pathParamHandlerFunc(func(writer http.ResponseWriter, request *http.Request, params pathParamList) {
+				operationRequest := newOperationRequest(writer, request, params, server, mounted)
+				value, err := input.build(&operationRequest)
+				if err != nil {
+					writeRouteError(writer, request, server, mounted.errorWriter, mounted.produces, http.StatusBadRequest, err)
+					return
+				}
+				if !validateOperationInput(writer, request, server, mounted, value) {
+					return
+				}
+				response, err := handler(request.Context(), value)
+				if err != nil {
+					writeRouteError(writer, request, server, mounted.errorWriter, mounted.produces, http.StatusInternalServerError, err)
+					return
+				}
+				if err := writeDirectJSON(writer, request, server, mounted, response, output.StatusCode(), plan.valueCaps); err != nil {
+					writeRouteError(writer, request, server, mounted.errorWriter, mounted.produces, http.StatusInternalServerError, err)
+				}
+			})
+		}
+		if _, specialized := any(output).(textOutput); specialized {
+			return pathParamHandlerFunc(func(writer http.ResponseWriter, request *http.Request, params pathParamList) {
+				operationRequest := newOperationRequest(writer, request, params, server, mounted)
+				value, err := input.build(&operationRequest)
+				if err != nil {
+					writeRouteError(writer, request, server, mounted.errorWriter, mounted.produces, http.StatusBadRequest, err)
+					return
+				}
+				if !validateOperationInput(writer, request, server, mounted, value) {
+					return
+				}
+				response, err := handler(request.Context(), value)
+				if err != nil {
+					writeRouteError(writer, request, server, mounted.errorWriter, mounted.produces, http.StatusInternalServerError, err)
+					return
+				}
+				writer.Header()["Content-Type"] = []string{MIMEPlain}
+				writer.WriteHeader(output.StatusCode())
+				_, _ = io.WriteString(writer, any(response).(string))
+			})
 		}
 		return pathParamHandlerFunc(func(writer http.ResponseWriter, request *http.Request, params pathParamList) {
 			operationRequest := newOperationRequest(writer, request, params, server, mounted)
@@ -791,10 +797,54 @@ func compileOperation[I, O any](builder *EndpointBuilder, input Input[I], output
 				writeRouteError(writer, request, server, mounted.errorWriter, mounted.produces, http.StatusInternalServerError, err)
 				return
 			}
-			handleOperationOutputError(writer, request, server, mounted, writeOperationOutput(writer, request, server, mounted.errorWriter, response, output, valueCapabilities))
+			handleOperationOutputError(writer, request, server, mounted, writePlannedOutput(writer, request, server, mounted.errorWriter, response, plan))
 		})
 	}
 	return operation
+}
+
+// writeDirectJSON 是 JSON 输出的直编写路径:值能力(状态码/响应头/Cookie)
+// 在注册期探测后按需断言,协商检查与 envelope 语义与 plan 路径一致。
+// writeDirectJSON is the direct JSON write path: value capabilities (status,
+// headers, cookies) assert only when the registration-time probe hit, and the
+// negotiation and envelope semantics match the plan path.
+func writeDirectJSON[O any](writer http.ResponseWriter, request *http.Request, server *Server, mounted *Operation, response O, defaultStatus int, valueCaps outputValueCapabilities) error {
+	status := defaultStatus
+	if valueCaps.status || valueCaps.header || valueCaps.cookies {
+		dynamicValue := any(response)
+		if valueCaps.status {
+			if statusCoder := dynamicValue.(StatusCoder); statusCoder.StatusCode() != 0 {
+				status = statusCoder.StatusCode()
+			}
+		}
+		if valueCaps.header {
+			dynamicValue.(ResponseHeaderWriter).WriteResponseHeaders(writer.Header())
+		}
+		if valueCaps.cookies {
+			writeResponseCookies(writer, dynamicValue)
+		}
+	}
+	// 显式输出契约不协商:GetJSON/JSONOutput 已声明响应为 JSON,Accept 头
+	// 不影响输出格式。CodecOutput 是唯一按 Accept 协商的契约。
+	// explicit output contracts do not negotiate: GetJSON/JSONOutput already
+	// declare JSON, so the Accept header does not change the format.
+	// CodecOutput remains the only Accept-negotiating contract.
+	if server.envelope != nil {
+		codec, _ := server.codecMgr.Resolve(MIMEJSON)
+		server.envelope(writer, request, status, response, nil, MIMEJSON, codec)
+		return nil
+	}
+	body, err := json.Marshal(response)
+	if err != nil {
+		return err
+	}
+	writer.Header()["Content-Type"] = []string{MIMEJSON}
+	writer.WriteHeader(status)
+	if !responseHasBody(status) {
+		return nil
+	}
+	_, _ = writer.Write(body)
+	return nil
 }
 
 func supportsDirectOperationInput[I any](input Input[I]) bool {
@@ -834,6 +884,7 @@ func handleOperationOutputError(writer http.ResponseWriter, request *http.Reques
 }
 
 func directJSONOperationHandler[I, O any](server *Server, operation *Operation, input directPathInputBuilder[I], handler func(context.Context, I) (O, error), status int) http.Handler {
+	valueCaps := compileOutputValueCapabilities[O]()
 	return directPathValueHandlerFunc(func(writer http.ResponseWriter, request *http.Request, rawValue string) {
 		value, err := input.buildDirectPathValue(rawValue)
 		if err != nil {
@@ -848,23 +899,14 @@ func directJSONOperationHandler[I, O any](server *Server, operation *Operation, 
 			writeRouteError(writer, request, server, operation.errorWriter, operation.produces, http.StatusInternalServerError, err)
 			return
 		}
-		if server.envelope != nil {
-			codec, _ := server.codecMgr.Resolve(MIMEJSON)
-			server.envelope(writer, request, status, output, nil, MIMEJSON, codec)
-			return
-		}
-		body, err := json.Marshal(output)
-		if err != nil {
+		if err := writeDirectJSON(writer, request, server, operation, output, status, valueCaps); err != nil {
 			writeRouteError(writer, request, server, operation.errorWriter, operation.produces, http.StatusInternalServerError, err)
-			return
 		}
-		writer.Header()["Content-Type"] = []string{MIMEJSON}
-		writer.WriteHeader(status)
-		_, _ = writer.Write(body)
 	})
 }
 
 func requestIndependentJSONOperationHandler[I, O any](server *Server, operation *Operation, input requestIndependentInputBuilder[I], handler func(context.Context, I) (O, error), status int) http.Handler {
+	valueCaps := compileOutputValueCapabilities[O]()
 	return pathParamHandlerFunc(func(writer http.ResponseWriter, request *http.Request, _ pathParamList) {
 		value, err := input.buildRequestIndependentValue()
 		if err != nil {
@@ -879,84 +921,129 @@ func requestIndependentJSONOperationHandler[I, O any](server *Server, operation 
 			writeRouteError(writer, request, server, operation.errorWriter, operation.produces, http.StatusInternalServerError, err)
 			return
 		}
-		if server.envelope != nil {
-			codec, _ := server.codecMgr.Resolve(MIMEJSON)
-			server.envelope(writer, request, status, output, nil, MIMEJSON, codec)
-			return
-		}
-		body, err := json.Marshal(output)
-		if err != nil {
+		if err := writeDirectJSON(writer, request, server, operation, output, status, valueCaps); err != nil {
 			writeRouteError(writer, request, server, operation.errorWriter, operation.produces, http.StatusInternalServerError, err)
-			return
 		}
-		writer.Header()["Content-Type"] = []string{MIMEJSON}
-		writer.WriteHeader(status)
-		_, _ = writer.Write(body)
 	})
 }
 
-func writeOperationOutput[T any](writer http.ResponseWriter, request *http.Request, server *Server, errorWriter ErrorWriter, value T, output Output[T], capabilities outputValueCapabilities) error {
-	status := output.StatusCode()
+// outputPlan 是输出契约的注册期编译计划。历史 writeOperationOutput 每请求
+// 做 7 次 any(output).(xxx) 能力断言,泛型只负责类型包装;plan 把能力探测
+// 一次性完成,运行时按字段直调,零类型断言(值能力仅当注册期探测命中时才断言)。
+// outputPlan is the registration-time compiled plan of an output contract.
+// The historical writeOperationOutput ran seven any(output).(xxx) capability
+// assertions per request, reducing generics to type wrapping; the plan probes
+// capabilities once, and the runtime calls fields directly with zero type
+// assertions (value capabilities assert only when the probe hit).
+type outputPlan[T any] struct {
+	status             int
+	contentType        string
+	valueCaps          outputValueCapabilities
+	contextual         func(http.ResponseWriter, *http.Request, *Server, ErrorWriter, T) error
+	preflightWriter    func(io.Writer) error
+	preflightValue     func(T) error
+	writeHeaders       func(http.Header)
+	writeValueHeaders  func(http.Header, T) error
+	prepare            func(any) ([]byte, bool, error)
+	writePrepared      func(io.Writer, []byte) error
+	writeBody          func(io.Writer, T) error
+	envelopeCompatible bool
+}
+
+// compileOutputPlan 注册期打包输出契约的全部运行时能力。
+// compileOutputPlan packs every runtime capability of an output contract at
+// registration time.
+func compileOutputPlan[T any](output Output[T]) outputPlan[T] {
+	plan := outputPlan[T]{
+		status:             output.StatusCode(),
+		contentType:        output.ContentType(),
+		valueCaps:          compileOutputValueCapabilities[T](),
+		envelopeCompatible: isEnvelopeCompatible(output),
+	}
+	if contextual, ok := any(output).(contextualOutput[T]); ok {
+		plan.contextual = contextual.writeResponse
+	}
+	if preflight, ok := any(output).(outputWriterPreflight); ok {
+		plan.preflightWriter = preflight.preflightWriter
+	}
+	if preflight, ok := any(output).(outputValuePreflight[T]); ok {
+		plan.preflightValue = preflight.preflightValue
+	}
+	if headers, ok := any(output).(outputHeaderWriter); ok {
+		plan.writeHeaders = headers.writeHeaders
+	}
+	if headers, ok := any(output).(outputValueHeaderWriter[T]); ok {
+		plan.writeValueHeaders = headers.writeValueHeaders
+	}
+	if preparer, ok := any(output).(outputPreparer); ok {
+		plan.prepare = preparer.prepare
+	}
+	if preparedWriter, ok := any(output).(preparedOutputWriter); ok {
+		plan.writePrepared = preparedWriter.writePrepared
+	}
+	plan.writeBody = output.WriteBody
+	return plan
+}
+
+// writePlannedOutput 按注册期计划写响应,语义与历史 writeOperationOutput 一致。
+// writePlannedOutput writes the response per the registration-time plan, with
+// the same semantics as the historical writeOperationOutput.
+func writePlannedOutput[T any](writer http.ResponseWriter, request *http.Request, server *Server, errorWriter ErrorWriter, value T, plan outputPlan[T]) error {
+	status := plan.status
 	if status < http.StatusContinue || status > 599 {
 		return fmt.Errorf("invalid response status %d", status)
 	}
-	if capabilities.status || capabilities.header || capabilities.cookies {
+	if plan.valueCaps.status || plan.valueCaps.header || plan.valueCaps.cookies {
 		dynamicValue := any(value)
-		if capabilities.status {
+		if plan.valueCaps.status {
 			if statusCoder := dynamicValue.(StatusCoder); statusCoder.StatusCode() != 0 {
 				status = statusCoder.StatusCode()
 			}
 		}
-		if capabilities.header {
+		if plan.valueCaps.header {
 			dynamicValue.(ResponseHeaderWriter).WriteResponseHeaders(writer.Header())
 		}
-		if capabilities.cookies {
+		if plan.valueCaps.cookies {
 			writeResponseCookies(writer, dynamicValue)
 		}
 	}
-	if contextual, ok := any(output).(contextualOutput[T]); ok {
-		return contextual.writeResponse(writer, request, server, errorWriter, value)
+	if plan.contextual != nil {
+		return plan.contextual(writer, request, server, errorWriter, value)
 	}
-	contentType := output.ContentType()
-	if contentType != "" && !requestAcceptsContentType(request, contentType) {
-		writeRouteError(writer, request, server, errorWriter, []string{normalizeContentType(contentType)}, http.StatusNotAcceptable, Err(http.StatusNotAcceptable, http.StatusText(http.StatusNotAcceptable)))
-		return nil
-	}
-	if preflight, ok := any(output).(outputWriterPreflight); ok {
-		if err := preflight.preflightWriter(writer); err != nil {
+	contentType := plan.contentType
+	if plan.preflightWriter != nil {
+		if err := plan.preflightWriter(writer); err != nil {
 			return err
 		}
 	}
-	if preflight, ok := any(output).(outputValuePreflight[T]); ok {
-		if err := preflight.preflightValue(value); err != nil {
+	if plan.preflightValue != nil {
+		if err := plan.preflightValue(value); err != nil {
 			return err
 		}
 	}
-	if headers, ok := any(output).(outputHeaderWriter); ok {
-		headers.writeHeaders(writer.Header())
+	if plan.writeHeaders != nil {
+		plan.writeHeaders(writer.Header())
 	}
-	if headers, ok := any(output).(outputValueHeaderWriter[T]); ok {
-		if err := headers.writeValueHeaders(writer.Header(), value); err != nil {
+	if plan.writeValueHeaders != nil {
+		if err := plan.writeValueHeaders(writer.Header(), value); err != nil {
 			return err
 		}
 	}
 	if contentType != "" {
 		writer.Header()["Content-Type"] = []string{contentType}
 	}
-	if server != nil && server.envelope != nil {
-		if isEnvelopeCompatible(output) {
-			codec, ok := server.codecMgr.Resolve(normalizeContentType(contentType))
-			if ok {
-				server.envelope(writer, request, status, value, nil, normalizeContentType(contentType), codec)
-				return nil
-			}
+	if server != nil && server.envelope != nil && plan.envelopeCompatible {
+		codec, ok := server.codecMgr.Resolve(normalizeContentType(contentType))
+		if ok {
+			server.envelope(writer, request, status, value, nil, normalizeContentType(contentType), codec)
+			return nil
 		}
 	}
 	var prepared []byte
 	preparedOK := false
-	if preparer, ok := any(output).(outputPreparer); ok {
+	if plan.prepare != nil {
 		var err error
-		prepared, preparedOK, err = preparer.prepare(value)
+		prepared, preparedOK, err = plan.prepare(any(value))
 		if err != nil {
 			return err
 		}
@@ -965,15 +1052,13 @@ func writeOperationOutput[T any](writer http.ResponseWriter, request *http.Reque
 	if !responseHasBody(status) {
 		return nil
 	}
-	if preparedOK {
-		if preparedWriter, ok := any(output).(preparedOutputWriter); ok {
-			if err := preparedWriter.writePrepared(writer, prepared); err != nil {
-				return &committedOperationOutputError{err: err}
-			}
-			return nil
+	if preparedOK && plan.writePrepared != nil {
+		if err := plan.writePrepared(writer, prepared); err != nil {
+			return &committedOperationOutputError{err: err}
 		}
+		return nil
 	}
-	if err := output.WriteBody(writer, value); err != nil {
+	if err := plan.writeBody(writer, value); err != nil {
 		return &committedOperationOutputError{err: err}
 	}
 	return nil
@@ -991,23 +1076,6 @@ func isEnvelopeCompatible(output any) bool {
 		output = wrapped.innerOutput()
 	}
 	return false
-}
-
-func acceptsContentType(accept, contentType string) bool {
-	if accept == "" || accept == "*/*" {
-		return true
-	}
-	contentType = normalizeContentType(contentType)
-	for _, item := range parseAcceptItems(accept) {
-		if acceptMediaTypeMatches(item.contentType, contentType) {
-			return true
-		}
-	}
-	return false
-}
-
-func requestAcceptsContentType(request *http.Request, contentType string) bool {
-	return request == nil || len(request.Header) == 0 || acceptsContentType(request.Header.Get("Accept"), contentType)
 }
 
 func jsonOperation[I, O any](method, path string, input Input[I], handler func(context.Context, I) (O, error), status int) *Operation {
@@ -1067,63 +1135,6 @@ func jsonOperation[I, O any](method, path string, input Input[I], handler func(c
 				writer.Header()["Content-Type"] = []string{MIMEJSON}
 				writer.WriteHeader(status)
 				_, _ = writer.Write(body)
-			}
-		}
-		operation.contextBuild = func(server *Server, _ *Operation) ContextHandler {
-			return func(c *Context) error {
-				value, err := directInput.buildRequestIndependentValue()
-				if err != nil {
-					return err
-				}
-				if !validateOperationInput(c.Writer, c.Request, server, operation, value) {
-					return nil
-				}
-				output, err := handler(c.Request.Context(), value)
-				if err != nil {
-					return err
-				}
-				if server.envelope != nil {
-					codec, _ := server.codecMgr.Resolve(MIMEJSON)
-					server.envelope(c.Writer, c.Request, status, output, nil, MIMEJSON, codec)
-					return nil
-				}
-				body, err := json.Marshal(output)
-				if err != nil {
-					return err
-				}
-				c.Header()["Content-Type"] = []string{MIMEJSON}
-				c.WriteHeader(status)
-				_, err = c.Writer.Write(body)
-				return err
-			}
-		}
-	} else if directInput, ok := input.(directPathInputBuilder[I]); ok {
-		operation.contextBuild = func(server *Server, _ *Operation) ContextHandler {
-			return func(c *Context) error {
-				value, err := directInput.buildDirectPathValue(c.Param(directInput.directPathName()))
-				if err != nil {
-					return err
-				}
-				if !validateOperationInput(c.Writer, c.Request, server, operation, value) {
-					return nil
-				}
-				output, err := handler(c.Request.Context(), value)
-				if err != nil {
-					return err
-				}
-				if server.envelope != nil {
-					codec, _ := server.codecMgr.Resolve(MIMEJSON)
-					server.envelope(c.Writer, c.Request, status, output, nil, MIMEJSON, codec)
-					return nil
-				}
-				body, err := json.Marshal(output)
-				if err != nil {
-					return err
-				}
-				c.Header()["Content-Type"] = []string{MIMEJSON}
-				c.WriteHeader(status)
-				_, err = c.Writer.Write(body)
-				return err
 			}
 		}
 	}
@@ -1250,45 +1261,6 @@ func textOperation[I any](method, path string, input Input[I], handler func(cont
 				writer.Header()["Content-Type"] = []string{MIMEPlain}
 				writer.WriteHeader(http.StatusOK)
 				_, _ = io.WriteString(writer, output)
-			}
-		}
-		operation.contextBuild = func(server *Server, mounted *Operation) ContextHandler {
-			return func(c *Context) error {
-				value, err := directInput.buildRequestIndependentValue()
-				if err != nil {
-					return err
-				}
-				if !validateOperationInput(c.Writer, c.Request, server, mounted, value) {
-					return nil
-				}
-				output, err := handler(c.Request.Context(), value)
-				if err != nil {
-					return err
-				}
-				c.Header()["Content-Type"] = []string{MIMEPlain}
-				c.WriteHeader(http.StatusOK)
-				_, err = io.WriteString(c.Writer, output)
-				return err
-			}
-		}
-	} else if directInput, ok := input.(directPathInputBuilder[I]); ok {
-		operation.contextBuild = func(server *Server, mounted *Operation) ContextHandler {
-			return func(c *Context) error {
-				value, err := directInput.buildDirectPathValue(c.Param(directInput.directPathName()))
-				if err != nil {
-					return err
-				}
-				if !validateOperationInput(c.Writer, c.Request, server, mounted, value) {
-					return nil
-				}
-				output, err := handler(c.Request.Context(), value)
-				if err != nil {
-					return err
-				}
-				c.Header()["Content-Type"] = []string{MIMEPlain}
-				c.WriteHeader(http.StatusOK)
-				_, err = io.WriteString(c.Writer, output)
-				return err
 			}
 		}
 	}

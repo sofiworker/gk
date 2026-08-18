@@ -58,6 +58,20 @@ func (s *pathSegmentList) Add(value pathSegment) {
 	s.overflow = append(s.overflow, value)
 }
 
+// Truncate 回退段列表到 length,撤销未成功分支的记录(零分配,保留容量)。
+// Truncate rewinds the segment list to length, undoing records of failed
+// match branches without allocating and while keeping capacity.
+func (s *pathSegmentList) Truncate(length int) {
+	if length <= s.len {
+		s.len = length
+		if s.overflow != nil {
+			s.overflow = s.overflow[:0]
+		}
+		return
+	}
+	s.overflow = s.overflow[:length-s.len]
+}
+
 func (s pathSegmentList) Len() int {
 	return s.len + len(s.overflow)
 }
@@ -154,8 +168,20 @@ func parseRequestPath(rawPath string, strict bool) (requestPath, error) {
 		if rawSegment == "" {
 			return requestPath{}, fmt.Errorf("%w: %q contains an empty segment", ErrInvalidRequestPath, rawPath)
 		}
-		if err := validateRawSegment(rawSegment); err != nil {
-			return requestPath{}, err
+		// 快速校验:含 '%' 的段走完整校验(转义合法 + dot 段);
+		// 无转义段只需对潜在 dot 段(长度 ≤2)做检查,长段跳过逐字节校验。
+		// fast validation: segments with '%' take the full check (escape
+		// validity + dot segments); unescaped segments only need the dot
+		// check for short segments, and long segments skip byte-wise
+		// validation entirely.
+		if strings.IndexByte(rawSegment, '%') >= 0 {
+			if err := validateRawSegment(rawSegment); err != nil {
+				return requestPath{}, err
+			}
+		} else if len(rawSegment) <= 2 {
+			if rawSegment == "." || rawSegment == ".." {
+				return requestPath{}, fmt.Errorf("%w: %q contains dot segment", ErrInvalidRequestPath, rawPath)
+			}
 		}
 		result.segments.Add(pathSegment{start: start, end: end})
 		if end == len(path) {

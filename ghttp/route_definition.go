@@ -21,26 +21,28 @@ const (
 )
 
 type routeDefinition struct {
-	method             string
-	pattern            routePattern
-	handler            http.Handler
-	contextBuild       func(*Server, *Operation) ContextHandler
-	fastBuild          func(*Server, *Operation) http.HandlerFunc
-	middlewares        []Middleware
-	contextMiddlewares []ContextMiddleware
-	group              *Group
-	needsExtractor     bool
-	terminal           routeTerminalKind
-	responseStatus     int
-	responseHeaders    []responseHeader
-	errorWriter        ErrorWriter
-	problemDetails     bool
-	internal           bool
-	doc                RouteDoc
-	reqType            reflect.Type
-	respType           reflect.Type
-	consumes           []string
-	produces           []string
+	method         string
+	pattern        routePattern
+	handler        http.Handler
+	fastBuild      func(*Server, *Operation) http.HandlerFunc
+	middlewares    []Middleware
+	group          *Group
+	needsExtractor bool
+	// requestOnly 标记输入链只读请求元数据;用于无状态快路径判定。
+	// requestOnly marks an input chain reading only request metadata; it feeds
+	// the stateless fast-path decision.
+	requestOnly     bool
+	terminal        routeTerminalKind
+	responseStatus  int
+	responseHeaders []responseHeader
+	errorWriter     ErrorWriter
+	problemDetails  bool
+	internal        bool
+	doc             RouteDoc
+	reqType         reflect.Type
+	respType        reflect.Type
+	consumes        []string
+	produces        []string
 	// openAPI 在路由注册时编译；不可变定义携带反射结果，文档请求无需再次扫描类型。
 	// openAPI is compiled while the route is registered; the immutable definition
 	// avoids scanning request/response types when the document is served.
@@ -64,7 +66,6 @@ func (d routeDefinition) clone() routeDefinition {
 	cloned := d
 	cloned.pattern.segments = append([]routeSegment(nil), d.pattern.segments...)
 	cloned.middlewares = append([]Middleware(nil), d.middlewares...)
-	cloned.contextMiddlewares = append([]ContextMiddleware(nil), d.contextMiddlewares...)
 	cloned.doc = d.doc.clone()
 	cloned.consumes = append([]string(nil), d.consumes...)
 	cloned.produces = append([]string(nil), d.produces...)

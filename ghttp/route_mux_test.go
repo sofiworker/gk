@@ -49,18 +49,14 @@ func TestRouteMuxUsesCurrentMethodPrecedence(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			requestPath, err := parseRequestPath(tt.path, false)
-			if err != nil {
-				t.Fatalf("parseRequestPath(%q) error = %v", tt.path, err)
-			}
-			result := mux.match(tt.method, requestPath)
+			result := mux.match(tt.method, tt.path, false)
 			if result.kind != routeMatchFound {
 				t.Fatalf("match kind = %v, want routeMatchFound", result.kind)
 			}
 			if got := result.route.definition.pattern.path; got != tt.wantRoute {
 				t.Fatalf("matched route = %q, want %q", got, tt.wantRoute)
 			}
-			params, err := result.route.extract(requestPath)
+			params, err := result.route.extract(result.path)
 			if err != nil {
 				t.Fatalf("extract error = %v", err)
 			}
@@ -75,15 +71,11 @@ func TestRouteMuxCatchAllMatchesZeroSegments(t *testing.T) {
 	t.Parallel()
 
 	mux := newTestRouteMux(t, testRouteDefinition(t, http.MethodGet, "/files/{path...}"))
-	requestPath, err := parseRequestPath("/files", false)
-	if err != nil {
-		t.Fatalf("parseRequestPath error = %v", err)
-	}
-	result := mux.match(http.MethodGet, requestPath)
+	result := mux.match(http.MethodGet, "/files", false)
 	if result.kind != routeMatchFound {
 		t.Fatalf("match kind = %v, want routeMatchFound", result.kind)
 	}
-	params, err := result.route.extract(requestPath)
+	params, err := result.route.extract(result.path)
 	if err != nil {
 		t.Fatalf("extract error = %v", err)
 	}
@@ -149,11 +141,7 @@ func TestRouteMuxHEADAndMethodOutcomes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			requestPath, err := parseRequestPath(tt.path, false)
-			if err != nil {
-				t.Fatalf("parseRequestPath(%q) error = %v", tt.path, err)
-			}
-			result := mux.match(tt.method, requestPath)
+			result := mux.match(tt.method, tt.path, false)
 			if result.kind != tt.wantKind {
 				t.Fatalf("match kind = %v, want %v", result.kind, tt.wantKind)
 			}
@@ -174,11 +162,7 @@ func TestCompiledRouteExtractorRejectsRewrittenPath(t *testing.T) {
 	t.Parallel()
 
 	mux := newTestRouteMux(t, testRouteDefinition(t, http.MethodGet, "/users/{id}"))
-	requestPath, err := parseRequestPath("/users/42", false)
-	if err != nil {
-		t.Fatalf("parseRequestPath error = %v", err)
-	}
-	result := mux.match(http.MethodGet, requestPath)
+	result := mux.match(http.MethodGet, "/users/42", false)
 	if result.kind != routeMatchFound {
 		t.Fatalf("match kind = %v, want routeMatchFound", result.kind)
 	}
