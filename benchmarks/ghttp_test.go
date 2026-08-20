@@ -2,7 +2,6 @@ package webbench
 
 import (
 	"context"
-	"net/http"
 
 	"github.com/sofiworker/gk/ghttp"
 )
@@ -107,10 +106,8 @@ func newGhttpServer() *ghttp.Server {
 	// middleware x5 (group scoped so other routes stay clean)
 	mw := s.Group("/mw")
 	for i := 0; i < middlewareCount; i++ {
-		mw.Use(func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				next.ServeHTTP(w, r)
-			})
+		mw.Use(func(c *ghttp.Ctx) {
+			c.Next()
 		})
 	}
 	mw.MustMount(ghttp.GetJSON("/ping", ghttp.NoInput(), func(_ context.Context, _ ghttp.EmptyInput) (pingOut, error) {

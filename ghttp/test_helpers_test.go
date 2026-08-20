@@ -3,7 +3,6 @@ package ghttp
 import (
 	"context"
 	"errors"
-	"net/http"
 	"testing"
 )
 
@@ -31,11 +30,9 @@ func testHandler(_ context.Context, request testInput) (testOutput, error) {
 }
 
 func middlewareSetHeader(name, value string) Middleware {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-			writer.Header().Set(name, value)
-			next.ServeHTTP(writer, request)
-		})
+	return func(c *Ctx) {
+		c.W.Header().Set(name, value)
+		c.Next()
 	}
 }
 

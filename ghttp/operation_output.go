@@ -602,6 +602,15 @@ func compileOperation[I, O any](builder *EndpointBuilder, input Input[I], output
 						writeRouteError(writer, request, server, mounted.errorWriter, mounted.produces, http.StatusInternalServerError, err)
 						return
 					}
+					// 输出值实现了状态/响应头/Cookie 钩子时必须走通用计划路径,
+					// 直编路径硬编码 200 会丢失这些语义。
+					// dynamic output hooks (status/header/cookies) require the
+					// generic plan path; the inline path hardcodes 200 and would
+					// silently drop them.
+					if plan.valueCaps.status || plan.valueCaps.header || plan.valueCaps.cookies {
+						handleOperationOutputError(writer, request, server, mounted, writePlannedOutput(writer, request, server, mounted.errorWriter, response, plan))
+						return
+					}
 					if server.envelope != nil {
 						codec, _ := server.codecMgr.Resolve(MIMEJSON)
 						server.envelope(writer, request, http.StatusOK, response, nil, MIMEJSON, codec)
@@ -742,8 +751,7 @@ func compileOperation[I, O any](builder *EndpointBuilder, input Input[I], output
 		// compiled shape with no performance fork.
 		if _, specialized := any(output).(jsonOutput[O]); specialized {
 			return pathParamHandlerFunc(func(writer http.ResponseWriter, request *http.Request, params pathParamList) {
-				operationRequest := newOperationRequest(writer, request, params, server, mounted)
-				value, err := input.build(&operationRequest)
+				value, err := buildOperationInputValue(writer, request, params, server, mounted, input)
 				if err != nil {
 					writeRouteError(writer, request, server, mounted.errorWriter, mounted.produces, http.StatusBadRequest, err)
 					return
@@ -763,8 +771,7 @@ func compileOperation[I, O any](builder *EndpointBuilder, input Input[I], output
 		}
 		if _, specialized := any(output).(textOutput); specialized {
 			return pathParamHandlerFunc(func(writer http.ResponseWriter, request *http.Request, params pathParamList) {
-				operationRequest := newOperationRequest(writer, request, params, server, mounted)
-				value, err := input.build(&operationRequest)
+				value, err := buildOperationInputValue(writer, request, params, server, mounted, input)
 				if err != nil {
 					writeRouteError(writer, request, server, mounted.errorWriter, mounted.produces, http.StatusBadRequest, err)
 					return
@@ -783,8 +790,7 @@ func compileOperation[I, O any](builder *EndpointBuilder, input Input[I], output
 			})
 		}
 		return pathParamHandlerFunc(func(writer http.ResponseWriter, request *http.Request, params pathParamList) {
-			operationRequest := newOperationRequest(writer, request, params, server, mounted)
-			value, err := input.build(&operationRequest)
+			value, err := buildOperationInputValue(writer, request, params, server, mounted, input)
 			if err != nil {
 				writeRouteError(writer, request, server, mounted.errorWriter, mounted.produces, http.StatusBadRequest, err)
 				return
@@ -801,6 +807,20 @@ func compileOperation[I, O any](builder *EndpointBuilder, input Input[I], output
 		})
 	}
 	return operation
+}
+
+// buildOperationInputValue 构建输入值:stateIndependent 输入走免堆直编路径
+// (不构造 operationRequest,避免按值携带参数列表导致堆逃逸);其余输入走
+// operationRequest 通用路径。
+// buildOperationInputValue builds the input value: stateIndependent inputs take
+// the heap-free direct path (no operationRequest, avoiding the by-value param
+// list escape); the rest use the general operationRequest path.
+func buildOperationInputValue[I any](writer http.ResponseWriter, request *http.Request, params pathParamList, server *Server, mounted *Operation, input Input[I]) (I, error) {
+	if stateDirect, ok := input.(stateDirectInputBuilder[I]); ok && stateDirect.stateDirectInput() {
+		return stateDirect.buildStateDirect(request, params)
+	}
+	operationRequest := newOperationRequest(writer, request, params, server, mounted)
+	return input.build(&operationRequest)
 }
 
 // writeDirectJSON 是 JSON 输出的直编写路径:值能力(状态码/响应头/Cookie)
@@ -1148,8 +1168,7 @@ func jsonOperation[I, O any](method, path string, input Input[I], handler func(c
 			}
 		}
 		return pathParamHandlerFunc(func(writer http.ResponseWriter, request *http.Request, params pathParamList) {
-			operationRequest := newOperationRequest(writer, request, params, server, mounted)
-			value, err := input.build(&operationRequest)
+			value, err := buildOperationInputValue(writer, request, params, server, mounted, input)
 			if err != nil {
 				writeRouteError(writer, request, server, mounted.errorWriter, mounted.produces, http.StatusBadRequest, err)
 				return
@@ -1288,8 +1307,7 @@ func textOperation[I any](method, path string, input Input[I], handler func(cont
 			}
 		}
 		return pathParamHandlerFunc(func(writer http.ResponseWriter, request *http.Request, params pathParamList) {
-			operationRequest := newOperationRequest(writer, request, params, server, mounted)
-			value, err := input.build(&operationRequest)
+			value, err := buildOperationInputValue(writer, request, params, server, mounted, input)
 			if err != nil {
 				writeRouteError(writer, request, server, mounted.errorWriter, mounted.produces, http.StatusBadRequest, err)
 				return

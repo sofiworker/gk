@@ -2,6 +2,7 @@ package ghttp
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,13 +11,10 @@ import (
 
 func TestErrorDetailsHiddenByDefault(t *testing.T) {
 	type input struct {
-		Params
-		Body struct {
-			Name string `json:"name"`
-		}
+		Name string `json:"name"`
 	}
 	app := New(WithProduces(MIMEJSON))
-	app.MustMount(Handle(Post("/users"), StructInput[input](), JSONOutput[struct{}](), func(context.Context, input) (struct{}, error) {
+	app.MustMount(Handle(Post("/users"), JSONBody[input](), JSONOutput[struct{}](), func(context.Context, input) (struct{}, error) {
 		return struct{}{}, Err(http.StatusBadRequest, "internal secret detail")
 	}))
 
@@ -35,7 +33,7 @@ func TestErrorDetailsHiddenByDefault(t *testing.T) {
 
 func TestPlainErrorDetailsHiddenByDefault(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	app.MustMount(Handle(Get("/boom"), StructInput[Params](), JSONOutput[struct{}](), func(context.Context, Params) (struct{}, error) {
+	app.MustMount(Handle(Get("/boom"), NoInput(), JSONOutput[struct{}](), func(context.Context, EmptyInput) (struct{}, error) {
 		return struct{}{}, errInternalSecret
 	}))
 
@@ -51,30 +49,22 @@ func TestPlainErrorDetailsHiddenByDefault(t *testing.T) {
 }
 
 func TestErrorDetailsExposedWhenEnabled(t *testing.T) {
-	type input struct {
-		Params
-		Body struct {
-			Name string `json:"name"`
-		}
-	}
 	app := New(WithProduces(MIMEJSON), WithExposeErrorDetails())
-	app.MustMount(Handle(Post("/users"), StructInput[input](), JSONOutput[struct{}](), func(context.Context, input) (struct{}, error) {
-		return struct{}{}, nil
+	app.MustMount(Handle(Get("/boom"), NoInput(), JSONOutput[EmptyInput](), func(context.Context, EmptyInput) (EmptyInput, error) {
+		return EmptyInput{}, fmt.Errorf("raw internal secret detail")
 	}))
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(`{"name":`))
-	req.Header.Set("Content-Type", MIMEJSON)
-	app.ServeHTTP(w, req)
+	app.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/boom", nil))
 
-	if !strings.Contains(w.Body.String(), "unexpected EOF") {
-		t.Fatalf("parse error details missing: %s", w.Body.String())
+	if !strings.Contains(w.Body.String(), "raw internal secret detail") {
+		t.Fatalf("raw error details missing: %s", w.Body.String())
 	}
 }
 
 func TestExplicitHTTPErrorMessageAlwaysReturned(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	app.MustMount(Handle(Get("/users/{id}"), StructInput[Params](), JSONOutput[struct{}](), func(context.Context, Params) (struct{}, error) {
+	app.MustMount(Handle(Get("/users/{id}"), NoInput(), JSONOutput[struct{}](), func(context.Context, EmptyInput) (struct{}, error) {
 		return struct{}{}, Err(http.StatusNotFound, "user not found")
 	}))
 

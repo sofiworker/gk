@@ -44,8 +44,8 @@ func registerErrors(server *ghttp.Server, cfg Config) {
 	server.MustMount(ghttp.RawOperation(http.MethodGet, "/errors/validation", errorAdapterHandler(func() error {
 		return ghttp.Err(http.StatusUnprocessableEntity, http.StatusText(http.StatusUnprocessableEntity), ghttp.WithCause(fmt.Errorf("validation %s", secret)))
 	})))
-	server.MustMount(ghttp.HandleHTTP(ghttp.Get("/errors/status/{code}"), ghttp.StructInput[ghttp.Params](), func(w http.ResponseWriter, r *http.Request, params ghttp.Params) error {
-		status, err := strconv.Atoi(params.Path("code"))
+	server.MustMount(ghttp.HandleHTTP(ghttp.Get("/errors/status/{code}"), ghttp.PathString("code"), func(w http.ResponseWriter, r *http.Request, code string) error {
+		status, err := strconv.Atoi(code)
 		if err != nil || !allowedErrorStatus(status) {
 			applicationErrorAdapter(w, r, ghttp.NotFound(http.StatusText(http.StatusNotFound)))
 			return nil
@@ -53,11 +53,11 @@ func registerErrors(server *ghttp.Server, cfg Config) {
 		applicationErrorAdapter(w, r, ghttp.Err(status, http.StatusText(status), ghttp.WithCause(fmt.Errorf("controlled %s", secret))))
 		return nil
 	}))
-	server.MustMount(ghttp.Handle(ghttp.Get("/problem/{kind}"), ghttp.StructInput[ghttp.Params](), ghttp.JSONOutput[struct{}](), func(_ context.Context, params ghttp.Params) (struct{}, error) {
-		if params.Path("kind") != "not-found" {
-			return struct{}{}, ghttp.BadRequest(http.StatusText(http.StatusBadRequest))
+	server.MustMount(ghttp.Handle(ghttp.Get("/problem/{kind}"), ghttp.PathString("kind"), ghttp.JSONOutput[ghttp.EmptyInput](), func(_ context.Context, kind string) (ghttp.EmptyInput, error) {
+		if kind != "not-found" {
+			return ghttp.EmptyInput{}, ghttp.BadRequest(http.StatusText(http.StatusBadRequest))
 		}
-		return struct{}{}, ghttp.NotFound(http.StatusText(http.StatusNotFound))
+		return ghttp.EmptyInput{}, ghttp.NotFound(http.StatusText(http.StatusNotFound))
 	}).WithProblemDetails())
 
 	authGroup := server.Group("/auth")

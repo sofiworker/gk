@@ -10,12 +10,16 @@ import (
 	"testing"
 )
 
-type badCaseInput struct {
-	Params `json:"-"`
+type badCaseName struct {
+	Name string `json:"name"`
+}
 
-	Body struct {
-		Name string `json:"name"`
-	}
+type badCaseInput struct {
+	ID      string
+	Page    string
+	Flag    string
+	TraceID string
+	Body    badCaseName
 }
 
 type badCaseOutput struct {
@@ -26,13 +30,27 @@ type badCaseOutput struct {
 	Name    string `json:"name"`
 }
 
+func badCaseInputDescriptor() Input[badCaseInput] {
+	return MapInputs5(
+		PathString("id"),
+		QueryString("page"),
+		QueryString("flag"),
+		HeaderString("X-Trace-ID"),
+		JSONBody[badCaseName](),
+		func(id, page, flag, traceID string, body badCaseName) badCaseInput {
+			return badCaseInput{ID: id, Page: page, Flag: flag, TraceID: traceID, Body: body}
+		},
+	)
+}
+
 func TestOperationBadCasesMalformedJSONReturnsBadRequest(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	app.MustMount(Handle(Post("/users/{id}"), StructInput[badCaseInput](), JSONOutput[badCaseOutput](), badCaseEchoHandler))
+	app.MustMount(Handle(Post("/users/{id}"), badCaseInputDescriptor(), JSONOutput[badCaseOutput](), badCaseEchoHandler))
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/users/42", strings.NewReader(`{"name":`))
+	req := httptest.NewRequest(http.MethodPost, "/users/42?page=1&flag=on", strings.NewReader(`{"name":`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Trace-ID", "trace-0")
 	app.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
@@ -42,7 +60,7 @@ func TestOperationBadCasesMalformedJSONReturnsBadRequest(t *testing.T) {
 
 func TestOperationBadCasesParamsKeepRawScalarValues(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	app.MustMount(Handle(Post("/users/{id}"), StructInput[badCaseInput](), JSONOutput[badCaseOutput](), badCaseEchoHandler))
+	app.MustMount(Handle(Post("/users/{id}"), badCaseInputDescriptor(), JSONOutput[badCaseOutput](), badCaseEchoHandler))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/users/not-int?page=bad&flag=maybe", strings.NewReader(`{"name":"alice"}`))
@@ -67,11 +85,12 @@ func TestOperationBadCasesValidatorErrorReturnsUnprocessableEntity(t *testing.T)
 	app := New(WithValidator(serverValidatorFunc(func(context.Context, interface{}) error {
 		return wantErr
 	})), WithProduces(MIMEJSON))
-	app.MustMount(Handle(Post("/users/{id}"), StructInput[badCaseInput](), JSONOutput[badCaseOutput](), badCaseEchoHandler))
+	app.MustMount(Handle(Post("/users/{id}"), badCaseInputDescriptor(), JSONOutput[badCaseOutput](), badCaseEchoHandler))
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/users/42", strings.NewReader(`{"name":"alice"}`))
+	req := httptest.NewRequest(http.MethodPost, "/users/42?page=1&flag=on", strings.NewReader(`{"name":"alice"}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Trace-ID", "trace-0")
 	app.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnprocessableEntity {
@@ -81,8 +100,8 @@ func TestOperationBadCasesValidatorErrorReturnsUnprocessableEntity(t *testing.T)
 
 func TestOperationBadCasesHandlerHTTPErrorStatusIsPreserved(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	app.MustMount(Handle(Get("/conflict"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
-		return struct{}{}, Conflict("already exists")
+	app.MustMount(Handle(Get("/conflict"), NoInput(), JSONOutput[EmptyInput](), func(context.Context, EmptyInput) (EmptyInput, error) {
+		return EmptyInput{}, Conflict("already exists")
 	}))
 
 	rec := httptest.NewRecorder()
@@ -95,14 +114,12 @@ func TestOperationBadCasesHandlerHTTPErrorStatusIsPreserved(t *testing.T) {
 
 func TestOperationBadCasesMiddlewareCanShortCircuitRoute(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	app.MustMount(Handle(Get("/blocked"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
+	app.MustMount(Handle(Get("/blocked"), NoInput(), JSONOutput[EmptyInput](), func(context.Context, EmptyInput) (EmptyInput, error) {
 		t.Fatal("handler should not be called")
-		return struct{}{}, nil
-	}).WithMiddleware(func(http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusTeapot)
-			_, _ = w.Write([]byte("blocked"))
-		})
+		return EmptyInput{}, nil
+	}).WithMiddleware(func(c *Ctx) {
+		c.W.WriteHeader(http.StatusTeapot)
+		_, _ = c.W.Write([]byte("blocked"))
 	}))
 
 	rec := httptest.NewRecorder()
@@ -130,7 +147,7 @@ func TestOperationBadCasesGroupPathJoiningEdgeCases(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			app := New(WithProduces(MIMEJSON))
 			group := app.Group(tt.prefix)
-			group.MustMount(Handle(Get(tt.routePath), StructInput[struct{}](), JSONOutput[badCaseOutput](), func(context.Context, struct{}) (badCaseOutput, error) {
+			group.MustMount(Handle(Get(tt.routePath), NoInput(), JSONOutput[badCaseOutput](), func(context.Context, EmptyInput) (badCaseOutput, error) {
 				return badCaseOutput{Name: tt.name}, nil
 			}))
 
@@ -149,7 +166,7 @@ func TestOperationBadCasesCORSPreflightShortCircuitsOptionsRoute(t *testing.T) {
 		AllowOrigins: []string{"*"},
 		AllowMethods: []string{http.MethodOptions},
 	}))
-	app.MustMount(Handle(Options("/options"), StructInput[struct{}](), JSONOutput[badCaseOutput](), func(context.Context, struct{}) (badCaseOutput, error) {
+	app.MustMount(Handle(Options("/options"), NoInput(), JSONOutput[badCaseOutput](), func(context.Context, EmptyInput) (badCaseOutput, error) {
 		t.Fatal("OPTIONS handler should not be called for CORS preflight")
 		return badCaseOutput{}, nil
 	}))
@@ -170,10 +187,10 @@ func TestOperationBadCasesCORSPreflightShortCircuitsOptionsRoute(t *testing.T) {
 
 func badCaseEchoHandler(ctx context.Context, req badCaseInput) (badCaseOutput, error) {
 	return badCaseOutput{
-		ID:      req.Path("id"),
-		Page:    req.Query("page"),
-		Flag:    req.Query("flag"),
-		TraceID: req.Header("X-Trace-ID"),
+		ID:      req.ID,
+		Page:    req.Page,
+		Flag:    req.Flag,
+		TraceID: req.TraceID,
 		Name:    req.Body.Name,
 	}, nil
 }

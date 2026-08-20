@@ -12,7 +12,7 @@ func TestLazyPathParamsDecodeOnAccess(t *testing.T) {
 
 	server := New(WithProduces(MIMEJSON))
 	var gotID string
-	server.MustMount(Handle(Get("/users/{id}"), StructInput[Params](), JSONOutput[map[string]string](), func(_ context.Context, p Params) (map[string]string, error) {
+	server.MustMount(Handle(Get("/users/{id}"), lazyParamsInput(), JSONOutput[map[string]string](), func(_ context.Context, p Params) (map[string]string, error) {
 		gotID = p.Path("id")
 		return map[string]string{"id": gotID}, nil
 	}))
@@ -33,7 +33,7 @@ func TestLazyPathParamsCatchAllJoinsRawSegments(t *testing.T) {
 
 	server := New(WithProduces(MIMEJSON))
 	var got string
-	server.MustMount(Handle(Get("/files/{path...}"), StructInput[Params](), JSONOutput[map[string]string](), func(_ context.Context, p Params) (map[string]string, error) {
+	server.MustMount(Handle(Get("/files/{path...}"), lazyParamsInput(), JSONOutput[map[string]string](), func(_ context.Context, p Params) (map[string]string, error) {
 		got = p.Path("path")
 		return map[string]string{"path": got}, nil
 	}))
@@ -50,7 +50,7 @@ func TestLazyPathParamsEncodedValues(t *testing.T) {
 
 	server := New(WithProduces(MIMEJSON))
 	var id, slug string
-	server.MustMount(Handle(Get("/u/{id}/{slug}"), StructInput[Params](), JSONOutput[map[string]string](), func(_ context.Context, p Params) (map[string]string, error) {
+	server.MustMount(Handle(Get("/u/{id}/{slug}"), lazyParamsInput(), JSONOutput[map[string]string](), func(_ context.Context, p Params) (map[string]string, error) {
 		id = p.Path("id")
 		slug = p.Path("slug")
 		return map[string]string{}, nil
@@ -69,7 +69,7 @@ func TestLazyPathParamsStaticEscapedMatch(t *testing.T) {
 	t.Parallel()
 
 	server := New(WithProduces(MIMEJSON))
-	server.MustMount(Handle(Get("/caf%C3%A9/ok"), StructInput[struct{}](), JSONOutput[map[string]string](), func(context.Context, struct{}) (map[string]string, error) {
+	server.MustMount(Handle(Get("/caf%C3%A9/ok"), NoInput(), JSONOutput[map[string]string](), func(_ context.Context, _ EmptyInput) (map[string]string, error) {
 		return map[string]string{"hit": "1"}, nil
 	}))
 
@@ -87,7 +87,7 @@ func TestLazyPathParamsDetachMaterializes(t *testing.T) {
 
 	server := New(WithProduces(MIMEJSON))
 	var detached Params
-	server.MustMount(Handle(Get("/a/{x}/b/{y}"), StructInput[Params](), JSONOutput[struct{}](), func(_ context.Context, p Params) (struct{}, error) {
+	server.MustMount(Handle(Get("/a/{x}/b/{y}"), lazyParamsInput(), JSONOutput[struct{}](), func(_ context.Context, p Params) (struct{}, error) {
 		_ = p.Path("x") // 只访问一个;detach 后另一个也必须物化。
 		detached = p.Detach()
 		return struct{}{}, nil
@@ -142,4 +142,14 @@ func TestValidateRawSegmentDotForms(t *testing.T) {
 	if err := validateRawSegment("%zz"); err == nil {
 		t.Error("validateRawSegment(%zz) = nil, want invalid escape error")
 	}
+}
+
+// lazyParamsInput 构造与当前请求惰性绑定的 Params 输入描述器。
+// lazyParamsInput builds a Params input descriptor lazily bound to the request.
+// 路径参数仍走 requestState 上的惰性解码源,handler 内 Params.Path 按需物化。
+// path params still resolve through the lazy source on requestState.
+func lazyParamsInput() Input[Params] {
+	return InputFunc(func(v RequestView) (Params, error) {
+		return paramsFromRequest(v.HTTPRequest(), nil), nil
+	})
 }

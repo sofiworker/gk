@@ -15,7 +15,8 @@ import (
 )
 
 type externalTypedInput struct {
-	ghttp.Params `json:"-"`
+	ID     string
+	Source string
 }
 
 type externalTypedOutput struct {
@@ -24,7 +25,8 @@ type externalTypedOutput struct {
 }
 
 type externalHTTPFuncInput struct {
-	ghttp.Params `json:"-"`
+	ID   string
+	View string
 }
 
 func TestServerRoutingPublicAPI(t *testing.T) {
@@ -44,13 +46,18 @@ func TestServerRoutingPublicAPI(t *testing.T) {
 	api := server.Group("/api", externalRoutingMiddleware(&middlewareOrder, "api"))
 	v1 := api.Group("/v1", externalRoutingMiddleware(&middlewareOrder, "v1"))
 
-	v1.MustMount(ghttp.Handle(ghttp.Get("/users/{id}"), ghttp.StructInput[externalTypedInput](), ghttp.JSONOutput[externalTypedOutput](),
+	v1.MustMount(ghttp.Handle(ghttp.Get("/users/{id}"),
+		ghttp.MapInputs(ghttp.PathString("id"), ghttp.QueryString("source"),
+			func(id, source string) externalTypedInput {
+				return externalTypedInput{ID: id, Source: source}
+			}),
+		ghttp.JSONOutput[externalTypedOutput](),
 
 		func(_ context.Context, input externalTypedInput) (externalTypedOutput, error) {
 			middlewareOrder = append(middlewareOrder, "handler")
 			return externalTypedOutput{
-				ID:     input.Path("id"),
-				Source: input.Query("source"),
+				ID:     input.ID,
+				Source: input.Source,
 			}, nil
 		}).WithMiddleware(externalRoutingMiddleware(&middlewareOrder, "route")))
 
@@ -61,18 +68,22 @@ func TestServerRoutingPublicAPI(t *testing.T) {
 			w.WriteHeader(http.StatusNoContent)
 		})))
 
-	v1.MustMount(ghttp.HandleHTTP(ghttp.Get("/manual/{id}"), ghttp.StructInput[externalHTTPFuncInput](),
+	v1.MustMount(ghttp.HandleHTTP(ghttp.Get("/manual/{id}"),
+		ghttp.MapInputs(ghttp.PathString("id"), ghttp.QueryString("view"),
+			func(id, view string) externalHTTPFuncInput {
+				return externalHTTPFuncInput{ID: id, View: view}
+			}),
 
 		func(w http.ResponseWriter, _ *http.Request, input externalHTTPFuncInput) error {
 			w.WriteHeader(http.StatusAccepted)
-			_, err := fmt.Fprintf(w, "%s:%s", input.Path("id"), input.Query("view"))
+			_, err := fmt.Fprintf(w, "%s:%s", input.ID, input.View)
 			return err
 		}))
 
-	server.MustMount(ghttp.Handle(ghttp.Get("/trigger-error"), ghttp.StructInput[struct{}](), ghttp.JSONOutput[struct{}](),
+	server.MustMount(ghttp.Handle(ghttp.Get("/trigger-error"), ghttp.NoInput(), ghttp.JSONOutput[ghttp.EmptyInput](),
 
-		func(context.Context, struct{}) (struct{}, error) {
-			return struct{}{}, errors.New("route failure")
+		func(context.Context, ghttp.EmptyInput) (ghttp.EmptyInput, error) {
+			return ghttp.EmptyInput{}, errors.New("route failure")
 		}))
 
 	testServer := httptest.NewServer(server)
@@ -146,12 +157,10 @@ func TestServerRoutingPublicAPI(t *testing.T) {
 }
 
 func externalRoutingMiddleware(order *[]string, name string) ghttp.Middleware {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			*order = append(*order, name+"-in")
-			next.ServeHTTP(w, r)
-			*order = append(*order, name+"-out")
-		})
+	return func(c *ghttp.Ctx) {
+		*order = append(*order, name+"-in")
+		c.Next()
+		*order = append(*order, name+"-out")
 	}
 }
 

@@ -22,7 +22,7 @@ func (s statusRenderResp) StatusCode() int { return http.StatusCreated }
 
 func TestRenderJSONForcesJSON(t *testing.T) {
 	app := New(WithProduces(MIMEXML)) // 默认只声明 XML,显式 JSON 应覆盖
-	app.MustMount(Handle(Get("/r"), StructInput[struct{}](), RenderOutput[renderResp](), func(ctx context.Context, _ struct{}) (Render[renderResp], error) {
+	app.MustMount(Handle(Get("/r"), NoInput(), RenderOutput[renderResp](), func(ctx context.Context, _ EmptyInput) (Render[renderResp], error) {
 		return RenderJSON(renderResp{ID: "1", Name: "x"}), nil
 	}))
 
@@ -43,7 +43,7 @@ func TestRenderJSONForcesJSON(t *testing.T) {
 
 func TestRenderXMLForcesXML(t *testing.T) {
 	app := New(WithProduces(MIMEJSON)) // 默认 JSON,显式 XML 应覆盖
-	app.MustMount(Handle(Get("/r"), StructInput[struct{}](), RenderOutput[renderResp](), func(ctx context.Context, _ struct{}) (Render[renderResp], error) {
+	app.MustMount(Handle(Get("/r"), NoInput(), RenderOutput[renderResp](), func(ctx context.Context, _ EmptyInput) (Render[renderResp], error) {
 		return RenderXML(renderResp{ID: "1", Name: "x"}), nil
 	}))
 
@@ -64,7 +64,7 @@ func TestRenderXMLForcesXML(t *testing.T) {
 
 func TestRenderRespectsAccept(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	app.MustMount(Handle(Get("/r"), StructInput[struct{}](), RenderOutput[renderResp](), func(ctx context.Context, _ struct{}) (Render[renderResp], error) {
+	app.MustMount(Handle(Get("/r"), NoInput(), RenderOutput[renderResp](), func(ctx context.Context, _ EmptyInput) (Render[renderResp], error) {
 		return RenderJSON(renderResp{ID: "1"}), nil
 	}))
 
@@ -80,7 +80,7 @@ func TestRenderRespectsAccept(t *testing.T) {
 
 func TestRenderBytesRawOutput(t *testing.T) {
 	app := New()
-	app.MustMount(Handle(Get("/r"), StructInput[struct{}](), RenderOutput[[]byte](), func(ctx context.Context, _ struct{}) (Render[[]byte], error) {
+	app.MustMount(Handle(Get("/r"), NoInput(), RenderOutput[[]byte](), func(ctx context.Context, _ EmptyInput) (Render[[]byte], error) {
 		return RenderBytes([]byte("hello, raw"), "text/custom"), nil
 	}))
 
@@ -101,7 +101,7 @@ func TestRenderBytesRawOutput(t *testing.T) {
 
 func TestRenderStatusCoderFromData(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	app.MustMount(Handle(Get("/r"), StructInput[struct{}](), RenderOutput[statusRenderResp](), func(ctx context.Context, _ struct{}) (Render[statusRenderResp], error) {
+	app.MustMount(Handle(Get("/r"), NoInput(), RenderOutput[statusRenderResp](), func(ctx context.Context, _ EmptyInput) (Render[statusRenderResp], error) {
 		return RenderJSON(statusRenderResp{V: "x"}), nil
 	}))
 
@@ -116,7 +116,7 @@ func TestRenderStatusCoderFromData(t *testing.T) {
 
 func TestRenderWithEnvelope(t *testing.T) {
 	app := New(WithProduces(MIMEJSON), WithEnvelope(DefaultEnvelope))
-	app.MustMount(Handle(Get("/r"), StructInput[struct{}](), RenderOutput[renderResp](), func(ctx context.Context, _ struct{}) (Render[renderResp], error) {
+	app.MustMount(Handle(Get("/r"), NoInput(), RenderOutput[renderResp](), func(ctx context.Context, _ EmptyInput) (Render[renderResp], error) {
 		return RenderJSON(renderResp{ID: "1", Name: "x"}), nil
 	}))
 

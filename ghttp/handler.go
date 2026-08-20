@@ -5,11 +5,15 @@ import (
 	"net/http"
 )
 
-// HandlerFunc 是泛型 handler 签名。
-// HandlerFunc is the generic handler signature.
-// Req 为解析后的请求输入结构体，Resp 为响应输出结构体。
-// Req is the parsed request input; Resp is the response output.
-type HandlerFunc[Req, Resp any] func(ctx context.Context, input Req) (Resp, error)
+// 泛型业务 handler 的签名为普通函数类型:
+// func(context.Context, I) (O, error),由 Handle/GetJSON 等入口直接接受。
+// 历史别名 HandlerFunc[Req,Resp] 已随执行模型重写删除,链处理器名让位给
+// 新执行链的 HandlerFunc func(*Ctx)。
+// The generic business handler signature is a plain function type:
+// func(context.Context, I) (O, error), accepted directly by Handle/GetJSON.
+// The historical HandlerFunc[Req,Resp] alias was removed in the execution
+// model rewrite; the chain handler name now belongs to the new chain's
+// HandlerFunc func(*Ctx).
 
 // NoInputHandler 用于无请求体/参数的路由。
 // NoInputHandler is for endpoints without request input.

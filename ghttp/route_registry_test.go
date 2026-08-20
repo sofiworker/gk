@@ -169,14 +169,14 @@ func TestOperationRejectsNilTypedHandler(t *testing.T) {
 	t.Parallel()
 
 	server := New(WithProduces(MIMEJSON))
-	var handler HandlerFunc[struct{}, struct{}]
+	var handler func(context.Context, EmptyInput) (EmptyInput, error)
 
 	defer func() {
 		if recover() == nil {
 			t.Fatal("To(nil) did not panic")
 		}
 	}()
-	server.MustMount(Handle(Get("/users"), StructInput[struct{}](), JSONOutput[struct{}](), handler))
+	server.MustMount(Handle(Get("/users"), NoInput(), JSONOutput[EmptyInput](), handler))
 }
 
 func TestOperationRejectsNilRawHandler(t *testing.T) {
@@ -197,14 +197,14 @@ func TestOperationRejectsNilParsedHandler(t *testing.T) {
 	t.Parallel()
 
 	server := New()
-	var handler HTTPHandlerFunc[struct{}]
+	var handler HTTPHandlerFunc[EmptyInput]
 
 	defer func() {
 		if recover() == nil {
 			t.Fatal("ToHTTPFunc(nil) did not panic")
 		}
 	}()
-	server.MustMount(HandleHTTP(Get("/users"), StructInput[struct{}](), handler))
+	server.MustMount(HandleHTTP(Get("/users"), NoInput(), handler))
 }
 
 func TestOperationRejectsEmptyStaticRoot(t *testing.T) {
@@ -229,22 +229,22 @@ func TestOperationRejectsNilSpecializedHandlers(t *testing.T) {
 		{
 			name: "redirect",
 			register: func(server *Server) {
-				var handler RedirectFunc[struct{}]
-				server.MustMount(RedirectFuncOperation(Get("/users"), StructInput[struct{}](), http.StatusFound, handler))
+				var handler RedirectFunc[EmptyInput]
+				server.MustMount(RedirectFuncOperation(Get("/users"), NoInput(), http.StatusFound, handler))
 			},
 		},
 		{
 			name: "sse",
 			register: func(server *Server) {
-				var handler SSEHandler
-				server.MustMount(SSEOperation("/users", StructInput[Params](), handler))
+				var handler func(context.Context, EmptyInput, *SSEWriter) error
+				server.MustMount(SSEOperation("/users", NoInput(), handler))
 			},
 		},
 		{
 			name: "websocket",
 			register: func(server *Server) {
-				var handler WebSocketHandler
-				server.MustMount(WebSocketOperation("/users", StructInput[Params](), handler))
+				var handler func(context.Context, EmptyInput, *WebSocketConn) error
+				server.MustMount(WebSocketOperation("/users", NoInput(), handler))
 			},
 		},
 	}
@@ -265,8 +265,8 @@ func TestOperationNormalizesCustomMethod(t *testing.T) {
 	t.Parallel()
 
 	server := New(WithProduces(MIMEJSON))
-	server.MustMount(Handle(Endpoint("purge", "/cache/{key}"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
-		return struct{}{}, nil
+	server.MustMount(Handle(Endpoint("purge", "/cache/{key}"), NoInput(), JSONOutput[EmptyInput](), func(context.Context, EmptyInput) (EmptyInput, error) {
+		return EmptyInput{}, nil
 	}))
 
 	definitions := server.registry.snapshot()

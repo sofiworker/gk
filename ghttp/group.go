@@ -36,8 +36,13 @@ func (r skipRule) matches(method, pattern string) bool {
 	return r.pattern == pattern
 }
 
-// SkipUse 豁免指定中间件在本组匹配路由上执行（精确路径）。
+// SkipUse 豁免指定中间件在本组匹配路由上执行（精确路径）。豁免采用
+// 闭包指针比较,必须与 Use 传入完全同一实例（如 `mw := RequestID();
+// g.Use(mw); g.SkipUse(mw, ...)`）——各自调用工厂函数产生的新闭包无法豁免。
 // SkipUse exempts the middleware on this group's matching route (exact pattern).
+// The exemption compares closure pointers, so the instance must be the exact
+// one passed to Use (e.g. `mw := RequestID(); g.Use(mw); g.SkipUse(mw, ...)`).
+// Distinct factory-call closures cannot exempt each other.
 // 典型用途：全局鉴权中间件放行登录/健康检查路由。
 // Typical use: exempt an auth middleware for login and health routes.
 func (g *Group) SkipUse(mw Middleware, method, pattern string) *Group {

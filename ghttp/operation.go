@@ -51,30 +51,31 @@ type operationHandlerFactory func(*Server, *Operation) http.Handler
 // Operation 是不可变、可复用的一等 HTTP endpoint 描述。
 // Operation is an immutable, reusable first-class HTTP endpoint description.
 type Operation struct {
-	method           string
-	path             string
-	build            operationHandlerFactory
-	fastBuild        func(*Server, *Operation) http.HandlerFunc
-	middlewares      []Middleware
-	doc              RouteDoc
-	consumes         []string
-	produces         []string
-	openAPI          routeOpenAPIMetadata
-	terminal         routeTerminalKind
-	stateIndependent bool
+	method      string
+	path        string
+	build       operationHandlerFactory
+	fastBuild   func(*Server, *Operation) http.HandlerFunc
+	middlewares []Middleware
+	doc         RouteDoc
+	consumes    []string
+	produces    []string
+	openAPI     routeOpenAPIMetadata
+	terminal    routeTerminalKind
+
 	// requestOnly 标记输入链只读请求元数据;满足其它条件时可跳过请求状态注入。
 	// requestOnly marks an input chain reading only request metadata; with the
 	// other preconditions met, request-state injection can be skipped.
-	requestOnly     bool
-	setupErr        error
-	status          int
-	headers         []responseHeader
-	wsCheckOrigin   func(*http.Request) bool
-	maxBodyBytes    int64
-	maxBodyBytesSet bool
-	errorWriter     ErrorWriter
-	problemDetails  bool
-	skipValidation  bool
+	requestOnly      bool
+	setupErr         error
+	status           int
+	headers          []responseHeader
+	wsCheckOrigin    func(*http.Request) bool
+	maxBodyBytes     int64
+	maxBodyBytesSet  bool
+	errorWriter      ErrorWriter
+	stateIndependent bool
+	problemDetails   bool
+	skipValidation   bool
 }
 
 // Method 返回 HTTP 方法。
@@ -300,9 +301,7 @@ func mountOperation(target routeTarget, operation *Operation) error {
 	if handler == nil {
 		return ErrOperationHandlerNil
 	}
-	if mounted.stateIndependent {
-		handler = markStateIndependentTerminal(handler)
-	}
+
 	doc := mounted.doc.clone()
 	if doc.Summary == "" {
 		doc.Summary = method + " " + pattern.path
@@ -311,23 +310,24 @@ func mountOperation(target routeTarget, operation *Operation) error {
 		doc.OperationID = inferOperationID(method, pattern)
 	}
 	definition := routeDefinition{
-		method:          method,
-		pattern:         pattern,
-		handler:         handler,
-		fastBuild:       mounted.fastBuild,
-		middlewares:     append([]Middleware(nil), mounted.middlewares...),
-		group:           target.routeGroup(),
-		needsExtractor:  pattern.hasParams(),
-		requestOnly:     mounted.requestOnly,
-		terminal:        mounted.terminal,
-		responseStatus:  mounted.status,
-		responseHeaders: append([]responseHeader(nil), mounted.headers...),
-		errorWriter:     mounted.errorWriter,
-		problemDetails:  mounted.problemDetails,
-		doc:             doc,
-		consumes:        append([]string(nil), mounted.consumes...),
-		produces:        append([]string(nil), mounted.produces...),
-		openAPI:         mounted.openAPI.clone(),
+		method:           method,
+		pattern:          pattern,
+		handler:          handler,
+		fastBuild:        mounted.fastBuild,
+		middlewares:      append([]Middleware(nil), mounted.middlewares...),
+		group:            target.routeGroup(),
+		needsExtractor:   pattern.hasParams(),
+		requestOnly:      mounted.requestOnly,
+		terminal:         mounted.terminal,
+		responseStatus:   mounted.status,
+		responseHeaders:  append([]responseHeader(nil), mounted.headers...),
+		errorWriter:      mounted.errorWriter,
+		stateIndependent: mounted.stateIndependent,
+		problemDetails:   mounted.problemDetails,
+		doc:              doc,
+		consumes:         append([]string(nil), mounted.consumes...),
+		produces:         append([]string(nil), mounted.produces...),
+		openAPI:          mounted.openAPI.clone(),
 	}
 	return server.registerDefinitions(definition)
 }

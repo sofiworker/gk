@@ -2,7 +2,6 @@ package ghttp
 
 import (
 	"net/http"
-	"reflect"
 	"strconv"
 	"strings"
 )
@@ -31,18 +30,17 @@ type routeDefinition struct {
 	// requestOnly 标记输入链只读请求元数据;用于无状态快路径判定。
 	// requestOnly marks an input chain reading only request metadata; it feeds
 	// the stateless fast-path decision.
-	requestOnly     bool
-	terminal        routeTerminalKind
-	responseStatus  int
-	responseHeaders []responseHeader
-	errorWriter     ErrorWriter
-	problemDetails  bool
-	internal        bool
-	doc             RouteDoc
-	reqType         reflect.Type
-	respType        reflect.Type
-	consumes        []string
-	produces        []string
+	requestOnly      bool
+	terminal         routeTerminalKind
+	responseStatus   int
+	responseHeaders  []responseHeader
+	errorWriter      ErrorWriter
+	stateIndependent bool
+	problemDetails   bool
+	internal         bool
+	doc              RouteDoc
+	consumes         []string
+	produces         []string
 	// openAPI 在路由注册时编译；不可变定义携带反射结果，文档请求无需再次扫描类型。
 	// openAPI is compiled while the route is registered; the immutable definition
 	// avoids scanning request/response types when the document is served.

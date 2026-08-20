@@ -1,7 +1,6 @@
 package ghttp
 
 import (
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,82 +9,53 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewResponseWriter(t *testing.T) {
-	w := httptest.NewRecorder()
-	rw := NewResponseWriter(w)
-	require.NotNil(t, rw)
+// Ctx 实现 http.ResponseWriter;测试 Ctx 的写入行为。
+// Ctx implements http.ResponseWriter; tests Ctx's write behavior.
 
-	assert.Equal(t, 200, rw.Status())
-	assert.False(t, rw.Written())
-	assert.Equal(t, 0, rw.Size())
+func newCtxTestWriter(w http.ResponseWriter) *Ctx {
+	c := acquireCtx(w, httptest.NewRequest("GET", "/", nil))
+	return c
 }
 
-func TestResponseWriterWriteHeader(t *testing.T) {
+func TestCtxWriterWriteHeader(t *testing.T) {
 	w := httptest.NewRecorder()
-	rw := NewResponseWriter(w)
+	c := newCtxTestWriter(w)
 
-	rw.WriteHeader(201)
-	assert.Equal(t, 201, rw.Status())
-	assert.True(t, rw.Written())
-
-	// 第二次调用应为空操作；second call should be a no-op.
-	rw.WriteHeader(500)
-	assert.Equal(t, 201, rw.Status())
+	c.WriteHeader(201)
+	assert.Equal(t, 201, c.status)
+	assert.True(t, c.committed)
+	assert.Equal(t, 201, w.Code)
 }
 
-func TestResponseWriterWrite(t *testing.T) {
+func TestCtxWriterWrite(t *testing.T) {
 	w := httptest.NewRecorder()
-	rw := NewResponseWriter(w)
+	c := newCtxTestWriter(w)
 
-	n, err := rw.Write([]byte("hello"))
+	n, err := c.Write([]byte("hello"))
 	require.NoError(t, err)
 	assert.Equal(t, 5, n)
-	assert.Equal(t, 5, rw.Size())
-	assert.True(t, rw.Written())
 	assert.Equal(t, "hello", w.Body.String())
 }
 
-func TestResponseWriterWriteString(t *testing.T) {
-	w := httptest.NewRecorder()
-	rw := NewResponseWriter(w)
-
-	n, err := rw.WriteString("world")
-	require.NoError(t, err)
-	assert.Equal(t, 5, n)
-	assert.Equal(t, "world", w.Body.String())
+func TestCtxWriterImplementsResponseWriter(t *testing.T) {
+	var _ http.ResponseWriter = new(Ctx)
 }
 
-func TestResponseWriterWriteAfterWriteHeader(t *testing.T) {
+func TestCtxWriterMultipleWrites(t *testing.T) {
 	w := httptest.NewRecorder()
-	rw := NewResponseWriter(w)
+	c := newCtxTestWriter(w)
 
-	rw.WriteHeader(404)
-	n, err := rw.Write([]byte("not found"))
-	require.NoError(t, err)
-	assert.Equal(t, 9, n)
-	assert.Equal(t, 404, rw.Status())
-}
+	_, _ = c.Write([]byte("a"))
+	_, _ = c.Write([]byte("b"))
+	_, _ = c.Write([]byte("c"))
 
-func TestResponseWriterImplementsWriteResponse(t *testing.T) {
-	var _ io.Writer = new(ResponseWriter)
-	var _ http.ResponseWriter = new(ResponseWriter)
-}
-
-func TestResponseWriterMultipleWrites(t *testing.T) {
-	w := httptest.NewRecorder()
-	rw := NewResponseWriter(w)
-
-	_, _ = rw.Write([]byte("a"))
-	_, _ = rw.Write([]byte("b"))
-	_, _ = rw.Write([]byte("c"))
-
-	assert.Equal(t, 3, rw.Size())
 	assert.Equal(t, "abc", w.Body.String())
 }
 
-func TestResponseWriterUnwrap(t *testing.T) {
+func TestCtxWriterHeader(t *testing.T) {
 	w := httptest.NewRecorder()
-	rw := NewResponseWriter(w)
+	c := newCtxTestWriter(w)
 
-	assert.Same(t, w, rw.Unwrap())
+	c.Header().Set("X-Test", "1")
+	assert.Equal(t, "1", w.Header().Get("X-Test"))
 }

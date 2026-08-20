@@ -138,10 +138,8 @@ func newGhttpMiddleware20() *ghttp.Server {
 	s := ghttp.New(ghttp.WithProduces(ghttp.MIMEJSON))
 	group := s.Group("/mw20")
 	for i := 0; i < middleware20Count; i++ {
-		group.Use(func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				next.ServeHTTP(w, r)
-			})
+		group.Use(func(c *ghttp.Ctx) {
+			c.Next()
 		})
 	}
 	group.MustMount(ghttp.GetJSON("/ping", ghttp.NoInput(), func(_ context.Context, _ ghttp.EmptyInput) (pingOut, error) {
@@ -392,10 +390,8 @@ func newGhttpMiddleware10() *ghttp.Server {
 	s := ghttp.New(ghttp.WithProduces(ghttp.MIMEJSON))
 	group := s.Group("/mw10")
 	for i := 0; i < 10; i++ {
-		group.Use(func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				next.ServeHTTP(w, r)
-			})
+		group.Use(func(c *ghttp.Ctx) {
+			c.Next()
 		})
 	}
 	group.MustMount(ghttp.GetJSON("/ping", ghttp.NoInput(), func(_ context.Context, _ ghttp.EmptyInput) (pingOut, error) {
@@ -465,13 +461,11 @@ func newGhttpMiddlewareN(n int, work bool) *ghttp.Server {
 	group := s.Group(fmt.Sprintf("/mwn%d", n))
 	for i := 0; i < n; i++ {
 		idx := i
-		group.Use(func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if work {
-					w.Header().Set(fmt.Sprintf("X-MW-%d", idx), "v")
-				}
-				next.ServeHTTP(w, r)
-			})
+		group.Use(func(c *ghttp.Ctx) {
+			if work {
+				c.W.Header().Set(fmt.Sprintf("X-MW-%d", idx), "v")
+			}
+			c.Next()
 		})
 	}
 	group.MustMount(ghttp.GetJSON("/ping", ghttp.NoInput(), func(_ context.Context, _ ghttp.EmptyInput) (pingOut, error) {
@@ -507,8 +501,13 @@ func BenchmarkMiddleware100(b *testing.B) {
 	b.Run("ghttp", func(b *testing.B) {
 		benchExtended(b, newGhttpMiddlewareN(100, false), http.MethodGet, "/mwn100/ping", nil)
 	})
+	// gin v1.12 每路由 handler 上限为 abortIndex(63),100 层中间件会导致
+	// routergroup.handle panic("too many handlers"),故跳过 gin。
+	// gin v1.12 caps handlers per route at abortIndex (63); 100 middleware
+	// layers make routergroup.handle panic("too many handlers"), so gin is
+	// skipped here.
 	b.Run("gin", func(b *testing.B) {
-		benchExtended(b, newGinMiddlewareN(100, false), http.MethodGet, "/mwn100/ping", nil)
+		b.Skip("gin caps handlers per route at 63 (abortIndex)")
 	})
 }
 

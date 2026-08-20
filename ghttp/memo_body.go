@@ -106,27 +106,19 @@ func (m *memoBody) bytes() ([]byte, error) {
 		return nil, &http.MaxBytesError{Limit: m.limit}
 	}
 	if !m.done {
-		// 渐进缓冲:小请求体只付小分配,大请求体逐步扩容,上限 32KB。
-		// 固定 32KB 缓冲会让 180B 的典型 JSON body 每请求付出 32KB 分配
-		// (实测 JSONBind 场景 94.6% 的分配字节来自此处),采用 io.ReadAll
-		// 同款 512B 起倍增策略后分配降 91-93%。
+		// 渐进缓冲:小请求体只付小分配,大请求体按 Go 标准增长规则倍增,
+		// 与 io.ReadAll 同款策略(固定 32KB 缓冲会让 180B 的典型 JSON body
+		// 每请求付出 32KB 分配,实测 JSONBind 场景 94.6% 的分配字节来自
+		// 此处)。早期实现把扩容上限错挂在 32KB、之后 +4096 线性增长,
+		// 大请求体会 O(n²) 拷贝(100KB body 实测 3.1MB 分配)。
 		// grow the buffer incrementally: small bodies pay a small allocation
-		// and large bodies expand on demand, capped at 32KB. A fixed 32KB
-		// scratch made a typical 180B JSON body pay a 32KB allocation per
-		// request (94.6% of JSONBind bytes in pprof); the io.ReadAll-style
-		// 512B-doubling strategy cuts that by 91-93%.
+		// and large bodies double with Go's standard growth rule, mirroring
+		// io.ReadAll (a fixed 32KB scratch made a typical 180B JSON body pay
+		// 32KB per request, 94.6% of JSONBind bytes in pprof). An earlier
+		// revision capped growth at 32KB then grew linearly by 4096, causing
+		// O(n²) copying for large bodies (3.1MB allocations for 100KB).
 		buf := make([]byte, 0, 512)
 		for {
-			if len(buf) == cap(buf) {
-				next := cap(buf) * 2
-				if next > 32*1024 {
-					next = 32 * 1024
-				}
-				if next <= cap(buf) {
-					next = cap(buf) + 4096
-				}
-				buf = append(buf, 0)[:len(buf):next]
-			}
 			prev := len(buf)
 			n, err := m.src.Read(buf[prev:cap(buf)])
 			buf = buf[:prev+n]
@@ -142,6 +134,11 @@ func (m *memoBody) bytes() ([]byte, error) {
 				m.done = true
 				m.err = err
 				break
+			}
+			if len(buf) == cap(buf) {
+				// 标准 append 倍增(>256 时约 1.25×),无显式上限。
+				// standard append doubling (~1.25x beyond 256), no hard cap.
+				buf = append(buf, 0)[:len(buf)]
 			}
 		}
 		// 空缓冲时直接转移所有权,避免 append 的额外拷贝。
@@ -159,18 +156,18 @@ func (m *memoBody) bytes() ([]byte, error) {
 }
 
 // RawBody 返回请求体原始字节;首次访问读流并缓存到 requestState,之后所有
-// 调用方(Params.RawBody、Body[T].Raw/Decode)共享同一份,不再读流。
+// 调用方共享同一份,不再读流。
 // RawBody returns the raw body bytes; the first call reads the stream into the
-// requestState memo, and later consumers (Params.RawBody, Body[T].Raw/Decode)
-// share the same bytes without reading the stream again.
+// requestState memo, and later consumers share the same bytes without reading
+// the stream again.
 // 未经过 ghttp 派发链的请求直接读一次,不缓存。
 // requests outside the ghttp dispatch chain are read once without caching.
 func RawBody(r *http.Request) ([]byte, error) {
 	if r == nil || r.Body == nil || r.Body == http.NoBody {
 		return nil, nil
 	}
-	if st := requestStateFromRequest(r); st != nil && st.body != nil {
-		return st.body.bytes()
+	if c := ctxFromRequest(r); c != nil && c.body != nil {
+		return c.body.bytes()
 	}
 	return io.ReadAll(r.Body)
 }

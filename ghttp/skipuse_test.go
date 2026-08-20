@@ -9,14 +9,12 @@ import (
 
 // authHeader 模拟鉴权中间件：无 X-Auth 则 401。
 // authHeader simulates an auth middleware: rejects requests without X-Auth.
-func authHeader(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Auth") == "" {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+func authHeader(c *Ctx) {
+	if c.R.Header.Get("X-Auth") == "" {
+		http.Error(c.W, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	c.Next()
 }
 
 func skipPingHandler(ctx context.Context) (map[string]string, error) {

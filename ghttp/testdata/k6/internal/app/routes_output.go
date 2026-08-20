@@ -23,11 +23,6 @@ type outputJSON struct {
 	Meta    outputJSONMeta `json:"meta"`
 }
 
-type outputJSONRequest struct {
-	ghttp.Params
-	Missing bool `query:"missing"`
-}
-
 type outputJSONMeta struct {
 	Source string `json:"source"`
 }
@@ -40,16 +35,16 @@ type outputXML struct {
 func registerOutput(server *ghttp.Server) {
 	sample := loadOutputFixture()
 
-	server.MustMount(ghttp.Handle(ghttp.Get("/output/json"), ghttp.StructInput[outputJSONRequest](), ghttp.JSONOutput[outputJSON](), func(_ context.Context, request outputJSONRequest) (outputJSON, error) {
-		if request.Missing {
+	server.MustMount(ghttp.Handle(ghttp.Get("/output/json"), ghttp.QueryBool("missing"), ghttp.JSONOutput[outputJSON](), func(_ context.Context, missing bool) (outputJSON, error) {
+		if missing {
 			return outputJSON{}, ghttp.Err(http.StatusNotFound, http.StatusText(http.StatusNotFound))
 		}
 		return outputJSON{Message: "hello", Tags: []string{"ghttp", "k6"}, Meta: outputJSONMeta{Source: "typed"}}, nil
 	}))
-	server.MustMount(ghttp.Handle(ghttp.Get("/output/xml"), ghttp.StructInput[struct{}](), ghttp.XMLOutput[outputXML](), func(context.Context, struct{}) (outputXML, error) {
+	server.MustMount(ghttp.Handle(ghttp.Get("/output/xml"), ghttp.NoInput(), ghttp.XMLOutput[outputXML](), func(context.Context, ghttp.EmptyInput) (outputXML, error) {
 		return outputXML{Message: "hello"}, nil
 	}))
-	server.MustMount(ghttp.Handle(ghttp.Get("/output/text"), ghttp.StructInput[struct{}](), ghttp.TextOutput(), func(context.Context, struct{}) (string, error) {
+	server.MustMount(ghttp.Handle(ghttp.Get("/output/text"), ghttp.NoInput(), ghttp.TextOutput(), func(context.Context, ghttp.EmptyInput) (string, error) {
 		return "hello text", nil
 	}))
 	server.MustMount(ghttp.RawOperation(http.MethodGet, "/output/binary", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -57,13 +52,13 @@ func registerOutput(server *ghttp.Server) {
 		_, _ = w.Write([]byte{0, 1, 'g', 'h', 't', 't', 'p', 0xff})
 	})))
 
-	server.MustMount(ghttp.Handle(ghttp.Post("/output/created"), ghttp.StructInput[struct{}](), ghttp.WithResponseHeader("Location", "/output/json", ghttp.WithStatus(http.StatusCreated, ghttp.NoContentOutput[struct{}]())), func(context.Context, struct{}) (struct{}, error) {
-		return struct{}{}, nil
+	server.MustMount(ghttp.Handle(ghttp.Post("/output/created"), ghttp.NoInput(), ghttp.WithResponseHeader("Location", "/output/json", ghttp.WithStatus(http.StatusCreated, ghttp.NoContentOutput[ghttp.EmptyInput]())), func(context.Context, ghttp.EmptyInput) (ghttp.EmptyInput, error) {
+		return ghttp.EmptyInput{}, nil
 	}))
-	server.MustMount(ghttp.Handle(ghttp.Post("/output/accepted"), ghttp.StructInput[struct{}](), ghttp.WithStatus(http.StatusAccepted, ghttp.NoContentOutput[struct{}]()), func(context.Context, struct{}) (struct{}, error) {
-		return struct{}{}, nil
+	server.MustMount(ghttp.Handle(ghttp.Post("/output/accepted"), ghttp.NoInput(), ghttp.WithStatus(http.StatusAccepted, ghttp.NoContentOutput[ghttp.EmptyInput]()), func(context.Context, ghttp.EmptyInput) (ghttp.EmptyInput, error) {
+		return ghttp.EmptyInput{}, nil
 	}))
-	server.MustMount(ghttp.HandleNoOutput(ghttp.Delete("/output/empty"), ghttp.StructInput[struct{}](), func(context.Context, struct{}) error {
+	server.MustMount(ghttp.HandleNoOutput(ghttp.Delete("/output/empty"), ghttp.NoInput(), func(context.Context, ghttp.EmptyInput) error {
 		return nil
 	}))
 	server.MustMount(ghttp.RedirectOperation(http.MethodGet, "/output/redirect", http.StatusTemporaryRedirect, "/output/json"))

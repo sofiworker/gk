@@ -96,7 +96,7 @@ func TestToGerrMapsStatusToKind(t *testing.T) {
 
 func TestServerWritesGerrStatusAndMessage(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	app.MustMount(Handle(Get("/missing"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
+	app.MustMount(Handle(Get("/missing"), NoInput(), JSONOutput[struct{}](), func(context.Context, EmptyInput) (struct{}, error) {
 		he, _ := FromGerr(gerr.New("user not found", gerr.WithKind(gerr.KindNotFound)))
 		return struct{}{}, he
 	}))

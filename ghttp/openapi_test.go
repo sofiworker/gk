@@ -11,20 +11,25 @@ import (
 func TestOpenAPIBuildsValidSpec(t *testing.T) {
 	app := New(WithOpenAPI("My API", "1.0.0"), WithProduces(MIMEJSON))
 
+	type CreateUserBody struct {
+		Name string `json:"name"`
+	}
 	type CreateUserReq struct {
-		OrgID string `path:"orgId"`
-		Body  struct {
-			Name string `json:"name" minLength:"1" maxLength:"100"`
-		}
+		OrgID string
+		Body  CreateUserBody
 	}
 	type UserData struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	}
 
-	app.MustMount(Handle(Post("/orgs/{orgId}/users"), StructInput[CreateUserReq](), JSONOutput[struct{ Body UserData }](), func(ctx context.Context, req CreateUserReq) (struct{ Body UserData }, error) {
-		return struct{ Body UserData }{}, nil
-	}))
+	app.MustMount(Handle(Post("/orgs/{orgId}/users"),
+		MapInputs(PathString("orgId"), JSONBody[CreateUserBody](), func(orgID string, body CreateUserBody) CreateUserReq {
+			return CreateUserReq{OrgID: orgID, Body: body}
+		}),
+		JSONOutput[struct{ Body UserData }](), func(ctx context.Context, req CreateUserReq) (struct{ Body UserData }, error) {
+			return struct{ Body UserData }{}, nil
+		}))
 
 	spec := serverOpenAPISpec(t, app)
 	if len(spec) == 0 {
@@ -38,38 +43,6 @@ func TestOpenAPIBuildsValidSpec(t *testing.T) {
 
 	if doc["openapi"] != "3.1.0" {
 		t.Fatalf("expected openapi 3.1.0, got %v", doc["openapi"])
-	}
-}
-
-func TestOpenAPIRequestBodyUsesConsumes(t *testing.T) {
-	app := New(WithOpenAPI("My API", "1.0.0"), WithProduces(MIMEJSON))
-
-	type CreateUserReq struct {
-		Body struct {
-			Name string `json:"name"`
-		}
-	}
-
-	app.MustMount(Handle(Post("/users"), StructInput[CreateUserReq](MIMEXML, MIMEJSON), JSONOutput[struct{}](), func(ctx context.Context, req CreateUserReq) (struct{}, error) {
-		return struct{}{}, nil
-	}))
-
-	spec := serverOpenAPISpec(t, app)
-	var doc map[string]interface{}
-	if err := json.Unmarshal(spec, &doc); err != nil {
-		t.Fatalf("invalid OpenAPI JSON: %v", err)
-	}
-
-	paths := doc["paths"].(map[string]interface{})
-	item := paths["/users"].(map[string]interface{})
-	op := item["post"].(map[string]interface{})
-	requestBody := op["requestBody"].(map[string]interface{})
-	content := requestBody["content"].(map[string]interface{})
-	if _, ok := content[MIMEXML]; !ok {
-		t.Fatalf("requestBody content missing %s: %#v", MIMEXML, content)
-	}
-	if _, ok := content[MIMEJSON]; !ok {
-		t.Fatalf("requestBody content missing %s: %#v", MIMEJSON, content)
 	}
 }
 
@@ -95,23 +68,29 @@ func TestSchemaGeneration(t *testing.T) {
 func TestOpenAPIDocOptionsAndInferredRouteTypes(t *testing.T) {
 	app := New(WithOpenAPI("My API", "1.0.0"), WithProduces(MIMEJSON, MIMEXML))
 
+	type createUserBody struct {
+		Name string `json:"name"`
+	}
 	type createUserReq struct {
-		OrgID   string `path:"orgId" doc:"organization id"`
-		Page    int    `query:"page" doc:"page number"`
-		TraceID string `header:"X-Trace-ID" doc:"trace id"`
-		Session string `cookie:"sid" doc:"session id"`
-		Body    struct {
-			Name string `json:"name" doc:"user name" minLength:"1"`
-		}
+		OrgID   string
+		Page    int
+		TraceID string
+		Session string
+		Body    createUserBody
 	}
 	type userDTO struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	}
 
-	app.MustMount(Handle(Post("/orgs/{orgId}/users"), StructInput[createUserReq](MIMEJSON, MIMEXML), CodecOutput[userDTO](MIMEJSON, MIMEXML), func(ctx context.Context, req createUserReq) (userDTO, error) {
-		return userDTO{ID: req.OrgID, Name: req.Body.Name}, nil
-	}).Doc(Summary("Create user"),
+	app.MustMount(Handle(Post("/orgs/{orgId}/users"),
+		MapInputs5(PathString("orgId"), QueryInt("page"), HeaderString("X-Trace-ID"), CookieString("sid"), JSONBody[createUserBody](),
+			func(orgID string, page int, traceID, session string, body createUserBody) createUserReq {
+				return createUserReq{OrgID: orgID, Page: page, TraceID: traceID, Session: session, Body: body}
+			}),
+		CodecOutput[userDTO](MIMEJSON, MIMEXML), func(ctx context.Context, req createUserReq) (userDTO, error) {
+			return userDTO{ID: req.OrgID, Name: req.Body.Name}, nil
+		}).Doc(Summary("Create user"),
 		Description("Create one user"),
 		Tags("users", "admin"),
 		OperationID("createUser"),
@@ -138,9 +117,6 @@ func TestOpenAPIDocOptionsAndInferredRouteTypes(t *testing.T) {
 	requestContent := op["requestBody"].(map[string]interface{})["content"].(map[string]interface{})
 	if _, ok := requestContent[MIMEJSON]; !ok {
 		t.Fatalf("request body content missing %s: %#v", MIMEJSON, requestContent)
-	}
-	if _, ok := requestContent[MIMEXML]; !ok {
-		t.Fatalf("request body content missing %s: %#v", MIMEXML, requestContent)
 	}
 
 	responses := op["responses"].(map[string]interface{})
@@ -178,17 +154,21 @@ func TestOpenAPIAutoDocumentsReqAndRespWithoutDoc(t *testing.T) {
 	app := New(WithOpenAPI("My API", "1.0.0"), WithProduces(MIMEJSON))
 
 	type getUserReq struct {
-		ID     string `path:"id"`
-		Expand bool   `query:"expand"`
+		ID     string
+		Expand bool
 	}
 	type getUserResp struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	}
 
-	app.MustMount(Handle(Get("/users/{id}"), StructInput[getUserReq](), JSONOutput[getUserResp](), func(ctx context.Context, req getUserReq) (getUserResp, error) {
-		return getUserResp{ID: req.ID, Name: "Alice"}, nil
-	}))
+	app.MustMount(Handle(Get("/users/{id}"),
+		MapInputs(PathString("id"), QueryBool("expand"), func(id string, expand bool) getUserReq {
+			return getUserReq{ID: id, Expand: expand}
+		}),
+		JSONOutput[getUserResp](), func(ctx context.Context, req getUserReq) (getUserResp, error) {
+			return getUserResp{ID: req.ID, Name: "Alice"}, nil
+		}))
 
 	op := openAPIOperation(t, app, "/users/{id}", "get")
 	if got := op["summary"]; got != "GET /users/{id}" {
@@ -216,8 +196,8 @@ func TestOpenAPIDocLifecycleOptions(t *testing.T) {
 	app := New(WithOpenAPI("My API", "1.0.0"), WithProduces(MIMEJSON))
 	sunset := time.Date(2027, 1, 2, 3, 4, 5, 0, time.UTC)
 
-	app.MustMount(Handle(Get("/users"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
-		return struct{}{}, nil
+	app.MustMount(Handle(Get("/users"), NoInput(), JSONOutput[EmptyInput](), func(ctx context.Context, req EmptyInput) (EmptyInput, error) {
+		return EmptyInput{}, nil
 	}).Doc(Deprecated("use /v2/users instead"),
 		Sunset(sunset),
 		ExternalDocs("migration guide", "https://example.com/migrate-users")))

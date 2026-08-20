@@ -84,19 +84,15 @@ func TestServerMiddlewareChainOrder(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	var calls []string
 
-	app.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			calls = append(calls, "mw1-before")
-			next.ServeHTTP(w, r)
-			calls = append(calls, "mw1-after")
-		})
+	app.Use(func(c *Ctx) {
+		calls = append(calls, "mw1-before")
+		c.Next()
+		calls = append(calls, "mw1-after")
 	})
-	app.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			calls = append(calls, "mw2-before")
-			next.ServeHTTP(w, r)
-			calls = append(calls, "mw2-after")
-		})
+	app.Use(func(c *Ctx) {
+		calls = append(calls, "mw2-before")
+		c.Next()
+		calls = append(calls, "mw2-after")
 	})
 
 	app.MustMount(RawOperation(http.MethodGet, "/ok", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -124,31 +120,31 @@ func TestServerRegistersAllStandardHTTPMethods(t *testing.T) {
 		register func(*Server, string)
 	}{
 		{http.MethodGet, "/standard/get", func(s *Server, path string) {
-			s.MustMount(Handle(Get(path), StructInput[struct{}](), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodGet)))
+			s.MustMount(Handle(Get(path), NoInput(), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodGet)))
 		}},
 		{http.MethodHead, "/standard/head", func(s *Server, path string) {
-			s.MustMount(Handle(Head(path), StructInput[struct{}](), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodHead)))
+			s.MustMount(Handle(Head(path), NoInput(), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodHead)))
 		}},
 		{http.MethodPost, "/standard/post", func(s *Server, path string) {
-			s.MustMount(Handle(Post(path), StructInput[struct{}](), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodPost)))
+			s.MustMount(Handle(Post(path), NoInput(), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodPost)))
 		}},
 		{http.MethodPut, "/standard/put", func(s *Server, path string) {
-			s.MustMount(Handle(Put(path), StructInput[struct{}](), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodPut)))
+			s.MustMount(Handle(Put(path), NoInput(), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodPut)))
 		}},
 		{http.MethodPatch, "/standard/patch", func(s *Server, path string) {
-			s.MustMount(Handle(Patch(path), StructInput[struct{}](), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodPatch)))
+			s.MustMount(Handle(Patch(path), NoInput(), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodPatch)))
 		}},
 		{http.MethodDelete, "/standard/delete", func(s *Server, path string) {
-			s.MustMount(Handle(Delete(path), StructInput[struct{}](), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodDelete)))
+			s.MustMount(Handle(Delete(path), NoInput(), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodDelete)))
 		}},
 		{http.MethodConnect, "/standard/connect", func(s *Server, path string) {
-			s.MustMount(Handle(Connect(path), StructInput[struct{}](), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodConnect)))
+			s.MustMount(Handle(Connect(path), NoInput(), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodConnect)))
 		}},
 		{http.MethodOptions, "/standard/options", func(s *Server, path string) {
-			s.MustMount(Handle(Options(path), StructInput[struct{}](), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodOptions)))
+			s.MustMount(Handle(Options(path), NoInput(), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodOptions)))
 		}},
 		{http.MethodTrace, "/standard/trace", func(s *Server, path string) {
-			s.MustMount(Handle(Trace(path), StructInput[struct{}](), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodTrace)))
+			s.MustMount(Handle(Trace(path), NoInput(), JSONOutput[standardMethodOutput](), methodOutputHandler(http.MethodTrace)))
 		}},
 	}
 
@@ -169,7 +165,7 @@ func TestServerRegistersAllStandardHTTPMethods(t *testing.T) {
 
 func TestOperationAllMethodsRegistersAllStandardHTTPMethods(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	app.MustMount(AllMethods(Handle(Get("/any"), StructInput[struct{}](), JSONOutput[standardMethodOutput](), func(ctx context.Context, req struct{}) (standardMethodOutput, error) {
+	app.MustMount(AllMethods(Handle(Get("/any"), NoInput(), JSONOutput[standardMethodOutput](), func(ctx context.Context, _ EmptyInput) (standardMethodOutput, error) {
 		return standardMethodOutput{Method: ""}, nil
 	}))...)
 
@@ -197,7 +193,7 @@ func TestOperationAllMethodsRegistersAllStandardHTTPMethods(t *testing.T) {
 func TestOperationMountRequiresMethod(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	assertPanicsIs(t, ErrOperationMethodRequired, func() {
-		app.MustMount(Handle(Endpoint("", "/missing-method"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
+		app.MustMount(Handle(Endpoint("", "/missing-method"), NoInput(), JSONOutput[struct{}](), func(context.Context, EmptyInput) (struct{}, error) {
 			return struct{}{}, nil
 		}))
 	})
@@ -205,7 +201,7 @@ func TestOperationMountRequiresMethod(t *testing.T) {
 
 func TestOperationCustomMethodRegistersCustomMethod(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	app.MustMount(Handle(Endpoint("PROPFIND", "/custom"), StructInput[struct{}](), JSONOutput[standardMethodOutput](), methodOutputHandler("PROPFIND")))
+	app.MustMount(Handle(Endpoint("PROPFIND", "/custom"), NoInput(), JSONOutput[standardMethodOutput](), methodOutputHandler("PROPFIND")))
 
 	req := httptest.NewRequest("PROPFIND", "/custom", nil)
 	rec := httptest.NewRecorder()
@@ -219,28 +215,25 @@ func TestOperationCustomMethodRegistersCustomMethod(t *testing.T) {
 func TestOperationCustomMethodRejectsInvalidMethod(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	assertPanicsIs(t, ErrOperationMethodInvalid, func() {
-		app.MustMount(Handle(Endpoint("BAD METHOD", "/custom"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
+		app.MustMount(Handle(Endpoint("BAD METHOD", "/custom"), NoInput(), JSONOutput[struct{}](), func(context.Context, EmptyInput) (struct{}, error) {
 			return struct{}{}, nil
 		}))
 	})
 }
 
-func methodOutputHandler(method string) HandlerFunc[struct{}, standardMethodOutput] {
-	return func(context.Context, struct{}) (standardMethodOutput, error) {
+func methodOutputHandler(method string) func(context.Context, EmptyInput) (standardMethodOutput, error) {
+	return func(context.Context, EmptyInput) (standardMethodOutput, error) {
 		return standardMethodOutput{Method: method}, nil
 	}
 }
 
 func TestServerOpenAPIEndpoint(t *testing.T) {
-	type req struct {
-		ID string `path:"id"`
-	}
 	type resp struct {
 		Name string `json:"name"`
 	}
 
 	app := New(WithOpenAPI("accounts", "2.0.0"), WithProduces(MIMEJSON))
-	app.MustMount(Handle(Get("/users/{id}"), StructInput[req](), JSONOutput[resp](), func(context.Context, req) (resp, error) {
+	app.MustMount(Handle(Get("/users/{id}"), PathString("id"), JSONOutput[resp](), func(context.Context, string) (resp, error) {
 		return resp{Name: "alice"}, nil
 	}).Doc(Summary("get user"),
 		OperationID("getUser"),
@@ -277,7 +270,7 @@ func TestServerRouteUsesValidator(t *testing.T) {
 	app := New(WithValidator(serverValidatorFunc(func(ctx context.Context, input interface{}) error {
 		return wantErr
 	})), WithProduces(MIMEJSON))
-	app.MustMount(Handle(Get("/validate"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
+	app.MustMount(Handle(Get("/validate"), NoInput(), JSONOutput[struct{}](), func(context.Context, EmptyInput) (struct{}, error) {
 		t.Fatal("handler should not run after validation error")
 		return struct{}{}, nil
 	}))
@@ -293,14 +286,12 @@ func TestServerRouteUsesValidator(t *testing.T) {
 
 func TestServerUsesGoPlaygroundValidatorWhenExplicit(t *testing.T) {
 	type input struct {
-		Body struct {
-			Name string `json:"name" validate:"required"`
-		}
+		Name string `json:"name" validate:"required"`
 	}
 	type output struct{}
 
 	app := New(WithProduces(MIMEJSON), WithValidator(newDefaultValidator()))
-	app.MustMount(Handle(Post("/validate/default"), StructInput[input](), JSONOutput[output](), func(context.Context, input) (output, error) {
+	app.MustMount(Handle(Post("/validate/default"), JSONBody[input](), JSONOutput[output](), func(context.Context, input) (output, error) {
 		t.Fatal("handler should not run after default validation error")
 		return output{}, nil
 	}))
@@ -593,7 +584,7 @@ func waitForServerAddr(t *testing.T, app *Server) net.Addr {
 
 func TestServerGroupStoresPrefixAndMiddlewares(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	mw := func(next http.Handler) http.Handler { return next }
+	mw := func(c *Ctx) { c.Next() }
 
 	group := app.Group("/api", mw)
 
@@ -610,16 +601,14 @@ func TestServerGroupStoresPrefixAndMiddlewares(t *testing.T) {
 
 func TestGroupRouteRegistersRouteWithPrefixAndMiddleware(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	group := app.Group("/api", func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("X-Group", "api")
-			next.ServeHTTP(w, r)
-		})
+	group := app.Group("/api", func(c *Ctx) {
+		c.W.Header().Set("X-Group", "api")
+		c.Next()
 	})
 
-	group.MustMount(Handle(Get("/ping"), StructInput[struct{}](), JSONOutput[struct {
+	group.MustMount(Handle(Get("/ping"), NoInput(), JSONOutput[struct {
 		OK bool `json:"ok"`
-	}](), func(context.Context, struct{}) (struct {
+	}](), func(context.Context, EmptyInput) (struct {
 		OK bool `json:"ok"`
 	}, error) {
 		return struct {
@@ -642,19 +631,15 @@ func TestGroupRouteRegistersRouteWithPrefixAndMiddleware(t *testing.T) {
 func TestNestedGroupCombinesPrefixAndMiddlewares(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	var calls []string
-	v1 := app.Group("/api", func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			calls = append(calls, "api-in")
-			next.ServeHTTP(w, r)
-			calls = append(calls, "api-out")
-		})
+	v1 := app.Group("/api", func(c *Ctx) {
+		calls = append(calls, "api-in")
+		c.Next()
+		calls = append(calls, "api-out")
 	})
-	users := v1.Group("/users", func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			calls = append(calls, "users-in")
-			next.ServeHTTP(w, r)
-			calls = append(calls, "users-out")
-		})
+	users := v1.Group("/users", func(c *Ctx) {
+		calls = append(calls, "users-in")
+		c.Next()
+		calls = append(calls, "users-out")
 	})
 
 	users.MustMount(RawOperation(http.MethodGet, "/me", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -676,17 +661,14 @@ func TestNestedGroupCombinesPrefixAndMiddlewares(t *testing.T) {
 }
 
 func TestGroupOperationUsesGroupPath(t *testing.T) {
-	type input struct {
-		Params `json:"-"`
-	}
 	type output struct {
 		ID string `json:"id"`
 	}
 
 	app := New(WithProduces(MIMEJSON))
 	group := app.Group("/api")
-	group.MustMount(Handle(Get("/users/{id}"), StructInput[input](), JSONOutput[output](), func(ctx context.Context, req input) (output, error) {
-		return output{ID: req.Path("id")}, nil
+	group.MustMount(Handle(Get("/users/{id}"), PathString("id"), JSONOutput[output](), func(ctx context.Context, id string) (output, error) {
+		return output{ID: id}, nil
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/users/42", nil)
@@ -702,13 +684,12 @@ func TestGroupOperationUsesGroupPath(t *testing.T) {
 }
 
 func TestGroupOperationUsesGroupPathInOpenAPI(t *testing.T) {
-	type input struct{}
 	type output struct{}
 
 	app := New(WithOpenAPI("api", "1.0.0"), WithProduces(MIMEJSON))
 	group := app.Group("/api")
 
-	group.MustMount(Handle(Post("/users"), StructInput[input](), JSONOutput[output](), func(context.Context, input) (output, error) {
+	group.MustMount(Handle(Post("/users"), NoInput(), JSONOutput[output](), func(context.Context, EmptyInput) (output, error) {
 		return output{}, nil
 	}).Doc(Summary("create user")))
 

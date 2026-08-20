@@ -22,7 +22,7 @@ func TestClientBasicGet(t *testing.T) {
 			Message string `json:"message"`
 		}
 	}
-	app.MustMount(Handle(Get("/hello"), StructInput[struct{ Body struct{} }](), JSONOutput[helloResp](), func(ctx context.Context, req struct{ Body struct{} }) (helloResp, error) {
+	app.MustMount(Handle(Get("/hello"), NoInput(), JSONOutput[helloResp](), func(ctx context.Context, _ EmptyInput) (helloResp, error) {
 		return helloResp{Body: struct {
 			Message string `json:"message"`
 		}{Message: "Hello"}}, nil
@@ -49,7 +49,7 @@ func TestClientBaseURL(t *testing.T) {
 	type pongResp struct {
 		Body struct{ Pong string }
 	}
-	app.MustMount(Handle(Get("/ping"), StructInput[struct{ Body struct{} }](), JSONOutput[pongResp](), func(ctx context.Context, req struct{ Body struct{} }) (pongResp, error) {
+	app.MustMount(Handle(Get("/ping"), NoInput(), JSONOutput[pongResp](), func(ctx context.Context, _ EmptyInput) (pongResp, error) {
 		return pongResp{Body: struct{ Pong string }{Pong: "ok"}}, nil
 	}))
 
@@ -212,10 +212,14 @@ type clientGreetResp struct {
 
 func TestClientGenericEndpoint(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	app.MustMount(Handle(Post("/greet"), StructInput[clientGreetReq](), JSONOutput[clientGreetResp](), func(ctx context.Context, req clientGreetReq) (clientGreetResp, error) {
+	app.MustMount(Handle(Post("/greet"), JSONBody[struct {
+		Name string `json:"name"`
+	}](), JSONOutput[clientGreetResp](), func(ctx context.Context, req struct {
+		Name string `json:"name"`
+	}) (clientGreetResp, error) {
 		return clientGreetResp{Body: struct {
 			Message string `json:"message"`
-		}{Message: "Hello, " + req.Body.Name}}, nil
+		}{Message: "Hello, " + req.Name}}, nil
 	}))
 
 	ts := httptest.NewServer(app)

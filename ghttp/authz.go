@@ -60,14 +60,12 @@ func (r *RBAC) Authorize(ctx context.Context, subject, action, resource string) 
 
 // RBACMiddleware 对鉴权失败的请求返回 403。
 // RBACMiddleware rejects unauthorized requests with 403.
-func RBACMiddleware(a Authorizer, subject, action, resource func(*http.Request) string) Middleware {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if err := a.Authorize(r.Context(), subject(r), action(r), resource(r)); err != nil {
-				writeError(w, r, serverFromRequest(r), http.StatusForbidden, Err(http.StatusForbidden, http.StatusText(http.StatusForbidden)))
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
+func RBACMiddleware(a Authorizer, subject, action, resource func(*http.Request) string) HandlerFunc {
+	return func(c *Ctx) {
+		if err := a.Authorize(c.R.Context(), subject(c.R), action(c.R), resource(c.R)); err != nil {
+			writeError(c.W, c.R, c.server, http.StatusForbidden, Err(http.StatusForbidden, http.StatusText(http.StatusForbidden)))
+			return
+		}
+		c.Next()
 	}
 }

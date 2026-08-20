@@ -23,7 +23,6 @@ type Config struct {
 	envelope                  EnvelopeFunc
 	errorHandler              ErrorHandler
 	errorWriter               ErrorWriter
-	bodyDecoder               BodyDecodeFunc
 	produces                  []string
 	consumes                  []string
 	clientIPResolver          ClientIPResolver
@@ -126,14 +125,6 @@ func WithErrorHandler(handler ErrorHandler) ServerOption {
 func WithErrorWriter(writer ErrorWriter) ServerOption {
 	return func(c *Config) {
 		c.errorWriter = writer
-	}
-}
-
-// WithBodyDecoder 为服务器设置自定义请求体解码器。
-// WithBodyDecoder sets a custom request body decoder.
-func WithBodyDecoder(fn BodyDecodeFunc) ServerOption {
-	return func(c *Config) {
-		c.bodyDecoder = fn
 	}
 }
 

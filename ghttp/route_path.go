@@ -44,7 +44,7 @@ type pathSegment struct {
 }
 
 type pathSegmentList struct {
-	values   [maxStackPathParams]pathSegment
+	values   [maxStackPathSegments]pathSegment
 	overflow []pathSegment
 	len      int
 }
@@ -83,6 +83,70 @@ func (s pathSegmentList) At(index int) pathSegment {
 	return s.overflow[index-s.len]
 }
 
+// walkParamValue 是遍历期按槽位序内联收集的参数值:escaped 记录原段是否含
+// '%',解码推迟到命中后的命名映射(与 fillMatchedParams 的错误语义一致)。
+// walkParamValue is a param value collected inline during the walk in slot
+// order: escaped records whether the raw segment contains '%', deferring the
+// decode to the post-hit named mapping (matching fillMatchedParams errors).
+type walkParamValue struct {
+	value   string
+	escaped bool
+}
+
+// paramValueList 是遍历期的位置参数值表:与 pathSegmentList 同构的栈内数组 +
+// 溢出切片,回溯用 Truncate 撤销失败分支的记录。
+// paramValueList is the positional param value table used while walking: a
+// stack array plus overflow slice mirroring pathSegmentList, with Truncate
+// unwinding failed-branch records.
+// maxWalkParamValues 是遍历期位置值表的栈内槽位:与 Ctx 池化参数列表的
+// maxStackPathParams 解耦——值表只活在 match 的栈帧里,可负担更大数组,让
+// 常规参数路由零溢出。
+// maxWalkParamValues is the inline slot count of the positional value table:
+// decoupled from maxStackPathParams of the pooled param list, because the
+// table only lives on match's stack frame and can afford a larger array,
+// keeping ordinary parametric routes free of overflow appends.
+const maxWalkParamValues = 16
+
+type paramValueList struct {
+	values   [maxWalkParamValues]walkParamValue
+	overflow []walkParamValue
+	len      int
+}
+
+func (s *paramValueList) Add(value walkParamValue) {
+	if s.len < len(s.values) {
+		s.values[s.len] = value
+		s.len++
+		return
+	}
+	s.overflow = append(s.overflow, value)
+}
+
+// Truncate 回退值表到 length,撤销未成功分支的内联记录(零分配,保留容量)。
+// Truncate rewinds the value list to length, undoing inline records of failed
+// branches without allocating and while keeping capacity.
+func (s *paramValueList) Truncate(length int) {
+	if length <= s.len {
+		s.len = length
+		if s.overflow != nil {
+			s.overflow = s.overflow[:0]
+		}
+		return
+	}
+	s.overflow = s.overflow[:length-s.len]
+}
+
+func (s paramValueList) Len() int {
+	return s.len + len(s.overflow)
+}
+
+func (s paramValueList) At(index int) walkParamValue {
+	if index < s.len {
+		return s.values[index]
+	}
+	return s.overflow[index-s.len]
+}
+
 // RawAt 返回第 index 段的原始(未解码)字节。
 // RawAt returns the raw, undecoded bytes of segment index.
 func (p requestPath) RawAt(index int) string {
@@ -93,10 +157,15 @@ func (p requestPath) RawAt(index int) string {
 	return p.raw[segment.start:segment.end]
 }
 
-// DecodeAt 按需解码第 index 段。
-// DecodeAt decodes segment index on demand.
+// DecodeAt 按需解码第 index 段。无 % 转义时零拷贝返回原始段。
+// DecodeAt decodes segment index on demand. Returns the raw segment without
+// copying when no percent-encoding is present.
 func (p requestPath) DecodeAt(index int) (string, error) {
-	return url.PathUnescape(p.RawAt(index))
+	raw := p.RawAt(index)
+	if strings.IndexByte(raw, '%') < 0 {
+		return raw, nil
+	}
+	return url.PathUnescape(raw)
 }
 
 // RawJoinFrom 返回自 index 起的原始段连接(保留 `/` 分隔,未解码)。

@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"reflect"
 	"strconv"
-	"sync"
 )
 
 type operationRequest struct {
@@ -18,6 +17,7 @@ type operationRequest struct {
 	writer       http.ResponseWriter
 	params       pathParamList
 	server       *Server
+	ctx          *Ctx
 	query        url.Values
 	queryParsed  bool
 	maxBodyBytes int64
@@ -33,10 +33,17 @@ func newOperationRequest(writer http.ResponseWriter, request *http.Request, para
 	}
 	operationRequest := operationRequest{
 		request: request, writer: writer, params: params, server: server,
+		ctx:          ctxFromRequest(request),
 		maxBodyBytes: maxBodyBytes,
 	}
-	if state := requestStateFromRequest(request); state != nil && state.body != nil {
-		state.body.setLimit(maxBodyBytes)
+	// body 限制先于懒创建写入 Ctx:Body() 首次创建 memoBody 时应用。
+	// the body limit is written to the Ctx before lazy creation: Body()
+	// applies it when the memoBody is first created.
+	if operationRequest.ctx != nil {
+		operationRequest.ctx.bodyLimit = maxBodyBytes
+		if operationRequest.ctx.body != nil {
+			operationRequest.ctx.body.setLimit(maxBodyBytes)
+		}
 	}
 	return operationRequest
 }
@@ -45,11 +52,26 @@ func (r *operationRequest) path(name string) string {
 	if value := r.params.Get(name); value != "" {
 		return value
 	}
-	state := requestStateFromRequest(r.request)
-	if state == nil || state.matched == nil {
+	if r.ctx == nil || r.ctx.lazyParams == nil {
 		return ""
 	}
-	return state.matched.get(name, &r.params)
+	return r.ctx.lazyParams.get(name, &r.params)
+}
+
+// pathParamDirect 是 stateIndependent 直编的路径参数读取:优先命中预提取的
+// params,缺失时回退惰性解码(不写缓存,避免栈参数取址逃逸)。
+// pathParamDirect reads a path param for the stateIndependent direct build:
+// pre-extracted params hit first, with a lazy decode fallback that does not
+// write a cache (avoiding stack address escape).
+func pathParamDirect(request *http.Request, params pathParamList, name string) string {
+	if value := params.Get(name); value != "" {
+		return value
+	}
+	c := ctxFromRequest(request)
+	if c == nil || c.lazyParams == nil {
+		return ""
+	}
+	return c.lazyParams.getOnce(name)
 }
 
 func (r *operationRequest) queryValues() url.Values {
@@ -116,17 +138,23 @@ type inputFunc[T any] struct {
 	fn       func(*operationRequest) (T, error)
 	metadata InputMetadata
 	setupErr error
+	// stateFn 是 stateIndependent 输入的免堆直编构建:request 与 params 按值
+	// 传入,不构造 operationRequest。仅 parameterInput/combinator 提供。
+	// stateFn is the heap-free direct build for stateIndependent inputs: it
+	// takes request and params by value without constructing operationRequest.
+	// Only parameterInput and the combinators provide it.
+	stateFn func(request *http.Request, params pathParamList) (T, error)
 	// requestOnly 标记输入只读请求头/query/path 等非 body 数据且不依赖
 	// requestState;满足条件时整条输入链可走无状态快路径。
 	// requestOnly marks an input that reads only non-body request data and
-	// never depends on requestState; a fully marked chain can take the
+	// never reads the request body/state; a fully marked chain can take the
 	// stateless fast path.
 	requestOnly bool
-	// stateIndependent 标记输入完全不读 requestState(标量参数组合),
-	// 组合器传播后整条链可免状态注入。
-	// stateIndependent marks an input that never reads requestState (scalar
-	// parameter compositions); combinators propagate it so the whole chain
-	// can skip state injection.
+	// stateIndependent 标记输入为标量参数组合:终端直读 match 填充的
+	// params,不经请求 context 读 Ctx,dispatch 免注入。
+	// stateIndependent marks scalar-param compositions: the terminal reads
+	// the match-filled params directly and never resolves the Ctx through the
+	// request context, so dispatch skips the attach.
 	stateIndependent bool
 }
 
@@ -238,6 +266,53 @@ type stateIndependentInputBuilder interface {
 	stateIndependentInput() bool
 }
 
+// stateDirectInputBuilder 为 stateIndependent 输入提供免堆直编构建:直接接收
+// request 与 params 值,不构造 operationRequest,避免其按值携带参数列表时的
+// 堆逃逸。无 stateFn 的输入回退到 operationRequest 路径。
+// stateDirectInputBuilder provides a heap-free direct build for
+// stateIndependent inputs: it takes the request and params directly without
+// constructing operationRequest, avoiding the heap escape of the by-value
+// param list. Inputs without a stateFn fall back to the operationRequest path.
+type stateDirectInputBuilder[T any] interface {
+	buildStateDirect(request *http.Request, params pathParamList) (T, error)
+	stateDirectInput() bool
+}
+
+func (f inputFunc[T]) stateDirectInput() bool { return f.stateFn != nil }
+
+// directStateFn 返回注册期固化的直取函数值:组合子(stateFn 链)通过函数值
+// 直调而非接口虚调用,消除每层 dispatch 并允许内联。
+// directStateFn returns the frozen direct-build function value: combinators
+// (stateFn chains) call it by function value instead of interface dispatch,
+// removing per-layer virtual calls and enabling inlining.
+func (f inputFunc[T]) directStateFn() func(*http.Request, pathParamList) (T, error) {
+	return f.stateFn
+}
+
+func directStateFnOf[V any](input Input[V]) (func(*http.Request, pathParamList) (V, error), bool) {
+	if f, ok := input.(stateDirectFnProvider[V]); ok {
+		if fn := f.directStateFn(); fn != nil {
+			return fn, true
+		}
+	}
+	return nil, false
+}
+
+type stateDirectFnProvider[T any] interface {
+	directStateFn() func(*http.Request, pathParamList) (T, error)
+}
+
+func (f inputFunc[T]) buildStateDirect(request *http.Request, params pathParamList) (T, error) {
+	var zero T
+	if f.setupErr != nil {
+		return zero, f.setupErr
+	}
+	if f.stateFn == nil {
+		return zero, ErrOperationInputNil
+	}
+	return f.stateFn(request, params)
+}
+
 func (f inputFunc[T]) build(request *operationRequest) (T, error) {
 	var zero T
 	if f.setupErr != nil {
@@ -308,186 +383,6 @@ func HTTPRequest() Input[*http.Request] {
 	}}
 }
 
-type compiledStructInput[T any] struct {
-	directParams bool
-	directPath   bool
-	bindPath     func(any, pathParamList) error
-	newTarget    func() any
-	finish       func(any) T
-	info         *structInfo
-	hasBody      bool
-	release      func(any)
-}
-
-func compileStructInput[T any]() compiledStructInput[T] {
-	inputType := reflect.TypeFor[T]()
-	if inputType == reflect.TypeFor[Params]() {
-		return compiledStructInput[T]{directParams: true}
-	}
-	if inputType.Kind() == reflect.Ptr && inputType.Elem().Kind() == reflect.Struct {
-		elementType := inputType.Elem()
-		info := getStructInfo(elementType)
-		return compiledStructInput[T]{
-			newTarget:  func() any { return reflect.New(elementType).Interface() },
-			finish:     func(target any) T { return target.(T) },
-			info:       info,
-			hasBody:    info.isLazyBody || info.hasBody,
-			directPath: info.pathOnly && !info.isLazyBody && !info.hasBody,
-			bindPath: func(target any, params pathParamList) error {
-				return bindDirectPathInput(target, info, params)
-			},
-		}
-	}
-	var info *structInfo
-	if inputType.Kind() == reflect.Struct {
-		info = getStructInfo(inputType)
-	}
-	pool := &sync.Pool{New: func() any { return new(T) }}
-	return compiledStructInput[T]{
-		newTarget: func() any {
-			target := pool.Get()
-			reflect.ValueOf(target).Elem().SetZero()
-			return target
-		},
-		finish:  func(target any) T { return *target.(*T) },
-		release: func(target any) { pool.Put(target) },
-		info:    info,
-		hasBody: info != nil && (info.isLazyBody || info.hasBody),
-		directPath: info != nil && info.pathOnly &&
-			!info.isLazyBody && !info.hasBody,
-		bindPath: func(target any, params pathParamList) error {
-			return bindDirectPathInput(target, info, params)
-		},
-	}
-}
-
-type structInputDescriptor[T any] struct {
-	compiled     compiledStructInput[T]
-	metadata     InputMetadata
-	contentTypes []string
-	setupErr     error
-}
-
-func (i *structInputDescriptor[T]) build(request *operationRequest) (T, error) {
-	var zero T
-	if i == nil {
-		return zero, ErrOperationInputNil
-	}
-	if i.setupErr != nil {
-		return zero, i.setupErr
-	}
-	compiled := i.compiled
-	if compiled.directParams {
-		return any(paramsFromRequestWithPathParams(request.request, request.server.config, request.params)).(T), nil
-	}
-	target := compiled.newTarget()
-	if compiled.release != nil {
-		defer compiled.release(target)
-	}
-	if err := validateRequestContentType(request.request, compiled.hasBody, i.contentTypes); err != nil {
-		return zero, err
-	}
-	httpRequest := request.request
-	if request.maxBodyBytes > 0 {
-		httpRequest = requestWithMaxBodyBytes(request.writer, httpRequest, request.maxBodyBytes)
-		if state := requestStateFromRequest(httpRequest); state != nil && state.body != nil {
-			state.body.setLimit(request.maxBodyBytes)
-		}
-	}
-	var err error
-	if compiled.directPath && compiled.bindPath != nil && request.params.Len() > 0 {
-		err = compiled.bindPath(target, request.params)
-	} else {
-		err = parseCompiledInput(httpRequest, target, request.server.config, request.server.codecMgr, request.params, compiled.info)
-	}
-	if err != nil {
-		if isRequestBodyTooLarge(err) || errors.Is(err, ErrRequestBodyTooLarge) {
-			return zero, Err(http.StatusRequestEntityTooLarge, http.StatusText(http.StatusRequestEntityTooLarge), WithCause(err))
-		}
-		return zero, err
-	}
-	return compiled.finish(target), nil
-}
-
-func (i *structInputDescriptor[T]) inputMetadata() InputMetadata {
-	if i == nil {
-		return InputMetadata{}
-	}
-	return cloneInputMetadata(i.metadata)
-}
-
-func (i *structInputDescriptor[T]) inputSetupError() error {
-	if i == nil {
-		return ErrOperationInputNil
-	}
-	return i.setupErr
-}
-
-func (i *structInputDescriptor[T]) stateIndependentInput() bool {
-	return i != nil && i.compiled.directPath
-}
-
-// StructInput 从结构体 tag、嵌入 Params 与 Body 字段编译输入契约。
-// StructInput compiles an input contract from struct tags, embedded Params and the Body field.
-// contentTypes 为空时保持宽松解码规则，并在 OpenAPI 中按 JSON 描述请求体。
-// An empty contentTypes list preserves lenient decoding and documents the request body as JSON in OpenAPI.
-func StructInput[T any](contentTypes ...string) Input[T] {
-	compiled := compileStructInput[T]()
-	inputType := reflect.TypeFor[T]()
-	setupErr := validateRequestParamsUsage[T]()
-	if inputType != reflect.TypeFor[Params]() {
-		baseType := inputType
-		if baseType.Kind() == reflect.Ptr {
-			baseType = baseType.Elem()
-		}
-		if baseType.Kind() != reflect.Struct {
-			setupErr = errors.Join(setupErr, fmt.Errorf("struct input requires a struct type, got %s", inputType))
-		}
-	}
-	metadata := structInputMetadata(inputType, contentTypes)
-	return &structInputDescriptor[T]{
-		compiled:     compiled,
-		metadata:     metadata,
-		contentTypes: normalizeContentTypes(contentTypes),
-		setupErr:     setupErr,
-	}
-}
-
-func structInputMetadata(inputType reflect.Type, contentTypes []string) InputMetadata {
-	metadata := InputMetadata{}
-	for _, location := range []ParameterLocation{
-		ParameterLocationPath,
-		ParameterLocationQuery,
-		ParameterLocationHeader,
-		ParameterLocationCookie,
-	} {
-		required := location == ParameterLocationPath
-		for _, source := range extractParametersFromType(inputType, string(location), required) {
-			metadata.Parameters = append(metadata.Parameters, InputParameter{
-				Name:        source.Name,
-				Location:    location,
-				Required:    source.Required,
-				Description: source.Description,
-				Schema:      cloneOpenAPIValue(source.Schema),
-			})
-		}
-	}
-	bodySchema := extractBodySchema(inputType)
-	if bodySchema == nil {
-		return metadata
-	}
-	documentedTypes := normalizeContentTypes(contentTypes)
-	if len(documentedTypes) == 0 {
-		documentedTypes = []string{MIMEJSON}
-	}
-	content := make(map[string]any, len(documentedTypes))
-	for _, contentType := range documentedTypes {
-		content[contentType] = cloneOpenAPIValue(bodySchema)
-	}
-	metadata.RequestBody = &RequestBodyMetadata{Required: true, Content: content}
-	return metadata
-}
-
 type validatedInput[T any] struct {
 	input       Input[T]
 	validator   func(context.Context, T) error
@@ -530,6 +425,34 @@ func (i validatedInput[T]) inputSetupError() error { return i.setupErr }
 func (i validatedInput[T]) stateIndependentInput() bool {
 	stateIndependent, ok := i.input.(stateIndependentInputBuilder)
 	return ok && stateIndependent.stateIndependentInput()
+}
+
+func (i validatedInput[T]) stateDirectInput() bool {
+	builder, ok := i.input.(stateDirectInputBuilder[T])
+	return ok && builder.stateDirectInput()
+}
+
+func (i validatedInput[T]) buildStateDirect(request *http.Request, params pathParamList) (T, error) {
+	var zero T
+	if i.setupErr != nil {
+		return zero, i.setupErr
+	}
+	builder, ok := i.input.(stateDirectInputBuilder[T])
+	if !ok || !builder.stateDirectInput() {
+		return zero, ErrOperationInputNil
+	}
+	value, err := builder.buildStateDirect(request, params)
+	if err != nil {
+		return zero, err
+	}
+	if err := i.validator(request.Context(), value); err != nil {
+		mapped := mappedValidationError(i.replacement, err)
+		if AsError(mapped) != nil {
+			return zero, mapped
+		}
+		return zero, Err(http.StatusUnprocessableEntity, http.StatusText(http.StatusUnprocessableEntity), WithCause(mapped))
+	}
+	return value, nil
 }
 
 // ValidatedInput 在输入构造成功后执行路由级校验。
@@ -632,9 +555,10 @@ func validateStringConstraints(name, value string, constraints []StringConstrain
 	return nil
 }
 
-func parameterInput[T any](name string, location ParameterLocation, required bool, schema map[string]any, build func(*operationRequest) (T, error)) Input[T] {
+func parameterInput[T any](name string, location ParameterLocation, required bool, schema map[string]any, build func(*operationRequest) (T, error), stateBuild func(*http.Request, pathParamList) (T, error)) Input[T] {
 	return inputFunc[T]{
 		fn:               build,
+		stateFn:          stateBuild,
 		requestOnly:      true,
 		stateIndependent: true,
 		metadata: InputMetadata{Parameters: []InputParameter{{
@@ -654,6 +578,8 @@ func PathString(name string, constraints ...StringConstraint) Input[string] {
 	}
 	input := parameterInput(name, ParameterLocationPath, true, constrainedStringSchema(map[string]any{"type": "string"}, constraints), func(request *operationRequest) (string, error) {
 		return parse(request.path(name))
+	}, func(request *http.Request, params pathParamList) (string, error) {
+		return parse(pathParamDirect(request, params, name))
 	}).(inputFunc[string])
 	return directPathInput[string]{inputFunc: input, name: name, direct: parse}
 }
@@ -673,6 +599,8 @@ func PathInt64(name string, constraints ...NumberConstraint) Input[int64] {
 	}
 	input := parameterInput(name, ParameterLocationPath, true, constrainedNumberSchema(map[string]any{"type": "integer", "format": "int64"}, constraints), func(request *operationRequest) (int64, error) {
 		return parse(request.path(name))
+	}, func(request *http.Request, params pathParamList) (int64, error) {
+		return parse(pathParamDirect(request, params, name))
 	}).(inputFunc[int64])
 	return directPathInput[int64]{inputFunc: input, name: name, direct: parse}
 }
@@ -689,6 +617,8 @@ func PathBool(name string) Input[bool] {
 	}
 	input := parameterInput(name, ParameterLocationPath, true, map[string]any{"type": "boolean"}, func(request *operationRequest) (bool, error) {
 		return parse(request.path(name))
+	}, func(request *http.Request, params pathParamList) (bool, error) {
+		return parse(pathParamDirect(request, params, name))
 	}).(inputFunc[bool])
 	return directPathInput[bool]{inputFunc: input, name: name, direct: parse}
 }
@@ -705,6 +635,8 @@ func PathFloat64(name string, constraints ...NumberConstraint) Input[float64] {
 	}
 	input := parameterInput(name, ParameterLocationPath, true, constrainedNumberSchema(map[string]any{"type": "number", "format": "double"}, constraints), func(request *operationRequest) (float64, error) {
 		return parse(request.path(name))
+	}, func(request *http.Request, params pathParamList) (float64, error) {
+		return parse(pathParamDirect(request, params, name))
 	}).(inputFunc[float64])
 	return directPathInput[float64]{inputFunc: input, name: name, direct: parse}
 }
@@ -722,6 +654,12 @@ func QueryString(name string, constraints ...StringConstraint) Input[string] {
 			return "", BadRequest(fmt.Sprintf("query parameter %q is missing", name))
 		}
 		return value, validateStringConstraints(name, value, constraints)
+	}, func(request *http.Request, _ pathParamList) (string, error) {
+		value := request.URL.Query().Get(name)
+		if value == "" {
+			return "", BadRequest(fmt.Sprintf("query parameter %q is missing", name))
+		}
+		return value, validateStringConstraints(name, value, constraints)
 	})
 }
 
@@ -730,6 +668,13 @@ func QueryString(name string, constraints ...StringConstraint) Input[string] {
 func QueryInt(name string, constraints ...NumberConstraint) Input[int] {
 	return parameterInput(name, ParameterLocationQuery, true, constrainedNumberSchema(map[string]any{"type": "integer"}, constraints), func(request *operationRequest) (int, error) {
 		value := request.queryValues().Get(name)
+		parsed, err := strconv.Atoi(value)
+		if value == "" || err != nil {
+			return 0, Err(http.StatusBadRequest, fmt.Sprintf("query parameter %q is invalid", name), WithCause(err))
+		}
+		return parsed, validateNumberConstraints(name, float64(parsed), constraints)
+	}, func(request *http.Request, _ pathParamList) (int, error) {
+		value := request.URL.Query().Get(name)
 		parsed, err := strconv.Atoi(value)
 		if value == "" || err != nil {
 			return 0, Err(http.StatusBadRequest, fmt.Sprintf("query parameter %q is invalid", name), WithCause(err))
@@ -751,6 +696,16 @@ func QueryIntDefault(name string, defaultValue int, constraints ...NumberConstra
 			return 0, Err(http.StatusBadRequest, fmt.Sprintf("query parameter %q is invalid", name), WithCause(err))
 		}
 		return parsed, validateNumberConstraints(name, float64(parsed), constraints)
+	}, func(request *http.Request, _ pathParamList) (int, error) {
+		value := request.URL.Query().Get(name)
+		if value == "" {
+			return defaultValue, validateNumberConstraints(name, float64(defaultValue), constraints)
+		}
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return 0, Err(http.StatusBadRequest, fmt.Sprintf("query parameter %q is invalid", name), WithCause(err))
+		}
+		return parsed, validateNumberConstraints(name, float64(parsed), constraints)
 	})
 }
 
@@ -759,6 +714,13 @@ func QueryIntDefault(name string, defaultValue int, constraints ...NumberConstra
 func QueryBool(name string) Input[bool] {
 	return parameterInput(name, ParameterLocationQuery, true, map[string]any{"type": "boolean"}, func(request *operationRequest) (bool, error) {
 		value := request.queryValues().Get(name)
+		parsed, err := strconv.ParseBool(value)
+		if value == "" || err != nil {
+			return false, Err(http.StatusBadRequest, fmt.Sprintf("query parameter %q is invalid", name), WithCause(err))
+		}
+		return parsed, nil
+	}, func(request *http.Request, _ pathParamList) (bool, error) {
+		value := request.URL.Query().Get(name)
 		parsed, err := strconv.ParseBool(value)
 		if value == "" || err != nil {
 			return false, Err(http.StatusBadRequest, fmt.Sprintf("query parameter %q is invalid", name), WithCause(err))
@@ -777,6 +739,13 @@ func QueryFloat64(name string, constraints ...NumberConstraint) Input[float64] {
 			return 0, Err(http.StatusBadRequest, fmt.Sprintf("query parameter %q is invalid", name), WithCause(err))
 		}
 		return parsed, validateNumberConstraints(name, parsed, constraints)
+	}, func(request *http.Request, _ pathParamList) (float64, error) {
+		value := request.URL.Query().Get(name)
+		parsed, err := strconv.ParseFloat(value, 64)
+		if value == "" || err != nil {
+			return 0, Err(http.StatusBadRequest, fmt.Sprintf("query parameter %q is invalid", name), WithCause(err))
+		}
+		return parsed, validateNumberConstraints(name, parsed, constraints)
 	})
 }
 
@@ -785,6 +754,8 @@ func QueryFloat64(name string, constraints ...NumberConstraint) Input[float64] {
 func QueryStrings(name string) Input[[]string] {
 	return parameterInput(name, ParameterLocationQuery, false, map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, func(request *operationRequest) ([]string, error) {
 		return request.queryValues()[name], nil
+	}, func(request *http.Request, _ pathParamList) ([]string, error) {
+		return request.URL.Query()[name], nil
 	})
 }
 
@@ -798,6 +769,12 @@ func QueryStringDefault(name string, defaultValue string, constraints ...StringC
 			return defaultValue, validateStringConstraints(name, defaultValue, constraints)
 		}
 		return value, validateStringConstraints(name, value, constraints)
+	}, func(request *http.Request, _ pathParamList) (string, error) {
+		value := request.URL.Query().Get(name)
+		if value == "" {
+			return defaultValue, validateStringConstraints(name, defaultValue, constraints)
+		}
+		return value, validateStringConstraints(name, value, constraints)
 	})
 }
 
@@ -807,6 +784,16 @@ func QueryStringDefault(name string, defaultValue string, constraints ...StringC
 func QueryBoolDefault(name string, defaultValue bool) Input[bool] {
 	return parameterInput(name, ParameterLocationQuery, false, map[string]any{"type": "boolean", "default": defaultValue}, func(request *operationRequest) (bool, error) {
 		value := request.queryValues().Get(name)
+		if value == "" {
+			return defaultValue, nil
+		}
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return false, Err(http.StatusBadRequest, fmt.Sprintf("query parameter %q is invalid", name), WithCause(err))
+		}
+		return parsed, nil
+	}, func(request *http.Request, _ pathParamList) (bool, error) {
+		value := request.URL.Query().Get(name)
 		if value == "" {
 			return defaultValue, nil
 		}
@@ -832,6 +819,16 @@ func QueryFloat64Default(name string, defaultValue float64, constraints ...Numbe
 			return 0, Err(http.StatusBadRequest, fmt.Sprintf("query parameter %q is invalid", name), WithCause(err))
 		}
 		return parsed, validateNumberConstraints(name, parsed, constraints)
+	}, func(request *http.Request, _ pathParamList) (float64, error) {
+		value := request.URL.Query().Get(name)
+		if value == "" {
+			return defaultValue, validateNumberConstraints(name, defaultValue, constraints)
+		}
+		parsed, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return 0, Err(http.StatusBadRequest, fmt.Sprintf("query parameter %q is invalid", name), WithCause(err))
+		}
+		return parsed, validateNumberConstraints(name, parsed, constraints)
 	})
 }
 
@@ -841,6 +838,12 @@ func QueryFloat64Default(name string, defaultValue float64, constraints ...Numbe
 func HeaderStringDefault(name string, defaultValue string, constraints ...StringConstraint) Input[string] {
 	return parameterInput(name, ParameterLocationHeader, false, constrainedStringSchema(map[string]any{"type": "string", "default": defaultValue}, constraints), func(request *operationRequest) (string, error) {
 		value := request.request.Header.Get(name)
+		if value == "" {
+			return defaultValue, validateStringConstraints(name, defaultValue, constraints)
+		}
+		return value, validateStringConstraints(name, value, constraints)
+	}, func(request *http.Request, _ pathParamList) (string, error) {
+		value := request.Header.Get(name)
 		if value == "" {
 			return defaultValue, validateStringConstraints(name, defaultValue, constraints)
 		}
@@ -858,6 +861,12 @@ func CookieStringDefault(name string, defaultValue string, constraints ...String
 			return defaultValue, validateStringConstraints(name, defaultValue, constraints)
 		}
 		return cookie.Value, validateStringConstraints(name, cookie.Value, constraints)
+	}, func(request *http.Request, _ pathParamList) (string, error) {
+		cookie, err := request.Cookie(name)
+		if err != nil {
+			return defaultValue, validateStringConstraints(name, defaultValue, constraints)
+		}
+		return cookie.Value, validateStringConstraints(name, cookie.Value, constraints)
 	})
 }
 
@@ -870,6 +879,12 @@ func HeaderString(name string) Input[string] {
 			return "", BadRequest(fmt.Sprintf("header %q is missing", name))
 		}
 		return value, nil
+	}, func(request *http.Request, _ pathParamList) (string, error) {
+		value := request.Header.Get(name)
+		if value == "" {
+			return "", BadRequest(fmt.Sprintf("header %q is missing", name))
+		}
+		return value, nil
 	})
 }
 
@@ -878,6 +893,12 @@ func HeaderString(name string) Input[string] {
 func CookieString(name string) Input[string] {
 	return parameterInput(name, ParameterLocationCookie, true, map[string]any{"type": "string"}, func(request *operationRequest) (string, error) {
 		cookie, err := request.request.Cookie(name)
+		if err != nil {
+			return "", BadRequest(fmt.Sprintf("cookie %q is missing", name))
+		}
+		return cookie.Value, nil
+	}, func(request *http.Request, _ pathParamList) (string, error) {
+		cookie, err := request.Cookie(name)
 		if err != nil {
 			return "", BadRequest(fmt.Sprintf("cookie %q is missing", name))
 		}
@@ -985,9 +1006,15 @@ func readOperationBody(request *operationRequest) ([]byte, error) {
 		return nil, io.EOF
 	}
 	limit := request.maxBodyBytes
-	if state := requestStateFromRequest(request.request); state != nil && state.body != nil {
-		state.body.setLimit(limit)
-		return RawBody(request.request)
+	if request.ctx != nil {
+		request.ctx.bodyLimit = limit
+		// 优先走 Ctx.Body 的 memo 路径,可复用中间件读体结果且自带 limit。
+		// prefer the Ctx.Body memo path: it shares middleware body reads
+		// and carries the limit.
+		if request.ctx.body != nil {
+			request.ctx.body.setLimit(limit)
+		}
+		return request.ctx.BodyBytes()
 	}
 	reader := io.Reader(request.request.Body)
 	if limit > 0 {
@@ -1027,6 +1054,16 @@ func CombineInputs3[A, B, C any](first Input[A], second Input[B], third Input[C]
 	})
 }
 
+// stateDirectOf 报告输入是否支持免堆直编构建。
+// stateDirectOf reports whether the input supports the heap-free direct build.
+func stateDirectOf[V any](input Input[V]) (stateDirectInputBuilder[V], bool) {
+	builder, ok := input.(stateDirectInputBuilder[V])
+	if !ok || !builder.stateDirectInput() {
+		return nil, false
+	}
+	return builder, true
+}
+
 // MapInputs 按顺序构造两个输入，并映射为业务输入类型。
 // MapInputs builds two inputs in order and maps them into a business input type.
 func MapInputs[A, B, T any](first Input[A], second Input[B], mapFunc func(A, B) T) Input[T] {
@@ -1040,7 +1077,7 @@ func MapInputs[A, B, T any](first Input[A], second Input[B], mapFunc func(A, B) 
 	if mapFunc == nil {
 		setupErr = errors.Join(setupErr, ErrInputMapperNil)
 	}
-	return inputFunc[T]{
+	result := inputFunc[T]{
 		requestOnly:      isRequestOnlyInput(first) && isRequestOnlyInput(second),
 		stateIndependent: isStateIndependentInput(first) && isStateIndependentInput(second),
 		fn: func(request *operationRequest) (T, error) {
@@ -1064,6 +1101,26 @@ func MapInputs[A, B, T any](first Input[A], second Input[B], mapFunc func(A, B) 
 		metadata: metadata,
 		setupErr: setupErr,
 	}
+	firstFn, firstOK := directStateFnOf(first)
+	secondFn, secondOK := directStateFnOf(second)
+	if firstOK && secondOK {
+		result.stateFn = func(request *http.Request, params pathParamList) (T, error) {
+			var zero T
+			if mapFunc == nil {
+				return zero, ErrInputMapperNil
+			}
+			firstValue, err := firstFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			secondValue, err := secondFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			return mapFunc(firstValue, secondValue), nil
+		}
+	}
+	return result
 }
 
 // MapInputs3 按顺序构造三个输入，并映射为业务输入类型。
@@ -1084,7 +1141,7 @@ func MapInputs3[A, B, C, T any](first Input[A], second Input[B], third Input[C],
 	if mapFunc == nil {
 		setupErr = errors.Join(setupErr, ErrInputMapperNil)
 	}
-	return inputFunc[T]{
+	result := inputFunc[T]{
 		requestOnly:      isRequestOnlyInput(first) && isRequestOnlyInput(second) && isRequestOnlyInput(third),
 		stateIndependent: isStateIndependentInput(first) && isStateIndependentInput(second) && isStateIndependentInput(third),
 		fn: func(request *operationRequest) (T, error) {
@@ -1112,6 +1169,31 @@ func MapInputs3[A, B, C, T any](first Input[A], second Input[B], third Input[C],
 		metadata: metadata,
 		setupErr: setupErr,
 	}
+	firstFn, firstOK := directStateFnOf(first)
+	secondFn, secondOK := directStateFnOf(second)
+	thirdFn, thirdOK := directStateFnOf(third)
+	if firstOK && secondOK && thirdOK {
+		result.stateFn = func(request *http.Request, params pathParamList) (T, error) {
+			var zero T
+			if mapFunc == nil {
+				return zero, ErrInputMapperNil
+			}
+			firstValue, err := firstFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			secondValue, err := secondFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			thirdValue, err := thirdFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			return mapFunc(firstValue, secondValue, thirdValue), nil
+		}
+	}
+	return result
 }
 
 // MapInputs4 按顺序构造四个输入，并映射为业务输入类型。
@@ -1131,7 +1213,7 @@ func MapInputs4[A, B, C, D, T any](first Input[A], second Input[B], third Input[
 	if mapFunc == nil {
 		setupErr = errors.Join(setupErr, ErrInputMapperNil)
 	}
-	return inputFunc[T]{
+	result := inputFunc[T]{
 		requestOnly: isRequestOnlyInput(first) && isRequestOnlyInput(second) &&
 			isRequestOnlyInput(third) && isRequestOnlyInput(fourth),
 		stateIndependent: isStateIndependentInput(first) && isStateIndependentInput(second) &&
@@ -1165,6 +1247,36 @@ func MapInputs4[A, B, C, D, T any](first Input[A], second Input[B], third Input[
 		metadata: metadata,
 		setupErr: setupErr,
 	}
+	firstFn, firstOK := directStateFnOf(first)
+	secondFn, secondOK := directStateFnOf(second)
+	thirdFn, thirdOK := directStateFnOf(third)
+	fourthFn, fourthOK := directStateFnOf(fourth)
+	if firstOK && secondOK && thirdOK && fourthOK {
+		result.stateFn = func(request *http.Request, params pathParamList) (T, error) {
+			var zero T
+			if mapFunc == nil {
+				return zero, ErrInputMapperNil
+			}
+			firstValue, err := firstFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			secondValue, err := secondFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			thirdValue, err := thirdFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			fourthValue, err := fourthFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			return mapFunc(firstValue, secondValue, thirdValue, fourthValue), nil
+		}
+	}
+	return result
 }
 
 // MapInputs5 按顺序构造五个输入，并映射为业务输入类型。
@@ -1186,7 +1298,7 @@ func MapInputs5[A, B, C, D, E, T any](first Input[A], second Input[B], third Inp
 	if mapFunc == nil {
 		setupErr = errors.Join(setupErr, ErrInputMapperNil)
 	}
-	return inputFunc[T]{
+	result := inputFunc[T]{
 		requestOnly: isRequestOnlyInput(first) && isRequestOnlyInput(second) &&
 			isRequestOnlyInput(third) && isRequestOnlyInput(fourth) && isRequestOnlyInput(fifth),
 		stateIndependent: isStateIndependentInput(first) && isStateIndependentInput(second) &&
@@ -1224,6 +1336,41 @@ func MapInputs5[A, B, C, D, E, T any](first Input[A], second Input[B], third Inp
 		metadata: metadata,
 		setupErr: setupErr,
 	}
+	firstFn, firstOK := directStateFnOf(first)
+	secondFn, secondOK := directStateFnOf(second)
+	thirdFn, thirdOK := directStateFnOf(third)
+	fourthFn, fourthOK := directStateFnOf(fourth)
+	fifthFn, fifthOK := directStateFnOf(fifth)
+	if firstOK && secondOK && thirdOK && fourthOK && fifthOK {
+		result.stateFn = func(request *http.Request, params pathParamList) (T, error) {
+			var zero T
+			if mapFunc == nil {
+				return zero, ErrInputMapperNil
+			}
+			firstValue, err := firstFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			secondValue, err := secondFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			thirdValue, err := thirdFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			fourthValue, err := fourthFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			fifthValue, err := fifthFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			return mapFunc(firstValue, secondValue, thirdValue, fourthValue, fifthValue), nil
+		}
+	}
+	return result
 }
 
 // MapInputs6 按顺序构造六个输入，并映射为业务输入类型。
@@ -1243,7 +1390,7 @@ func MapInputs6[A, B, C, D, E, F, T any](first Input[A], second Input[B], third 
 	if mapFunc == nil {
 		setupErr = errors.Join(setupErr, ErrInputMapperNil)
 	}
-	return inputFunc[T]{
+	result := inputFunc[T]{
 		requestOnly: isRequestOnlyInput(first) && isRequestOnlyInput(second) &&
 			isRequestOnlyInput(third) && isRequestOnlyInput(fourth) &&
 			isRequestOnlyInput(fifth) && isRequestOnlyInput(sixth),
@@ -1287,6 +1434,46 @@ func MapInputs6[A, B, C, D, E, F, T any](first Input[A], second Input[B], third 
 		metadata: metadata,
 		setupErr: setupErr,
 	}
+	firstFn, firstOK := directStateFnOf(first)
+	secondFn, secondOK := directStateFnOf(second)
+	thirdFn, thirdOK := directStateFnOf(third)
+	fourthFn, fourthOK := directStateFnOf(fourth)
+	fifthFn, fifthOK := directStateFnOf(fifth)
+	sixthFn, sixthOK := directStateFnOf(sixth)
+	if firstOK && secondOK && thirdOK && fourthOK && fifthOK && sixthOK {
+		result.stateFn = func(request *http.Request, params pathParamList) (T, error) {
+			var zero T
+			if mapFunc == nil {
+				return zero, ErrInputMapperNil
+			}
+			firstValue, err := firstFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			secondValue, err := secondFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			thirdValue, err := thirdFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			fourthValue, err := fourthFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			fifthValue, err := fifthFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			sixthValue, err := sixthFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			return mapFunc(firstValue, secondValue, thirdValue, fourthValue, fifthValue, sixthValue), nil
+		}
+	}
+	return result
 }
 
 // MapInputs7 按顺序构造七个输入，并映射为业务输入类型。
@@ -1308,7 +1495,7 @@ func MapInputs7[A, B, C, D, E, F, G, T any](first Input[A], second Input[B], thi
 		setupErr = errors.Join(setupErr, ErrInputMapperNil)
 	}
 
-	return inputFunc[T]{
+	result := inputFunc[T]{
 		requestOnly: isRequestOnlyInput(first) && isRequestOnlyInput(second) &&
 			isRequestOnlyInput(third) && isRequestOnlyInput(fourth) &&
 			isRequestOnlyInput(fifth) && isRequestOnlyInput(sixth) && isRequestOnlyInput(seventh),
@@ -1356,6 +1543,51 @@ func MapInputs7[A, B, C, D, E, F, G, T any](first Input[A], second Input[B], thi
 		metadata: metadata,
 		setupErr: setupErr,
 	}
+	firstFn, firstOK := directStateFnOf(first)
+	secondFn, secondOK := directStateFnOf(second)
+	thirdFn, thirdOK := directStateFnOf(third)
+	fourthFn, fourthOK := directStateFnOf(fourth)
+	fifthFn, fifthOK := directStateFnOf(fifth)
+	sixthFn, sixthOK := directStateFnOf(sixth)
+	seventhFn, seventhOK := directStateFnOf(seventh)
+	if firstOK && secondOK && thirdOK && fourthOK && fifthOK && sixthOK && seventhOK {
+		result.stateFn = func(request *http.Request, params pathParamList) (T, error) {
+			var zero T
+			if mapFunc == nil {
+				return zero, ErrInputMapperNil
+			}
+			firstValue, err := firstFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			secondValue, err := secondFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			thirdValue, err := thirdFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			fourthValue, err := fourthFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			fifthValue, err := fifthFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			sixthValue, err := sixthFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			seventhValue, err := seventhFn(request, params)
+			if err != nil {
+				return zero, err
+			}
+			return mapFunc(firstValue, secondValue, thirdValue, fourthValue, fifthValue, sixthValue, seventhValue), nil
+		}
+	}
+	return result
 }
 
 // MapInputs8 按顺序构造八个输入，并映射为业务输入类型。

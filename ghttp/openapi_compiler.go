@@ -195,14 +195,6 @@ func openAPIParametersForDefinition(definition routeDefinition) []any {
 	parameters := make([]any, 0)
 	known := make(map[string]struct{})
 	pathParameters := make(map[string]map[string]any)
-	for _, parameter := range append(append(append(extractParametersFromType(definition.reqType, "path", true), extractParametersFromType(definition.reqType, "query", false)...), extractParametersFromType(definition.reqType, "header", false)...), extractParametersFromType(definition.reqType, "cookie", false)...) {
-		rendered := openAPIParameter(parameter)
-		parameters = append(parameters, rendered)
-		known[parameter.In+"\x00"+parameter.Name] = struct{}{}
-		if parameter.In == "path" {
-			pathParameters[parameter.Name] = rendered
-		}
-	}
 	for _, segment := range definition.pattern.segments {
 		if segment.kind != routeSegmentParameter && segment.kind != routeSegmentCatchAll {
 			continue
@@ -314,13 +306,10 @@ func openAPIResponsesForTerminal(definition routeDefinition, envelope, problemDe
 			}
 			response["headers"] = headers
 		}
-		if (definition.respType != nil || definition.openAPI.responseSchema != nil) && len(definition.produces) > 0 {
+		if definition.openAPI.responseSchema != nil && len(definition.produces) > 0 {
 			content := make(map[string]any, len(definition.produces))
 			for _, contentType := range definition.produces {
 				schema := definition.openAPI.responseSchema
-				if schema == nil {
-					schema = generateSchema(renderTypeArg(definition.respType))
-				}
 				if envelope {
 					schema = map[string]any{
 						"type": "object",

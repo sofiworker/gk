@@ -20,7 +20,7 @@ func TestWebSocketServerEchoJSON(t *testing.T) {
 		Text string `json:"text"`
 	}
 
-	app.MustMount(WebSocketOperation("/ws", StructInput[Params](), func(ctx context.Context, params Params, conn *WebSocketConn) error {
+	app.MustMount(WebSocketOperation("/ws", NoInput(), func(ctx context.Context, _ EmptyInput, conn *WebSocketConn) error {
 		var in message
 		if err := conn.ReadJSON(&in); err != nil {
 			return err
@@ -54,10 +54,17 @@ func TestWebSocketServerPassesParams(t *testing.T) {
 		Trace string `json:"trace"`
 	}
 
-	app.MustMount(WebSocketOperation("/ws/{id}", StructInput[Params](), func(ctx context.Context, params Params, conn *WebSocketConn) error {
+	type params struct {
+		ID    string
+		Trace string
+	}
+
+	app.MustMount(WebSocketOperation("/ws/{id}", MapInputs(PathString("id"), QueryString("trace"), func(id, trace string) params {
+		return params{ID: id, Trace: trace}
+	}), func(ctx context.Context, params params, conn *WebSocketConn) error {
 		return conn.WriteJSON(output{
-			ID:    params.Path("id"),
-			Trace: params.Query("trace"),
+			ID:    params.ID,
+			Trace: params.Trace,
 		})
 	}))
 
@@ -78,7 +85,7 @@ func TestWebSocketServerPassesParams(t *testing.T) {
 
 func TestWebSocketServerRejectsPlainHTTP(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	app.MustMount(WebSocketOperation("/ws", StructInput[Params](), func(context.Context, Params, *WebSocketConn) error {
+	app.MustMount(WebSocketOperation("/ws", NoInput(), func(context.Context, EmptyInput, *WebSocketConn) error {
 		return nil
 	}))
 
@@ -98,7 +105,7 @@ func TestClientWebSocketEchoJSON(t *testing.T) {
 		Text string `json:"text"`
 	}
 
-	app.MustMount(WebSocketOperation("/ws", StructInput[Params](), func(ctx context.Context, params Params, conn *WebSocketConn) error {
+	app.MustMount(WebSocketOperation("/ws", NoInput(), func(ctx context.Context, _ EmptyInput, conn *WebSocketConn) error {
 		var in message
 		if err := conn.ReadJSON(&in); err != nil {
 			return err
@@ -135,8 +142,8 @@ func TestClientWebSocketSubprotocols(t *testing.T) {
 		Protocol string `json:"protocol"`
 	}
 
-	app.MustMount(WebSocketOperation("/ws", StructInput[Params](), func(ctx context.Context, params Params, conn *WebSocketConn) error {
-		return conn.WriteJSON(output{Protocol: params.Header("Sec-WebSocket-Protocol")})
+	app.MustMount(WebSocketOperation("/ws", HeaderString("Sec-WebSocket-Protocol"), func(ctx context.Context, protocol string, conn *WebSocketConn) error {
+		return conn.WriteJSON(output{Protocol: protocol})
 	}))
 
 	ts := httptest.NewServer(app)
@@ -165,7 +172,7 @@ func TestClientWebSocketTLS(t *testing.T) {
 		Text string `json:"text"`
 	}
 
-	app.MustMount(WebSocketOperation("/ws", StructInput[Params](), func(ctx context.Context, params Params, conn *WebSocketConn) error {
+	app.MustMount(WebSocketOperation("/ws", NoInput(), func(ctx context.Context, _ EmptyInput, conn *WebSocketConn) error {
 		return conn.WriteJSON(message{Text: "secure"})
 	}))
 
@@ -200,7 +207,7 @@ func TestWebSocketServerUnderTimeoutMiddlewareUpgrades(t *testing.T) {
 	type message struct {
 		Text string `json:"text"`
 	}
-	app.MustMount(WebSocketOperation("/ws", StructInput[Params](), func(ctx context.Context, params Params, conn *WebSocketConn) error {
+	app.MustMount(WebSocketOperation("/ws", NoInput(), func(ctx context.Context, _ EmptyInput, conn *WebSocketConn) error {
 		var in message
 		if err := conn.ReadJSON(&in); err != nil {
 			return err
@@ -227,7 +234,7 @@ func TestWebSocketServerUnderTimeoutMiddlewareUpgrades(t *testing.T) {
 
 func TestWebSocketServerRawMessages(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	app.MustMount(WebSocketOperation("/ws", StructInput[Params](), func(ctx context.Context, params Params, conn *WebSocketConn) error {
+	app.MustMount(WebSocketOperation("/ws", NoInput(), func(ctx context.Context, _ EmptyInput, conn *WebSocketConn) error {
 		messageType, data, err := conn.ReadMessage()
 		if err != nil {
 			return err
@@ -261,7 +268,7 @@ func TestWebSocketServerNegotiatedSubprotocol(t *testing.T) {
 	type output struct {
 		Protocol string `json:"protocol"`
 	}
-	app.MustMount(WebSocketOperation("/ws", StructInput[Params](), func(ctx context.Context, params Params, conn *WebSocketConn) error {
+	app.MustMount(WebSocketOperation("/ws", NoInput(), func(ctx context.Context, _ EmptyInput, conn *WebSocketConn) error {
 		return conn.WriteJSON(output{Protocol: conn.Subprotocol()})
 	}))
 
@@ -286,7 +293,7 @@ func TestWebSocketServerNegotiatedSubprotocol(t *testing.T) {
 
 func TestWebSocketServerRouteOriginOverride(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	app.MustMount(WebSocketOperation("/open", StructInput[Params](), func(ctx context.Context, params Params, conn *WebSocketConn) error {
+	app.MustMount(WebSocketOperation("/open", NoInput(), func(ctx context.Context, _ EmptyInput, conn *WebSocketConn) error {
 		return conn.WriteJSON(map[string]any{"ok": true})
 	}).WithWebSocketOriginCheck(func(r *http.Request) bool {
 		return r.Header.Get("Origin") == "https://allowed.test"
@@ -318,7 +325,7 @@ func TestWebSocketServerRouteOriginOverride(t *testing.T) {
 func TestWebSocketServerReadJSONContextCanceled(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	errCh := make(chan error, 1)
-	app.MustMount(WebSocketOperation("/ws", StructInput[Params](), func(ctx context.Context, params Params, conn *WebSocketConn) error {
+	app.MustMount(WebSocketOperation("/ws", NoInput(), func(ctx context.Context, _ EmptyInput, conn *WebSocketConn) error {
 		ctx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 		defer cancel()
 		var msg struct {
@@ -354,7 +361,7 @@ func TestWebSocketServerKeepAlivePing(t *testing.T) {
 	type message struct {
 		Text string `json:"text"`
 	}
-	app.MustMount(WebSocketOperation("/ws", StructInput[Params](), func(ctx context.Context, params Params, conn *WebSocketConn) error {
+	app.MustMount(WebSocketOperation("/ws", NoInput(), func(ctx context.Context, _ EmptyInput, conn *WebSocketConn) error {
 		var in message
 		if err := conn.ReadJSONContext(ctx, &in); err != nil {
 			return err
@@ -468,7 +475,7 @@ func TestServerWebSocketOptionsConfigure(t *testing.T) {
 
 func TestWebSocketRejectsCrossOriginByDefault(t *testing.T) {
 	app := New()
-	app.MustMount(WebSocketOperation("/ws", StructInput[Params](), func(context.Context, Params, *WebSocketConn) error {
+	app.MustMount(WebSocketOperation("/ws", NoInput(), func(context.Context, EmptyInput, *WebSocketConn) error {
 		return nil
 	}))
 

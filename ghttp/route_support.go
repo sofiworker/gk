@@ -199,7 +199,11 @@ func writeErrorWithCodec(writer http.ResponseWriter, request *http.Request, serv
 	contentType, codec, _ := selectResponseCodec(server, request.Header.Get("Accept"), produces, codecs)
 	if codec == nil {
 		contentType = MIMEJSON
-		codec, _ = server.codecMgr.Resolve(MIMEJSON)
+		if server.resolvedJSONCodec != nil {
+			codec = server.resolvedJSONCodec
+		} else {
+			codec, _ = server.codecMgr.Resolve(MIMEJSON)
+		}
 	}
 	if server.envelope != nil {
 		server.envelope(writer, request, status, nil, err, contentType, codec)
@@ -244,10 +248,17 @@ func responseHasBody(status int) bool {
 
 func selectResponseCodec(server *Server, accept string, produces []string, codecs []responseCodec) (string, Codec, bool) {
 	if len(codecs) == 0 {
-		if len(produces) == 0 && server != nil {
-			produces = server.produces
+		if len(produces) == 0 && server != nil && server.resolvedCodecs != nil {
+			// 默认 produces 走注册期预解析结果,跳过每请求 Resolve。
+			// default produces reuse the registration-time resolution,
+			// skipping per-request Resolve.
+			codecs = server.resolvedCodecs
+		} else {
+			if len(produces) == 0 && server != nil {
+				produces = server.produces
+			}
+			codecs = resolveResponseCodecs(server, produces)
 		}
-		codecs = resolveResponseCodecs(server, produces)
 	}
 	if len(codecs) == 0 {
 		return "", nil, false

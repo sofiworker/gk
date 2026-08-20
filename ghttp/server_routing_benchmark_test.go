@@ -43,8 +43,7 @@ type benchmarkLegacyRequestAdapter struct {
 }
 
 func (a benchmarkLegacyRequestAdapter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	responseState, w := newResponseWriteState(w, r.Method == http.MethodHead)
-	r = r.WithContext(context.WithValue(r.Context(), requestStateContextKey{}, requestState{responseState: responseState}))
+	r = r.WithContext(context.WithValue(r.Context(), ctxKey{}, &Ctx{W: w, R: r}))
 	a.router.ServeHTTP(w, r)
 }
 
@@ -141,7 +140,7 @@ func BenchmarkRouteFreeze(b *testing.B) {
 					b.StopTimer()
 					server := New()
 					for middleware := 0; middleware < middlewareCount; middleware++ {
-						server.Use(func(next http.Handler) http.Handler { return next })
+						server.Use(func(c *Ctx) { c.Next() })
 					}
 					registerBenchmarkServerRoutes(server, routeCount)
 					b.StartTimer()
@@ -252,7 +251,7 @@ func registerBenchmarkServerRoutes(server *Server, routeCount int) {
 			method = http.MethodHead
 		}
 		if index%benchmarkRouteKinds == benchmarkRouteTyped {
-			server.MustMount(HandleHTTP(Endpoint(method, benchmarkRoutePattern(index)), StructInput[Params](), benchmarkTypedHandler))
+			server.MustMount(HandleHTTP(Endpoint(method, benchmarkRoutePattern(index)), PathString("id"), benchmarkTypedHandler))
 			continue
 		}
 		server.MustMount(RawOperation(method, benchmarkRoutePattern(index), benchmarkRawHandler))
@@ -293,8 +292,8 @@ func newBenchmarkLegacyRouter(implementation string, routeCount int) legacyroute
 
 var benchmarkRawHandler = http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 
-func benchmarkTypedHandler(_ http.ResponseWriter, _ *http.Request, params Params) error {
-	_ = params.Path("id")
+func benchmarkTypedHandler(_ http.ResponseWriter, _ *http.Request, id string) error {
+	_ = id
 	return nil
 }
 

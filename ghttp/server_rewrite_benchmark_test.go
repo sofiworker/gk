@@ -5,16 +5,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 )
 
 type rewriteBenchmarkWriter struct {
 	header http.Header
-}
-
-type rewriteReferenceInput struct {
-	ID int64 `path:"id"`
 }
 
 type rewriteReferencePayload struct {
@@ -33,10 +28,8 @@ func (w *rewriteBenchmarkWriter) WriteString(body string) (int, error) {
 	return len(body), nil
 }
 
-func rewriteBenchmarkNoop(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		next.ServeHTTP(writer, request)
-	})
+func rewriteBenchmarkNoop(c *Ctx) {
+	c.Next()
 }
 
 func assertRewriteBenchmarkResponse(b *testing.B, handler http.Handler, method, path, contentType, body string) {
@@ -69,38 +62,6 @@ func BenchmarkServerRewriteRawParam(b *testing.B) {
 		_, _ = io.WriteString(w, r.URL.Path)
 	})))
 	req := httptest.NewRequest(http.MethodGet, "/users/42", nil)
-	w := &rewriteBenchmarkWriter{header: make(http.Header)}
-	server.ServeHTTP(w, req)
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		server.ServeHTTP(w, req)
-	}
-}
-
-func BenchmarkServerRewriteTypedParams(b *testing.B) {
-	server := New(WithProduces(MIMEJSON))
-	server.MustMount(Handle(Get("/users/{id}"), StructInput[rewriteInput](), JSONOutput[rewriteOutput](), func(_ context.Context, input rewriteInput) (rewriteOutput, error) {
-		return rewriteOutput{ID: input.ID, Page: input.Page}, nil
-	}))
-	req := httptest.NewRequest(http.MethodGet, "/users/42?page=3", nil)
-	w := &rewriteBenchmarkWriter{header: make(http.Header)}
-	server.ServeHTTP(w, req)
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		server.ServeHTTP(w, req)
-	}
-}
-
-func BenchmarkServerRewriteParamJSONLegacyCodec(b *testing.B) {
-	server := New(WithProduces(MIMEJSON))
-	server.MustMount(Handle(Get("/user/{id}"), StructInput[rewriteReferenceInput](), JSONOutput[*rewriteReferencePayload](), func(_ context.Context, input rewriteReferenceInput) (*rewriteReferencePayload, error) {
-		_ = input.ID
-		return rewriteReferencePayloadValue, nil
-	}))
-	req := httptest.NewRequest(http.MethodGet, "/user/42", nil)
-	assertRewriteBenchmarkResponse(b, server, http.MethodGet, "/user/42", MIMEJSON, "{\"message\":\"Hello, World!\",\"num\":42}\n")
 	w := &rewriteBenchmarkWriter{header: make(http.Header)}
 	server.ServeHTTP(w, req)
 	b.ReportAllocs()
@@ -258,28 +219,5 @@ func BenchmarkServerRewriteMethodNotAllowed(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		server.ServeHTTP(w, req)
-	}
-}
-
-func BenchmarkServerRewriteJSONBody(b *testing.B) {
-	type input struct {
-		Body rewriteBody
-	}
-	server := New(WithProduces(MIMEJSON))
-	server.MustMount(Handle(Post("/users"), StructInput[input](), JSONOutput[rewriteOutput](), func(_ context.Context, input input) (rewriteOutput, error) {
-		return rewriteOutput{Name: input.Body.Name}, nil
-	}))
-	body := `{"name":"Ada"}`
-	newRequest := func() *http.Request {
-		req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(body))
-		req.Header.Set("Content-Type", MIMEJSON)
-		return req
-	}
-	w := &rewriteBenchmarkWriter{header: make(http.Header)}
-	server.ServeHTTP(w, newRequest())
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		server.ServeHTTP(w, newRequest())
 	}
 }

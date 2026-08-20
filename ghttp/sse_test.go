@@ -58,7 +58,7 @@ func TestSSEStreamingUnderTimeoutMiddleware(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	app.Use(Timeout(5 * time.Second))
 
-	app.MustMount(SSEOperation("/events", StructInput[Params](), func(ctx context.Context, params Params, stream *SSEWriter) error {
+	app.MustMount(SSEOperation("/events", NoInput(), func(ctx context.Context, _ EmptyInput, stream *SSEWriter) error {
 		if err := stream.WriteJSON("tick", map[string]any{"n": 1}); err != nil {
 			return err
 		}
@@ -90,7 +90,7 @@ func TestSSEHandlerErrorLogged(t *testing.T) {
 		WithProduces(MIMEJSON),
 		WithLogger(NewSlogLogger(slog.New(slog.NewTextHandler(&buf, nil)))),
 	)
-	app.MustMount(SSEOperation("/events", StructInput[Params](), func(ctx context.Context, params Params, stream *SSEWriter) error {
+	app.MustMount(SSEOperation("/events", NoInput(), func(ctx context.Context, _ EmptyInput, stream *SSEWriter) error {
 		return fmt.Errorf("sse boom")
 	}))
 

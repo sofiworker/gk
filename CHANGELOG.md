@@ -49,7 +49,10 @@
 
 ### Removed
 
+- ghttp：**删除 StructInput 老 API 全族**（性能收敛）：`StructInput[T]`（结构体 tag 绑定）、`Body[T]` 惰性请求体视图、`ParseInput`、`WithBodyDecoder`、`ErrInvalidParamsUsage`、`ErrMultipleBodyFields`、`ErrBodyFieldMustBeValue` 及全部结构体 tag 解析机器（`structInfo`/`parseCompiledInput`/`bindDirectPathInput` 等）。结构体 tag 绑定路径是每请求开销的最大单笔来源；迁移方式：`MapInputs(PathInt64("id"), ...)` 显式描述器 + `InputFunc`/`JSONBody[T]`。中间件读取路径参数改用 `Server.MatchedParams(r)`。
+- ghttp：删除基于结构体类型的 OpenAPI 反推死代码（`compileRouteOpenAPIMetadata`/`extractParametersFromType`/`extractBodySchema` 及 `routeDefinition.reqType/respType`）；OpenAPI 现完全由显式输入/输出描述器元数据生成。
 - ghttp：旧 `openAPIBuilder` 死代码、未用的 util/form 辅助函数、client 未用字段。
+- 仓库：删除基于已移除 RouteBuilder API 的陈旧示例（`example/ghttp_usage`、`example/server_review`、`example/server_review_v2`、`example/server_review_v3`）；评审结论已沉淀在 `docs/ghttp-server-review*.md`。
 - gnet/rawcap：库内 demo `main` 文件（不做 demo，方向改为真实库）。
 
 ## [0.1.0] - 待发布

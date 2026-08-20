@@ -1,6 +1,7 @@
 package ghttp
 
 import (
+	"errors"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -8,6 +9,10 @@ import (
 	"reflect"
 	"strconv"
 )
+
+// ErrInvalidBody 表示请求体无法读取或解码。
+// ErrInvalidBody indicates the request body could not be read or decoded.
+var ErrInvalidBody = errors.New("invalid request body")
 
 const defaultMaxMemory = 32 << 20 // 32 MB
 
@@ -90,9 +95,8 @@ func fillMultipartBody(bodyVal reflect.Value, form *multipart.Form) error {
 }
 
 // FormValues 返回合并 query 与表单体的参数,解析一次并缓存到 requestState;
-// 后续调用与 Params/Body[T] 共享同一份。
 // FormValues returns query-merged form values, parsed once and cached on
-// requestState; later calls and Params/Body[T] share the same result.
+// requestState.
 func FormValues(r *http.Request) (url.Values, error) {
 	form, _, err := formValuesFromRequest(r)
 	return form, err
@@ -113,41 +117,13 @@ func MultipartForm(r *http.Request, maxMemory int64) (*multipart.Form, error) {
 	if r == nil {
 		return nil, nil
 	}
-	st := requestStateFromRequest(r)
-	if st == nil {
-		if err := r.ParseMultipartForm(maxMemory); err != nil {
-			return nil, err
-		}
-		return r.MultipartForm, nil
+	if c := ctxFromRequest(r); c != nil {
+		return c.multipartForm(maxMemory)
 	}
-	st.multipartMu.Lock()
-	defer st.multipartMu.Unlock()
-	if st.multipartParsed {
-		return st.multipart, st.multipartErr
+	if err := r.ParseMultipartForm(maxMemory); err != nil {
+		return nil, err
 	}
-	req := st.req
-	if req == nil {
-		req = r
-	}
-	if maxMemory <= 0 {
-		maxMemory = defaultMaxMemory
-	}
-	if st.body != nil && st.body.drained() {
-		st.multipartErr = fmt.Errorf("%w: multipart body must be parsed before the raw bytes are drained", ErrInvalidBody)
-		st.multipartParsed = true
-		return nil, st.multipartErr
-	}
-	if err := req.ParseMultipartForm(maxMemory); err != nil {
-		st.multipartErr = err
-		st.multipartParsed = true
-		return nil, st.multipartErr
-	}
-	st.multipart = req.MultipartForm
-	if err := st.bodyLimitErr(); err != nil {
-		st.multipartErr = err
-	}
-	st.multipartParsed = true
-	return st.multipart, st.multipartErr
+	return r.MultipartForm, nil
 }
 
 // formValuesFromRequest 返回 (merged, post) 两套缓存视图。
@@ -156,65 +132,13 @@ func formValuesFromRequest(r *http.Request) (url.Values, url.Values, error) {
 	if r == nil {
 		return nil, nil, nil
 	}
-	st := requestStateFromRequest(r)
-	if st == nil {
-		if err := r.ParseForm(); err != nil {
-			return nil, nil, err
-		}
-		return r.Form, r.PostForm, nil
+	if c := ctxFromRequest(r); c != nil {
+		return c.formValues()
 	}
-	st.formMu.Lock()
-	defer st.formMu.Unlock()
-	if st.formParsed {
-		return st.form, st.postForm, st.formErr
+	if err := r.ParseForm(); err != nil {
+		return nil, nil, err
 	}
-	req := st.req
-	if req == nil {
-		req = r
-	}
-	// 字节尚未被整读:走 stdlib 解析,流经 memo 时被记录。
-	// stream not yet drained: use stdlib parsing; bytes are recorded via memo.
-	if st.body == nil || !st.body.drained() {
-		if err := req.ParseForm(); err != nil {
-			st.formErr = err
-			st.formParsed = true
-			return st.form, st.postForm, st.formErr
-		}
-		st.form, st.postForm = req.Form, req.PostForm
-	} else {
-		// 已被 RawBody/middleware 整读:从共享字节回填,并回写 stdlib 视图。
-		// already drained: backfill from shared bytes and restore the stdlib view.
-		raw, err := st.body.bytes()
-		if err != nil {
-			st.formErr = err
-			st.formParsed = true
-			return st.form, st.postForm, st.formErr
-		}
-		post, perr := url.ParseQuery(string(raw))
-		if perr != nil {
-			st.formErr = perr
-			st.formParsed = true
-			return st.form, st.postForm, st.formErr
-		}
-		form := mergeURLValues(req.URL.Query(), post)
-		st.form, st.postForm = form, post
-		req.PostForm = post
-		req.Form = form
-	}
-	if err := st.bodyLimitErr(); err != nil {
-		st.formErr = err
-	}
-	st.formParsed = true
-	return st.form, st.postForm, st.formErr
-}
-
-// bodyLimitErr 把已缓冲字节的设限校验统一到 requestState。
-// bodyLimitErr unifies the buffered-bytes cap check on requestState.
-func (st *requestState) bodyLimitErr() error {
-	if st.body == nil {
-		return nil
-	}
-	return st.body.checkLimit()
+	return r.Form, r.PostForm, nil
 }
 
 // mergeURLValues 先复制 query,再追加表单体值(与 net/http Form 语义一致)。

@@ -39,10 +39,9 @@ func TestContextTypedKeyFollowsRequestContext(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusOK)
 	})))
-	server.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			next.ServeHTTP(w, r.WithContext(key.Set(r.Context(), "abc")))
-		})
+	server.Use(func(c *Ctx) {
+		c.R = c.R.WithContext(key.Set(c.R.Context(), "abc"))
+		c.Next()
 	})
 
 	recorder := httptest.NewRecorder()

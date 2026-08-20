@@ -10,12 +10,14 @@ import (
 
 func TestGo127ClientGenericMethods(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	app.MustMount(Handle(Post("/greet"), StructInput[clientGreetReq](), JSONOutput[clientGreetResp](), func(ctx context.Context, req clientGreetReq) (clientGreetResp, error) {
+	app.MustMount(Handle(Post("/greet"), JSONBody[struct{ Name string `json:"name"` }](), JSONOutput[clientGreetResp](), func(ctx context.Context, req struct {
+		Name string `json:"name"`
+	}) (clientGreetResp, error) {
 		return clientGreetResp{Body: struct {
 			Message string `json:"message"`
-		}{Message: "Hello, " + req.Body.Name}}, nil
+		}{Message: "Hello, " + req.Name}}, nil
 	}))
-	app.MustMount(Handle(Get("/ping"), StructInput[struct{}](), JSONOutput[clientGreetResp](), func(ctx context.Context, _ struct{}) (clientGreetResp, error) {
+	app.MustMount(Handle(Get("/ping"), NoInput(), JSONOutput[clientGreetResp](), func(ctx context.Context, _ EmptyInput) (clientGreetResp, error) {
 		return clientGreetResp{Body: struct {
 			Message string `json:"message"`
 		}{Message: "pong"}}, nil

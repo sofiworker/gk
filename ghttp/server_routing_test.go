@@ -72,7 +72,7 @@ func TestServerRejectsRoutesAfterFreeze(t *testing.T) {
 			t.Fatalf("panic = %#v, want errors.Is(_, ErrServerFrozen)", got)
 		}
 	}()
-	server.Use(func(next http.Handler) http.Handler { return next })
+	server.Use(func(c *Ctx) { c.Next() })
 }
 
 func TestServerStrictRoutingDistinguishesTrailingSlash(t *testing.T) {
@@ -110,39 +110,28 @@ func TestServerFreezeRejectsOperationMount(t *testing.T) {
 	})
 }
 
-func TestServerFreezeFailureIsTerminal(t *testing.T) {
+// 新执行模型没有中间件工厂:Use 直接接收 HandlerFunc,freeze 只做纯编译,
+// 不再调用用户代码。中间件 panic 发生在请求期,由 ServeHTTP 的 recover 兜底。
+// the new execution model has no middleware factories: Use takes a HandlerFunc
+// directly and freeze only compiles, so user code no longer runs at freeze.
+// middleware panics happen at request time and are recovered by ServeHTTP.
+func TestServerRecoversMiddlewarePanic(t *testing.T) {
 	t.Parallel()
 
-	want := errors.New("middleware factory failure")
+	want := errors.New("middleware panic at request time")
 	server := New()
-	calls := 0
-	server.Use(func(http.Handler) http.Handler {
-		calls++
+	server.Use(func(c *Ctx) {
 		panic(want)
 	})
+	server.MustMount(GetJSON("/boom", NoInput(), func(context.Context, EmptyInput) (struct{}, error) {
+		return struct{}{}, nil
+	}))
 
-	for attempt := 0; attempt < 2; attempt++ {
-		assertRoutePanic(t, want, func() {
-			server.finalizeRoutes()
-		})
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/boom", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
 	}
-	if calls != 1 {
-		t.Fatalf("middleware factory calls = %d, want 1", calls)
-	}
-}
-
-func TestServerDoesNotRecoverRouteFreezePanic(t *testing.T) {
-	t.Parallel()
-
-	want := errors.New("middleware factory failure")
-	server := New()
-	server.Use(func(http.Handler) http.Handler {
-		panic(want)
-	})
-
-	assertRoutePanic(t, want, func() {
-		server.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
-	})
 }
 
 func TestGroupConcurrentUseRetainsEveryMiddleware(t *testing.T) {
@@ -161,11 +150,9 @@ func TestGroupConcurrentUseRetainsEveryMiddleware(t *testing.T) {
 		go func() {
 			defer waitGroup.Done()
 			<-start
-			group.Use(func(next http.Handler) http.Handler {
-				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					calls.Add(1)
-					next.ServeHTTP(w, r)
-				})
+			group.Use(func(c *Ctx) {
+				calls.Add(1)
+				c.Next()
 			})
 		}()
 	}

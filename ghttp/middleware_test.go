@@ -36,27 +36,23 @@ func TestMiddlewareOrder(t *testing.T) {
 
 	var order []string
 
-	app.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			order = append(order, "a_before")
-			next.ServeHTTP(w, r)
-			order = append(order, "a_after")
-		})
+	app.Use(func(c *Ctx) {
+		order = append(order, "a_before")
+		c.Next()
+		order = append(order, "a_after")
 	})
 
-	app.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			order = append(order, "b_before")
-			next.ServeHTTP(w, r)
-			order = append(order, "b_after")
-		})
+	app.Use(func(c *Ctx) {
+		order = append(order, "b_before")
+		c.Next()
+		order = append(order, "b_after")
 	})
 
 	var handlerCalled bool
-	app.MustMount(Handle(Get("/test"), StructInput[struct{ Body struct{} }](), JSONOutput[struct{ Body struct{} }](), func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
+	app.MustMount(Handle(Get("/test"), NoInput(), JSONOutput[EmptyInput](), func(ctx context.Context, _ EmptyInput) (EmptyInput, error) {
 		order = append(order, "handler")
 		handlerCalled = true
-		return struct{ Body struct{} }{}, nil
+		return EmptyInput{}, nil
 	}))
 
 	w := httptest.NewRecorder()
@@ -75,31 +71,25 @@ func TestMiddlewareServerGroupAndRoute(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	var calls []string
 
-	app.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			calls = append(calls, "server-before")
-			next.ServeHTTP(w, r)
-			calls = append(calls, "server-after")
-		})
+	app.Use(func(c *Ctx) {
+		calls = append(calls, "server-before")
+		c.Next()
+		calls = append(calls, "server-after")
 	})
 
-	group := app.Group("/api").Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			calls = append(calls, "group-before")
-			next.ServeHTTP(w, r)
-			calls = append(calls, "group-after")
-		})
+	group := app.Group("/api").Use(func(c *Ctx) {
+		calls = append(calls, "group-before")
+		c.Next()
+		calls = append(calls, "group-after")
 	})
 
-	group.MustMount(Handle(Get("/test"), StructInput[struct{ Body struct{} }](), JSONOutput[struct{ Body struct{} }](), func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
+	group.MustMount(Handle(Get("/test"), NoInput(), JSONOutput[EmptyInput](), func(ctx context.Context, _ EmptyInput) (EmptyInput, error) {
 		calls = append(calls, "handler")
-		return struct{ Body struct{} }{}, nil
-	}).WithMiddleware(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			calls = append(calls, "route-before")
-			next.ServeHTTP(w, r)
-			calls = append(calls, "route-after")
-		})
+		return EmptyInput{}, nil
+	}).WithMiddleware(func(c *Ctx) {
+		calls = append(calls, "route-before")
+		c.Next()
+		calls = append(calls, "route-after")
 	}))
 
 	w := httptest.NewRecorder()
@@ -128,23 +118,23 @@ func TestMiddlewareServerGroupAndRoute(t *testing.T) {
 func TestMiddlewareWrapStandaloneHandler(t *testing.T) {
 	var calls []string
 	mw := func(name string) Middleware {
-		return func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls = append(calls, name+"-before")
-				next.ServeHTTP(w, r)
-				calls = append(calls, name+"-after")
-			})
+		return func(c *Ctx) {
+			calls = append(calls, name+"-before")
+			c.Next()
+			calls = append(calls, name+"-after")
 		}
 	}
 
-	handler := WrapFunc(func(w http.ResponseWriter, r *http.Request) {
+	app := New(WithProduces(MIMEJSON))
+	app.Use(mw("a"), mw("b"))
+	app.MustMount(RawOperation(http.MethodGet, "/standalone", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "handler")
 		w.WriteHeader(http.StatusAccepted)
-	}, Chain(mw("a"), mw("b")))
+	})))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/standalone", nil)
-	handler.ServeHTTP(w, r)
+	app.ServeHTTP(w, r)
 
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusAccepted)
@@ -204,8 +194,8 @@ func TestBuiltinMiddlewareRequestID(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	app.Use(RequestID())
 
-	app.MustMount(Handle(Get("/test"), StructInput[struct{ Body struct{} }](), JSONOutput[struct{ Body struct{} }](), func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
-		return struct{ Body struct{} }{}, nil
+	app.MustMount(Handle(Get("/test"), NoInput(), JSONOutput[EmptyInput](), func(ctx context.Context, _ EmptyInput) (EmptyInput, error) {
+		return EmptyInput{}, nil
 	}))
 
 	w := httptest.NewRecorder()
@@ -222,9 +212,13 @@ func TestBuiltinMiddlewareRequestIDInjectsContext(t *testing.T) {
 	app.Use(RequestID())
 
 	var got string
-	app.MustMount(Handle(Get("/test"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
-		got = GetRequestID(ctx)
-		return struct{}{}, nil
+	app.Use(func(c *Ctx) {
+		got = GetRequestID(c)
+		c.Next()
+	})
+
+	app.MustMount(Handle(Get("/test"), NoInput(), JSONOutput[EmptyInput](), func(ctx context.Context, _ EmptyInput) (EmptyInput, error) {
+		return EmptyInput{}, nil
 	}))
 
 	w := httptest.NewRecorder()
@@ -241,8 +235,8 @@ func TestBuiltinMiddlewareRequestIDRejectsOversizedIncomingValue(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	app.Use(RequestID())
 
-	app.MustMount(Handle(Get("/test"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
-		return struct{}{}, nil
+	app.MustMount(Handle(Get("/test"), NoInput(), JSONOutput[EmptyInput](), func(ctx context.Context, _ EmptyInput) (EmptyInput, error) {
+		return EmptyInput{}, nil
 	}))
 
 	long := strings.Repeat("x", 8192)
@@ -264,8 +258,8 @@ func TestBuiltinMiddlewareRequestIDMaxLengthOption(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	app.Use(RequestID(WithRequestIDMaxLength(8)))
 
-	app.MustMount(Handle(Get("/test"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
-		return struct{}{}, nil
+	app.MustMount(Handle(Get("/test"), NoInput(), JSONOutput[EmptyInput](), func(ctx context.Context, _ EmptyInput) (EmptyInput, error) {
+		return EmptyInput{}, nil
 	}))
 
 	for _, tc := range []struct {
@@ -307,8 +301,8 @@ func TestBuiltinMiddlewareCORSUsesConfiguredHeaders(t *testing.T) {
 		MaxAge:       60,
 	}))
 
-	app.MustMount(Handle(Get("/cors"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
-		return struct{}{}, nil
+	app.MustMount(Handle(Get("/cors"), NoInput(), JSONOutput[EmptyInput](), func(ctx context.Context, _ EmptyInput) (EmptyInput, error) {
+		return EmptyInput{}, nil
 	}))
 
 	w := httptest.NewRecorder()
@@ -341,13 +335,13 @@ func TestBuiltinMiddlewareCORSPassesThroughNonPreflightOptions(t *testing.T) {
 	}))
 
 	handlerCalled := 0
-	app.MustMount(Handle(Options("/custom"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
+	app.MustMount(Handle(Options("/custom"), NoInput(), JSONOutput[EmptyInput](), func(ctx context.Context, _ EmptyInput) (EmptyInput, error) {
 		handlerCalled++
-		return struct{}{}, nil
+		return EmptyInput{}, nil
 	}))
-	app.MustMount(Handle(Get("/custom"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
+	app.MustMount(Handle(Get("/custom"), NoInput(), JSONOutput[EmptyInput](), func(ctx context.Context, _ EmptyInput) (EmptyInput, error) {
 		handlerCalled++
-		return struct{}{}, nil
+		return EmptyInput{}, nil
 	}))
 
 	tests := []struct {
@@ -398,8 +392,8 @@ func TestBuiltinMiddlewareCORSDoesNotEmitAllowHeadersForRejectedOrigin(t *testin
 		AllowHeaders: []string{"Content-Type"},
 	}))
 
-	app.MustMount(Handle(Get("/cors"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
-		return struct{}{}, nil
+	app.MustMount(Handle(Get("/cors"), NoInput(), JSONOutput[EmptyInput](), func(ctx context.Context, _ EmptyInput) (EmptyInput, error) {
+		return EmptyInput{}, nil
 	}))
 
 	w := httptest.NewRecorder()
@@ -427,8 +421,8 @@ func TestBuiltinMiddlewareCORSCredentialsRejectsWildcardOrigin(t *testing.T) {
 		AllowCredentials: true,
 	}))
 
-	app.MustMount(Handle(Get("/cors"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
-		return struct{}{}, nil
+	app.MustMount(Handle(Get("/cors"), NoInput(), JSONOutput[EmptyInput](), func(ctx context.Context, _ EmptyInput) (EmptyInput, error) {
+		return EmptyInput{}, nil
 	}))
 
 	w := httptest.NewRecorder()
@@ -448,7 +442,7 @@ func TestBuiltinMiddlewareRecovery(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	app.Use(Recoverer())
 
-	app.MustMount(Handle(Get("/panic"), StructInput[struct{ Body struct{} }](), JSONOutput[struct{ Body struct{} }](), func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
+	app.MustMount(Handle(Get("/panic"), NoInput(), JSONOutput[EmptyInput](), func(ctx context.Context, _ EmptyInput) (EmptyInput, error) {
 		panic("test panic")
 	}))
 
@@ -465,7 +459,7 @@ func TestBuiltinMiddlewareRecoveryUsesStructuredGenericError(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	app.Use(Recoverer())
 
-	app.MustMount(Handle(Get("/panic"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
+	app.MustMount(Handle(Get("/panic"), NoInput(), JSONOutput[EmptyInput](), func(ctx context.Context, _ EmptyInput) (EmptyInput, error) {
 		panic("secret panic detail")
 	}))
 
@@ -495,9 +489,9 @@ func TestBuiltinMiddlewareTimeoutWritesGatewayTimeout(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	app.Use(Timeout(5 * time.Millisecond))
 
-	app.MustMount(Handle(Get("/slow"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
+	app.MustMount(Handle(Get("/slow"), NoInput(), JSONOutput[EmptyInput](), func(ctx context.Context, _ EmptyInput) (EmptyInput, error) {
 		time.Sleep(30 * time.Millisecond)
-		return struct{}{}, nil
+		return EmptyInput{}, nil
 	}))
 
 	w := httptest.NewRecorder()
@@ -514,7 +508,7 @@ func TestBuiltinMiddlewareTimeoutStopsLateWrites(t *testing.T) {
 	app.Use(Timeout(10 * time.Millisecond))
 
 	done := make(chan struct{})
-	app.MustMount(HandleHTTP(Get("/slow"), StructInput[struct{}](), func(w http.ResponseWriter, r *http.Request, _ struct{}) error {
+	app.MustMount(HandleHTTP(Get("/slow"), NoInput(), func(w http.ResponseWriter, r *http.Request, _ EmptyInput) error {
 		defer close(done)
 		time.Sleep(300 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
@@ -543,7 +537,7 @@ func TestBuiltinMiddlewareTimeoutCancelsContext(t *testing.T) {
 	app.Use(Timeout(10 * time.Millisecond))
 
 	canceled := make(chan struct{})
-	app.MustMount(HandleHTTP(Get("/slow"), StructInput[struct{}](), func(w http.ResponseWriter, r *http.Request, _ struct{}) error {
+	app.MustMount(HandleHTTP(Get("/slow"), NoInput(), func(w http.ResponseWriter, r *http.Request, _ EmptyInput) error {
 		<-r.Context().Done()
 		close(canceled)
 		return nil
@@ -566,7 +560,7 @@ func TestBuiltinMiddlewareRecovererCatchesPanicInsideTimeout(t *testing.T) {
 	app.Use(Recoverer())
 	app.Use(Timeout(time.Second))
 
-	app.MustMount(Handle(Get("/panic"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
+	app.MustMount(Handle(Get("/panic"), NoInput(), JSONOutput[EmptyInput](), func(ctx context.Context, _ EmptyInput) (EmptyInput, error) {
 		panic("panic inside timeout")
 	}))
 
@@ -583,15 +577,13 @@ func TestGroupUseAfterRouteRegistrationApplies(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	group := app.Group("/api")
 
-	group.MustMount(Handle(Get("/test"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
-		return struct{}{}, nil
+	group.MustMount(Handle(Get("/test"), NoInput(), JSONOutput[EmptyInput](), func(ctx context.Context, _ EmptyInput) (EmptyInput, error) {
+		return EmptyInput{}, nil
 	}))
 
-	group.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("X-Group", "applied")
-			next.ServeHTTP(w, r)
-		})
+	group.Use(func(c *Ctx) {
+		c.W.Header().Set("X-Group", "applied")
+		c.Next()
 	})
 
 	w := httptest.NewRecorder()
@@ -607,15 +599,13 @@ func TestGroupMiddlewareSnapshotAtCreation(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	parent := app.Group("/api")
 	child := parent.Group("/v1")
-	parent.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("X-Parent-Late", "applied")
-			next.ServeHTTP(w, r)
-		})
+	parent.Use(func(c *Ctx) {
+		c.W.Header().Set("X-Parent-Late", "applied")
+		c.Next()
 	})
 
-	child.MustMount(Handle(Get("/test"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
-		return struct{}{}, nil
+	child.MustMount(Handle(Get("/test"), NoInput(), JSONOutput[EmptyInput](), func(ctx context.Context, _ EmptyInput) (EmptyInput, error) {
+		return EmptyInput{}, nil
 	}))
 
 	w := httptest.NewRecorder()
@@ -631,16 +621,14 @@ func TestGroupMiddlewareSnapshotAtCreation(t *testing.T) {
 func TestGroupMiddlewareSnapshotIncludesParentBeforeCreation(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	parent := app.Group("/api")
-	parent.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("X-Parent-Early", "applied")
-			next.ServeHTTP(w, r)
-		})
+	parent.Use(func(c *Ctx) {
+		c.W.Header().Set("X-Parent-Early", "applied")
+		c.Next()
 	})
 	child := parent.Group("/v1")
 
-	child.MustMount(Handle(Get("/test"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
-		return struct{}{}, nil
+	child.MustMount(Handle(Get("/test"), NoInput(), JSONOutput[EmptyInput](), func(ctx context.Context, _ EmptyInput) (EmptyInput, error) {
+		return EmptyInput{}, nil
 	}))
 
 	w := httptest.NewRecorder()
@@ -655,7 +643,7 @@ func TestGroupMiddlewareSnapshotIncludesParentBeforeCreation(t *testing.T) {
 
 func TestServerUseChainable(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	mw := func(next http.Handler) http.Handler { return next }
+	mw := func(c *Ctx) { c.Next() }
 	if got := app.Use(mw); got != app {
 		t.Fatal("Server.Use must return the server for chaining")
 	}
@@ -664,16 +652,14 @@ func TestServerUseChainable(t *testing.T) {
 func TestMiddlewareSeesMatchedPathParams(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	var got string
-	app.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			got = app.MatchedParams(r).Path("id")
-			next.ServeHTTP(w, r)
-		})
+	app.Use(func(c *Ctx) {
+		got = app.MatchedParams(c.R).Path("id")
+		c.Next()
 	})
 
-	app.MustMount(Handle(Get("/users/{id}"), StructInput[Params](), JSONOutput[struct {
+	app.MustMount(Handle(Get("/users/{id}"), NoInput(), JSONOutput[struct {
 		ID string `json:"id"`
-	}](), func(context.Context, Params) (struct {
+	}](), func(_ context.Context, _ EmptyInput) (struct {
 		ID string `json:"id"`
 	}, error) {
 		return struct {

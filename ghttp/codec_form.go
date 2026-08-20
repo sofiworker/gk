@@ -5,8 +5,57 @@ import (
 	"io"
 	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 )
+
+// setValueFromString 将字符串值按字段类型写入 reflect.Value。
+// setValueFromString writes a string value into a reflect.Value by field kind.
+// 支持 string/bool/整数/浮点与指针字段;不支持的类型返回错误。
+// it supports string/bool/int/float and pointer fields; unsupported kinds error.
+func setValueFromString(field reflect.Value, value string) error {
+	if field.Kind() == reflect.Ptr {
+		if field.IsNil() {
+			field.Set(reflect.New(field.Type().Elem()))
+		}
+		return setValueFromString(field.Elem(), value)
+	}
+	switch field.Kind() {
+	case reflect.String:
+		field.SetString(value)
+		return nil
+	case reflect.Bool:
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return err
+		}
+		field.SetBool(parsed)
+		return nil
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		parsed, err := strconv.ParseInt(value, 10, field.Type().Bits())
+		if err != nil {
+			return err
+		}
+		field.SetInt(parsed)
+		return nil
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		parsed, err := strconv.ParseUint(value, 10, field.Type().Bits())
+		if err != nil {
+			return err
+		}
+		field.SetUint(parsed)
+		return nil
+	case reflect.Float32, reflect.Float64:
+		parsed, err := strconv.ParseFloat(value, field.Type().Bits())
+		if err != nil {
+			return err
+		}
+		field.SetFloat(parsed)
+		return nil
+	default:
+		return fmt.Errorf("unsupported kind %s", field.Kind())
+	}
+}
 
 // FormCodec 处理 application/x-www-form-urlencoded 表单。
 // FormCodec handles application/x-www-form-urlencoded.

@@ -9,19 +9,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"reflect"
 	"strings"
 	"testing"
 )
 
 type probeInput struct {
-	Params `json:"-"`
-
-	Body struct {
-		Name  string `json:"name"`
-		Email string `json:"email"`
-		Age   int    `json:"age"`
-	}
+	ID   string
+	Page string
 }
 
 func probeRequest() *http.Request {
@@ -95,26 +89,6 @@ func BenchmarkProbe_ClientIPResolve(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_ = defaultClientIPResolver(req)
-	}
-}
-
-// --- Input construction in the typed handler path (compiled at registration) ---
-
-func BenchmarkProbe_CompiledInputConstruct(b *testing.B) {
-	ci := compileStructInput[probeInput]()
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		target := ci.newTarget()
-		_ = ci.finish(target)
-	}
-}
-
-func BenchmarkProbe_CompiledInputConstructPtr(b *testing.B) {
-	ci := compileStructInput[*probeInput]()
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		target := ci.newTarget()
-		_ = ci.finish(target)
 	}
 }
 
@@ -216,11 +190,9 @@ func BenchmarkProbe_ParamsView_TypicalUse(b *testing.B) {
 // What a registration-time compiled binder would do per request: one struct
 // alloc, direct field writes. Measured as the floor for the typed path.
 func BenchmarkProbe_PrecompiledConstruct(b *testing.B) {
-	req := probeRequest()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		in := &probeInput{}
-		in.Params = Params{path: probePathParams, state: &paramsState{header: req.Header}}
+		in := &probeInput{ID: "42", Page: "1"}
 		_ = in
 	}
 }
@@ -234,8 +206,10 @@ func BenchmarkProbe_FullChainInProcess(b *testing.B) {
 		ID   string `json:"id"`
 		Page string `json:"page"`
 	}
-	s.MustMount(Handle(Get("/users/{id}"), StructInput[probeInput](), JSONOutput[out](), func(ctx context.Context, req probeInput) (out, error) {
-		return out{ID: req.Path("id"), Page: req.Query("page")}, nil
+	s.MustMount(Handle(Get("/users/{id}"), MapInputs(PathString("id"), QueryString("page"), func(id, page string) probeInput {
+		return probeInput{ID: id, Page: page}
+	}), JSONOutput[out](), func(ctx context.Context, req probeInput) (out, error) {
+		return out{ID: req.ID, Page: req.Page}, nil
 	}))
 	// warm: finalize routes
 	warm := httptest.NewRecorder()
@@ -278,11 +252,18 @@ func BenchmarkProbe_FullChainRawHandler(b *testing.B) {
 func BenchmarkProbe_FullChainInProcessPost(b *testing.B) {
 	s := New(WithProduces(MIMEJSON))
 
+	type payload struct {
+		Name  string `json:"name"`
+		Email string `json:"email"`
+		Age   int    `json:"age"`
+	}
 	type out struct {
 		Name string `json:"name"`
 	}
-	s.MustMount(Handle(Post("/users/{id}"), StructInput[probeInput](), JSONOutput[out](), func(ctx context.Context, req probeInput) (out, error) {
-		return out{Name: req.Body.Name}, nil
+	s.MustMount(Handle(Post("/users/{id}"), MapInputs(PathString("id"), JSONBody[payload](), func(id string, body payload) probeInput {
+		return probeInput{ID: id, Page: body.Name}
+	}), JSONOutput[out](), func(ctx context.Context, req probeInput) (out, error) {
+		return out{Name: req.Page}, nil
 	}))
 	body := `{"name":"Alice","email":"a@b.c","age":30}`
 	mk := func() *http.Request {
@@ -308,14 +289,14 @@ func BenchmarkProbe_FullChainInProcessPost(b *testing.B) {
 func TestFullChainAllocBudget(t *testing.T) {
 	server := New(WithProduces(MIMEJSON))
 
-	server.MustMount(Handle(Get("/users/{id}"), StructInput[Params](), JSONOutput[struct {
+	server.MustMount(Handle(Get("/users/{id}"), PathString("id"), JSONOutput[struct {
 		ID string `json:"id"`
-	}](), func(context.Context, Params) (struct {
+	}](), func(_ context.Context, id string) (struct {
 		ID string `json:"id"`
 	}, error) {
 		return struct {
 			ID string `json:"id"`
-		}{ID: "42"}, nil
+		}{ID: id}, nil
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/users/42", nil)
 	rec := httptest.NewRecorder()
@@ -330,8 +311,6 @@ func TestFullChainAllocBudget(t *testing.T) {
 		t.Fatalf("allocs/op = %d, want <= 15 (final budget 8 after WS9 iterations)", allocs)
 	}
 }
-
-var _ = reflect.TypeOf // keep reflect import if prototypes change
 
 // --- Prototype: what the full typed chain costs if Params is lazy, input
 // construction is precompiled, and the codec is cached at registration.

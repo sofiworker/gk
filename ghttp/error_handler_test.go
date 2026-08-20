@@ -22,7 +22,7 @@ func TestServerErrorHandlerReceivesSanitizedInternalError(t *testing.T) {
 			w.WriteHeader(http.StatusTeapot)
 		}),
 	)
-	server.MustMount(Handle(Get("/broken"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
+	server.MustMount(Handle(Get("/broken"), NoInput(), JSONOutput[struct{}](), func(context.Context, EmptyInput) (struct{}, error) {
 		return struct{}{}, cause
 	}))
 
@@ -72,7 +72,7 @@ func TestServerRecoversPanicsWithoutLeakingDetails(t *testing.T) {
 	t.Parallel()
 
 	server := New(WithProduces(MIMEJSON))
-	server.MustMount(Handle(Get("/panic"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
+	server.MustMount(Handle(Get("/panic"), NoInput(), JSONOutput[struct{}](), func(context.Context, EmptyInput) (struct{}, error) {
 		panic("secret detail")
 	}))
 
@@ -95,7 +95,7 @@ func TestServerFallsBackWhenErrorHandlerPanics(t *testing.T) {
 			panic("error handler panic")
 		}),
 	)
-	server.MustMount(Handle(Get("/panic"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
+	server.MustMount(Handle(Get("/panic"), NoInput(), JSONOutput[struct{}](), func(context.Context, EmptyInput) (struct{}, error) {
 		panic("handler panic")
 	}))
 
@@ -117,7 +117,7 @@ func TestServerDoesNotReenterErrorHandlerAfterItsPanic(t *testing.T) {
 			panic("error handler panic")
 		}),
 	)
-	server.MustMount(Handle(Get("/error"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
+	server.MustMount(Handle(Get("/error"), NoInput(), JSONOutput[struct{}](), func(context.Context, EmptyInput) (struct{}, error) {
 		return struct{}{}, errors.New("handler error")
 	}))
 
@@ -135,7 +135,7 @@ func TestDefaultErrorResponseDoesNotExposeInternalError(t *testing.T) {
 	t.Parallel()
 
 	server := New(WithProduces(MIMEJSON))
-	server.MustMount(Handle(Get("/broken"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
+	server.MustMount(Handle(Get("/broken"), NoInput(), JSONOutput[struct{}](), func(context.Context, EmptyInput) (struct{}, error) {
 		return struct{}{}, errors.New("database password leaked")
 	}))
 
@@ -157,7 +157,7 @@ func TestServerDoesNotRewriteCommittedSelfWrittenError(t *testing.T) {
 		errorHandlerCalls++
 		http.Error(w, "replacement", http.StatusInternalServerError)
 	}))
-	server.MustMount(HandleHTTP(Get("/write-then-fail"), StructInput[struct{}](), func(w http.ResponseWriter, _ *http.Request, _ struct{}) error {
+	server.MustMount(HandleHTTP(Get("/write-then-fail"), NoInput(), func(w http.ResponseWriter, _ *http.Request, _ EmptyInput) error {
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte("accepted"))
 		return errors.New("after write")
@@ -210,7 +210,7 @@ func TestServerDoesNotRewriteCommittedErrorInsideTimeout(t *testing.T) {
 		http.Error(w, "replacement", http.StatusInternalServerError)
 	}))
 	server.Use(Timeout(time.Second))
-	server.MustMount(HandleHTTP(Get("/write-then-fail"), StructInput[struct{}](), func(w http.ResponseWriter, _ *http.Request, _ struct{}) error {
+	server.MustMount(HandleHTTP(Get("/write-then-fail"), NoInput(), func(w http.ResponseWriter, _ *http.Request, _ EmptyInput) error {
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte("accepted"))
 		return errors.New("after write")
@@ -255,13 +255,11 @@ func TestServerRoutesMatchOnceDespiteMiddlewarePathMutation(t *testing.T) {
 	server := New(
 		WithProduces(MIMEJSON),
 	)
-	server.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			r.URL.Path = "/changed-after-match"
-			next.ServeHTTP(w, r)
-		})
+	server.Use(func(c *Ctx) {
+		c.R.URL.Path = "/changed-after-match"
+		c.Next()
 	})
-	server.MustMount(Handle(Get("/users/{id}"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
+	server.MustMount(Handle(Get("/users/{id}"), NoInput(), JSONOutput[struct{}](), func(context.Context, EmptyInput) (struct{}, error) {
 		return struct{}{}, nil
 	}))
 
@@ -272,33 +270,32 @@ func TestServerRoutesMatchOnceDespiteMiddlewarePathMutation(t *testing.T) {
 	}
 }
 
-func TestServerRoutesExtractorFallbackFailureThroughErrorHandler(t *testing.T) {
+// 新执行模型没有 extractor:params 在 match 时一次性填充到 Ctx 上,
+// 中间件替换请求 context 不影响已匹配的参数。
+// the new execution model has no extractor: params are filled once on the Ctx
+// at match time, and a middleware swapping the request context cannot drop
+// the matched params.
+func TestServerRoutesParamsSurviveMiddlewareContextSwap(t *testing.T) {
 	t.Parallel()
 
-	server := New(
-		WithProduces(MIMEJSON),
-		WithErrorHandler(func(w http.ResponseWriter, _ *http.Request, err *HTTPError) {
-			if err.Code != http.StatusBadRequest {
-				t.Errorf("error code = %d, want %d", err.Code, http.StatusBadRequest)
-			}
-			w.WriteHeader(http.StatusTeapot)
-		}),
-	)
-	server.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			r.URL.Path = "/changed-after-match"
-			ctx := context.WithValue(context.Background(), requestStateContextKey{}, &requestState{server: server})
-			next.ServeHTTP(w, r.WithContext(ctx))
-		})
+	type out struct {
+		ID string `json:"id"`
+	}
+	server := New(WithProduces(MIMEJSON))
+	server.Use(func(c *Ctx) {
+		c.R.URL.Path = "/changed-after-match"
+		ctx := context.WithValue(context.Background(), ctxKey{}, &Ctx{server: server})
+		c.R = c.R.WithContext(ctx)
+		c.Next()
 	})
-	server.MustMount(Handle(Get("/users/{id}"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
-		return struct{}{}, nil
+	server.MustMount(Handle(Get("/users/{id}"), PathString("id"), JSONOutput[out](), func(_ context.Context, id string) (out, error) {
+		return out{ID: id}, nil
 	}))
 
 	recorder := httptest.NewRecorder()
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/users/42", nil))
-	if recorder.Code != http.StatusTeapot {
-		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusTeapot)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"id":"42"`) {
+		t.Fatalf("status = %d body = %q, want 200 with matched param", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -307,7 +304,7 @@ func TestServerLogsRecoveredPanicWithStack(t *testing.T) {
 
 	logger := &testLogger{}
 	server := New(WithProduces(MIMEJSON), WithLogger(logger))
-	server.MustMount(Handle(Get("/panic"), StructInput[struct{}](), JSONOutput[struct{}](), func(context.Context, struct{}) (struct{}, error) {
+	server.MustMount(Handle(Get("/panic"), NoInput(), JSONOutput[struct{}](), func(context.Context, EmptyInput) (struct{}, error) {
 		panic("boom")
 	}))
 

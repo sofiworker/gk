@@ -111,7 +111,7 @@ func TestServerRecoversHandlerPanic(t *testing.T) {
 func TestServerMatchedParams(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	var gotPath string
-	app.MustMount(HandleHTTP(Get("/users/{id}"), StructInput[ghttpParamsAlias](), func(w http.ResponseWriter, r *http.Request, in ghttpParamsAlias) error {
+	app.MustMount(HandleHTTP(Get("/users/{id}"), NoInput(), func(w http.ResponseWriter, r *http.Request, _ EmptyInput) error {
 		gotPath = app.MatchedParams(r).Path("id")
 		w.WriteHeader(http.StatusNoContent)
 		return nil
@@ -159,7 +159,7 @@ func TestServerDispatchError(t *testing.T) {
 	)
 
 	// 通过路由返回错误触发 dispatchError。
-	app.MustMount(HandleNoOutput(Get("/fail"), StructInput[struct{}](), func(ctx context.Context, req struct{}) error {
+	app.MustMount(HandleNoOutput(Get("/fail"), NoInput(), func(ctx context.Context, _ EmptyInput) error {
 		return Err(http.StatusTeapot, "teapot")
 	}))
 
@@ -223,7 +223,3 @@ func TestServerRunConflictAddr(t *testing.T) {
 		t.Fatal("Run on a busy address should error")
 	}
 }
-
-// ghttpParamsAlias 仅在测试内避免重复导入冲突。
-// ghttpParamsAlias avoids a duplicate import alias inside the test package.
-type ghttpParamsAlias = Params

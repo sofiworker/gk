@@ -86,19 +86,17 @@ func paramsFromRequestWithPathParams(r *http.Request, c *Config, routeParams pat
 		resolver = c.clientIPResolver
 	}
 	// 同一请求的多个 Params 视图共享 requestState 上的 paramsState,避免逐视图
-	// 分配;无 requestState(独立 ParseInput/非派发链)时才新建。
+	// 分配;无 requestState(非派发链)时才新建。
 	// multiple Params views of one request share the paramsState on requestState
 	// to avoid per-view allocation; a fresh one is built only outside the
 	// dispatch chain.
 	var state *paramsState
-	if st := requestStateFromRequest(r); st != nil {
-		st.paramsMu.Lock()
-		if !st.paramsBuilt {
-			st.params = paramsState{req: r, header: r.Header, resolver: resolver}
-			st.paramsBuilt = true
+	if c := ctxFromRequest(r); c != nil {
+		if !c.paramsBuilt {
+			c.paramsState = paramsState{req: r, header: r.Header, resolver: resolver}
+			c.paramsBuilt = true
 		}
-		state = &st.params
-		st.paramsMu.Unlock()
+		state = &c.paramsState
 	} else {
 		state = &paramsState{req: r, header: r.Header, resolver: resolver}
 	}
@@ -106,11 +104,11 @@ func paramsFromRequestWithPathParams(r *http.Request, c *Config, routeParams pat
 	if routeParams.Len() > 0 {
 		p.path = routeParams
 	}
-	// 匹配后惰性参数源挂在 requestState 上;这里引用它,Params.Path 走惰性解码。
-	// the lazy source is stored on requestState after matching; reference it here
-	// so Params.Path resolves through lazy decoding.
-	if reqState := requestStateFromRequest(r); reqState != nil && reqState.matched != nil && p.state.lazyPath == nil {
-		p.state.lazyPath = reqState.matched
+	// 惰性参数源挂在 Ctx 上;Params.Path 走惰性解码。
+	// the lazy source is stored on the Ctx; Params.Path resolves through
+	// lazy decoding.
+	if c := ctxFromRequest(r); c != nil && c.lazyParams != nil && p.state.lazyPath == nil {
+		p.state.lazyPath = c.lazyParams
 	}
 	return p
 }
@@ -457,18 +455,17 @@ func (p Params) ContentType() string {
 	return r.Header.Get("Content-Type")
 }
 
-// RawBody 返回请求体原始字节;首次访问读流并缓存,与 RawBody(r) 及
-// Body[T].Raw/Decode 共享同一份。Detach 后的视图不持有 body,返回 (nil, nil)。
+// RawBody 返回请求体原始字节;首次访问读流并缓存,与 RawBody(r) 共享同一份。
+// Detach 后的视图不持有 body,返回 (nil, nil)。
 // RawBody returns the raw body bytes, buffered on first access and shared with
-// RawBody(r) and Body[T].Raw/Decode. Detached views hold no body and return
-// (nil, nil).
+// RawBody(r). Detached views hold no body and return (nil, nil).
 func (p Params) RawBody() ([]byte, error) {
 	r := p.Request()
 	if r == nil || r.Body == nil || r.Body == http.NoBody {
 		return nil, nil
 	}
-	if st := requestStateFromRequest(r); st != nil && st.body != nil {
-		return st.body.bytes()
+	if c := ctxFromRequest(r); c != nil && c.body != nil {
+		return c.body.bytes()
 	}
 	return io.ReadAll(r.Body)
 }

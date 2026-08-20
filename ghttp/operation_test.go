@@ -233,11 +233,9 @@ func TestOperationCopyOnWriteWorksAcrossServerAndGroup(t *testing.T) {
 	})
 	wrapped := base.
 		Doc(Summary("Versioned health"), Tags("system")).
-		WithMiddleware(func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-				writer.Header().Set("X-Operation", "wrapped")
-				next.ServeHTTP(writer, request)
-			})
+		WithMiddleware(func(c *Ctx) {
+			c.W.Header().Set("X-Operation", "wrapped")
+			c.Next()
 		})
 
 	server := New(WithOpenAPI("operations", "1.0.0"))
@@ -524,8 +522,8 @@ func TestOperationConvenienceInputsOnlyCompileStateIndependentTerminals(t *testi
 			if state == nil || len(state.mux.routes) != 1 {
 				t.Fatalf("compiled routes = %#v, want one route", state)
 			}
-			if state.mux.routes[0].fastDirect != nil {
-				t.Fatal("request-state-dependent convenience input compiled as stateless direct")
+			if !state.mux.routes[0].needsState {
+				t.Fatal("request-state-dependent convenience input compiled as stateless")
 			}
 		})
 	}
@@ -548,7 +546,7 @@ func TestOperationStreamErrorAfterCommitDoesNotAppendErrorResponse(t *testing.T)
 		operation *Operation
 	}{
 		{name: "direct", operation: base},
-		{name: "middleware", operation: base.WithMiddleware(func(next http.Handler) http.Handler { return next })},
+		{name: "middleware", operation: base.WithMiddleware(func(c *Ctx) { c.Next() })},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

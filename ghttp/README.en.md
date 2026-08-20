@@ -183,7 +183,6 @@ The package-level `Handle` remains available on Go 1.27 for source migration. Go
 | `FormBody` | `url.Values` | URL-encoded body. |
 | `MultipartFile` | `*FileHeader` | Multipart file field. |
 | `HTTPRequest` | `*http.Request` | Input-side low-level escape hatch. |
-| `StructInput[T]` | `T` | Compiles struct tags, embedded `Params`, `Body`, and OpenAPI metadata once. |
 | `ValidatedInput[T]` | `T` | Wraps any input contract with endpoint-level validation. |
 
 Numeric parameters accept only `NumberConstraint` values from `Minimum` and `Maximum`. String parameters accept only `StringConstraint` values from `AllowedValues`. Invalid schema/runtime combinations therefore fail at compile time.
@@ -344,7 +343,7 @@ server := ghttp.New(ghttp.WithValidator(ghttp.NewDefaultValidator()))
 
 Operation invokes it after input construction and returns 422 on failure. `WithoutServerValidation` skips only the server Validator; `JSONBody` validators and `InputFunc` validation still run.
 
-`WithMaxBodyBytes` sets the server default and `operation.WithMaxBodyBytes` overrides one route. JSON, URL-encoded, multipart, `RawBody`, and `Body[T]` share request body state and one limit. Exceeding it returns 413.
+`WithMaxBodyBytes` sets the server default and `operation.WithMaxBodyBytes` overrides one route. JSON, URL-encoded, multipart, and `RawBody` share request body state and one limit. Exceeding it returns 413.
 
 Content negotiation is strict by default:
 
@@ -417,11 +416,11 @@ typed, err := ghttp.GET[GetUserRequest, User](client, "/users/7", nil)
 
 It supports retries, before/after hooks, authentication, Cookies, request timeouts, streaming responses, error-model binding, and custom `http.Client`/Transport values. Go 1.27 also provides generic client methods.
 
-## RouteBuilder Removal
+## Breaking Changes
 
 `Route[Req, Resp](target).GET(path).To(...)`, the Go 1.27 `server.GET(path).To(...)` form, `RouteOption`, and all former terminals are removed. There is no deprecated shim or test-only compatibility entry point.
 
-Breaking changes in this rewrite include:
+Historical breaking changes in this rewrite include:
 
 - `Operation` plus `Mount/MustMount` is the only registration model.
 - Explicit `Input[T]` descriptors replace implicit endpoint binding; use `StructInput[T]` for struct binding.
@@ -430,6 +429,35 @@ Breaking changes in this rewrite include:
 - Redirect locations come from `RedirectResponse.Location`.
 - Constraints are split into `NumberConstraint` and `StringConstraint`.
 - Inferred operation IDs use normalized `method_resource_by_parameter` names.
+
+### StructInput Removal (Performance Convergence)
+
+`StructInput[T]` (struct-tag binding), embedded `Params` and `Body[T]` lazy body views,
+`ParseInput`, `WithBodyDecoder`, `ErrInvalidParamsUsage`,
+`ErrMultipleBodyFields`, `ErrBodyFieldMustBeValue` have all been removed
+with no shim.
+
+Rationale: The struct-tag binding path was the largest single source of
+per-request overhead (struct reflection construction + eager state
+building), and it semantically duplicated the explicit-descriptor +
+zero-reflection new API. Migration:
+
+```go
+// Old: tag binding
+type In struct {
+    ID int64 `path:"id"`
+}
+Handle(Get("/users/{id}"), StructInput[In](), JSONOutput[User](), h)
+
+// New: explicit descriptor + MapInputs
+Handle(Get("/users/{id}"),
+    MapInputs(PathInt64("id"), func(id int64) In { return In{ID: id} }),
+    JSONOutput[User](), h)
+```
+
+Middleware still uses `Server.MatchedParams(r)` (returns a `Params` request
+view) to read path parameters on demand. Arbitrary input uses `InputFunc`;
+multi-parameter structs use `MapInputs/MapInputs3..7`.
 
 This is an intentional pre-v1 breaking removal. Callers must migrate the endpoint as a whole and cannot mix the two models.
 

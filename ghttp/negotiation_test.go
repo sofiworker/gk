@@ -18,7 +18,7 @@ func TestExplicitOutputContractIgnoresAccept(t *testing.T) {
 		Name string `json:"name"`
 	}
 	app := New(WithProduces(MIMEJSON), WithStrictContentNegotiation())
-	app.MustMount(Handle(Get("/ping"), StructInput[Params](), JSONOutput[pingResp](), func(context.Context, Params) (pingResp, error) {
+	app.MustMount(Handle(Get("/ping"), NoInput(), JSONOutput[pingResp](), func(_ context.Context, _ EmptyInput) (pingResp, error) {
 		return pingResp{Name: "pong"}, nil
 	}))
 
@@ -41,7 +41,7 @@ func TestStrictContentNegotiationReturns406(t *testing.T) {
 		Name string `json:"name"`
 	}
 	app := New(WithProduces(MIMEJSON), WithStrictContentNegotiation())
-	app.MustMount(Handle(Get("/ping"), StructInput[Params](), CodecOutput[pingResp](MIMEJSON), func(context.Context, Params) (pingResp, error) {
+	app.MustMount(Handle(Get("/ping"), NoInput(), CodecOutput[pingResp](MIMEJSON), func(_ context.Context, _ EmptyInput) (pingResp, error) {
 		return pingResp{Name: "pong"}, nil
 	}))
 
@@ -57,7 +57,7 @@ func TestStrictContentNegotiationReturns406(t *testing.T) {
 
 func TestLenientContentNegotiationFallsBack(t *testing.T) {
 	app := New(WithProduces(MIMEJSON), WithLenientContentNegotiation())
-	app.MustMount(Handle(Get("/ping"), StructInput[Params](), CodecOutput[map[string]string](MIMEJSON), func(context.Context, Params) (map[string]string, error) {
+	app.MustMount(Handle(Get("/ping"), NoInput(), CodecOutput[map[string]string](MIMEJSON), func(_ context.Context, _ EmptyInput) (map[string]string, error) {
 		return map[string]string{"name": "pong"}, nil
 	}))
 
@@ -76,14 +76,11 @@ func TestLenientContentNegotiationFallsBack(t *testing.T) {
 
 func TestStrictContentTypeReturns415(t *testing.T) {
 	type input struct {
-		Params
-		Body struct {
-			Name string `json:"name"`
-		}
+		Name string `json:"name"`
 	}
 	app := New(WithProduces(MIMEJSON))
-	app.MustMount(Handle(Post("/users"), StructInput[input](), JSONOutput[struct{}](), func(context.Context, input) (struct{}, error) {
-		return struct{}{}, nil
+	app.MustMount(Handle(Post("/users"), JSONBody[input](), JSONOutput[EmptyInput](), func(_ context.Context, _ input) (EmptyInput, error) {
+		return EmptyInput{}, nil
 	}))
 
 	w := httptest.NewRecorder()
@@ -93,34 +90,5 @@ func TestStrictContentTypeReturns415(t *testing.T) {
 
 	if w.Code != http.StatusUnsupportedMediaType {
 		t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusUnsupportedMediaType, w.Body.String())
-	}
-}
-
-func TestLenientContentTypeFallsBackToJSON(t *testing.T) {
-	type input struct {
-		Params
-		Body struct {
-			Name string `json:"name"`
-		}
-	}
-	app := New(WithProduces(MIMEJSON), WithLenientContentType())
-
-	app.MustMount(Handle(Post("/users"), StructInput[input](), JSONOutput[struct {
-		Name string `json:"name"`
-	}](), func(context.Context, input) (struct {
-		Name string `json:"name"`
-	}, error) {
-		return struct {
-			Name string `json:"name"`
-		}{}, nil
-	}))
-
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(`{"name":"a"}`))
-	req.Header.Set("Content-Type", "application/octet-stream")
-	app.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
 	}
 }

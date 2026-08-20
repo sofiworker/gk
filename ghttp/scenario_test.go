@@ -20,26 +20,23 @@ func (scenarioValidator) Validate(context.Context, interface{}) error {
 func TestScenario_ServerGroupRouteMiddlewareOpenAPIAndStatic(t *testing.T) {
 	app := New(WithOpenAPI("scenario", "1.0.0"), WithValidator(scenarioValidator{}), WithProduces(MIMEJSON))
 
-	app.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("X-Scenario-MW", "server")
-			next.ServeHTTP(w, r)
-		})
+	app.Use(func(c *Ctx) {
+		c.W.Header().Set("X-Scenario-MW", "server")
+		c.Next()
 	})
 
-	api := app.Group("/api", func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("X-Scenario-Group", "api")
-			next.ServeHTTP(w, r)
-		})
+	api := app.Group("/api", func(c *Ctx) {
+		c.W.Header().Set("X-Scenario-Group", "api")
+		c.Next()
 	})
 
 	type input struct {
-		Params `json:"-"`
+		ID       string
+		BodyName string
+	}
 
-		Body struct {
-			Name string `json:"name"`
-		}
+	type bodyIn struct {
+		Name string `json:"name"`
 	}
 
 	type output struct {
@@ -47,16 +44,18 @@ func TestScenario_ServerGroupRouteMiddlewareOpenAPIAndStatic(t *testing.T) {
 		Name string `json:"name"`
 	}
 
-	api.MustMount(Handle(Post("/users/{id}"), StructInput[input](), JSONOutput[output](), func(ctx context.Context, req input) (output, error) {
-		return output{ID: req.Path("id"), Name: req.Body.Name}, nil
+	api.MustMount(Handle(Post("/users/{id}"), MapInputs(PathString("id"), JSONBody[bodyIn](), func(id string, body bodyIn) input {
+		return input{ID: id, BodyName: body.Name}
+	}), JSONOutput[output](), func(ctx context.Context, req input) (output, error) {
+		return output{ID: req.ID, Name: req.BodyName}, nil
 	}).Doc(Summary("create user"),
 		Tags("users"),
 		OperationID("createUser"),
 		Success(Message("created"))))
 
-	app.MustMount(AllMethods(Handle(Get("/health"), StructInput[struct{}](), JSONOutput[struct {
+	app.MustMount(AllMethods(Handle(Get("/health"), NoInput(), JSONOutput[struct {
 		OK bool `json:"ok"`
-	}](), func(ctx context.Context, req struct{}) (struct {
+	}](), func(ctx context.Context, _ EmptyInput) (struct {
 		OK bool `json:"ok"`
 	}, error) {
 		return struct {
@@ -64,9 +63,9 @@ func TestScenario_ServerGroupRouteMiddlewareOpenAPIAndStatic(t *testing.T) {
 		}{OK: true}, nil
 	}))...)
 
-	app.MustMount(Handle(Endpoint("PROPFIND", "/custom"), StructInput[struct{}](), JSONOutput[struct {
+	app.MustMount(Handle(Endpoint("PROPFIND", "/custom"), NoInput(), JSONOutput[struct {
 		Verb string `json:"verb"`
-	}](), func(ctx context.Context, req struct{}) (struct {
+	}](), func(ctx context.Context, _ EmptyInput) (struct {
 		Verb string `json:"verb"`
 	}, error) {
 		return struct {
@@ -79,7 +78,7 @@ func TestScenario_ServerGroupRouteMiddlewareOpenAPIAndStatic(t *testing.T) {
 		t.Fatalf("write static file failed: %v", err)
 	}
 	app.MustMount(StaticDirectory("/public", staticDir))
-	app.MustMount(SSEOperation("/events", StructInput[Params](), func(ctx context.Context, params Params, stream *SSEWriter) error {
+	app.MustMount(SSEOperation("/events", NoInput(), func(ctx context.Context, _ EmptyInput, stream *SSEWriter) error {
 		return stream.WriteEvent("ready", "ok")
 	}))
 

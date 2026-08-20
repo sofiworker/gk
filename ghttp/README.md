@@ -183,7 +183,6 @@ Go 1.27 仍保留包级 `Handle`，便于同一份源码跨版本迁移。Go 1.2
 | `FormBody` | `url.Values` | urlencoded body |
 | `MultipartFile` | `*FileHeader` | multipart 文件字段 |
 | `HTTPRequest` | `*http.Request` | 输入侧底层请求逃生口 |
-| `StructInput[T]` | `T` | 一次性编译结构体 tag、嵌入 `Params`、`Body` 与 OpenAPI 元数据 |
 | `ValidatedInput[T]` | `T` | 包装任意输入契约并执行 endpoint 级校验 |
 
 数值参数只接受 `NumberConstraint`：`Minimum`、`Maximum`。字符串参数只接受 `StringConstraint`：`AllowedValues`。这种拆分避免生成与运行时类型不一致的 schema。
@@ -346,7 +345,7 @@ server := ghttp.New(ghttp.WithValidator(ghttp.NewDefaultValidator()))
 
 Operation 在输入构造后调用服务器 Validator，失败默认返回 422。`WithoutServerValidation` 只跳过服务器 Validator；`JSONBody` validator 和 `InputFunc` 内部校验不受影响。
 
-`WithMaxBodyBytes` 提供服务器默认值；`operation.WithMaxBodyBytes` 覆盖单路由。JSON、urlencoded、multipart、`RawBody` 和 `Body[T]` 共享 request body 状态与相同上限。超过上限返回 413。
+`WithMaxBodyBytes` 提供服务器默认值；`operation.WithMaxBodyBytes` 覆盖单路由。JSON、urlencoded、multipart 与 `RawBody` 共享 request body 状态与相同上限。超过上限返回 413。
 
 内容协商默认严格：
 
@@ -419,11 +418,11 @@ typed, err := ghttp.GET[GetUserRequest, User](client, "/users/7", nil)
 
 客户端支持重试、before/after hooks、认证、Cookie、请求级超时、流式响应、错误模型绑定和自定义 `http.Client`/Transport。Go 1.27 起同时提供泛型客户端方法。
 
-## RouteBuilder 移除
+## 破坏性变更记录
 
 `Route[Req, Resp](target).GET(path).To(...)`、Go 1.27 的 `server.GET(path).To(...)`、`RouteOption` 与全部旧终结器均已删除，不提供 deprecated shim 或测试专用兼容入口。
 
-本次重写的破坏性变化包括：
+历史重写的破坏性变化包括：
 
 - 唯一注册模型改为 `Operation` + `Mount/MustMount`。
 - 输入改为显式 `Input[T]` 描述器；结构体绑定使用 `StructInput[T]`。
@@ -432,6 +431,31 @@ typed, err := ghttp.GET[GetUserRequest, User](client, "/users/7", nil)
 - 重定向由 `RedirectResponse.Location` 携带动态目标。
 - 参数约束拆分为 `NumberConstraint` 和 `StringConstraint`。
 - 自动 operationId 使用规范化的 `method_resource_by_parameter` 格式。
+
+### StructInput 移除（性能收敛）
+
+`StructInput[T]`（结构体 tag 绑定）、嵌入 `Params` 与 `Body[T]` 惰性请求体视图、
+`ParseInput`、`WithBodyDecoder`、`ErrInvalidParamsUsage`、
+`ErrMultipleBodyFields`、`ErrBodyFieldMustBeValue` 已全部删除，不提供 shim。
+
+原因：结构体 tag 绑定路径是 ghttp 每请求开销的最大单笔来源（结构体反射构造 +
+急切状态构建），与"显式描述器 + 零反射"的新 API 语义重复。迁移方式：
+
+```go
+// 旧：tag 绑定
+type In struct {
+    ID int64 `path:"id"`
+}
+Handle(Get("/users/{id}"), StructInput[In](), JSONOutput[User](), h)
+
+// 新：显式描述器 + MapInputs
+Handle(Get("/users/{id}"),
+    MapInputs(PathInt64("id"), func(id int64) In { return In{ID: id} }),
+    JSONOutput[User](), h)
+```
+
+中间件按需读取路径参数仍使用 `Server.MatchedParams(r)`（返回 `Params` 请求视图）。
+任意复杂输入使用 `InputFunc`；结构体多参数使用 `MapInputs/MapInputs3..7`。
 
 这是 pre-v1 的破坏性删除。调用方必须整体迁移，不能与旧 builder 混用。
 

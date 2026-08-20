@@ -21,7 +21,8 @@ func TestIntegration_GetUser(t *testing.T) {
 	s := New(WithProduces(MIMEJSON))
 
 	type input struct {
-		Params `json:"-"`
+		ID   int
+		Role string
 	}
 
 	type output struct {
@@ -30,12 +31,13 @@ func TestIntegration_GetUser(t *testing.T) {
 		Role string `json:"role"`
 	}
 
-	s.MustMount(Handle(Get("/users/{id}"), StructInput[input](), JSONOutput[output](), func(ctx context.Context, req input) (output, error) {
-		id, _ := strconv.Atoi(req.Path("id"))
+	s.MustMount(Handle(Get("/users/{id}"), MapInputs(PathInt64("id"), QueryStringDefault("role", ""), func(id int64, role string) input {
+		return input{ID: int(id), Role: role}
+	}), JSONOutput[output](), func(ctx context.Context, req input) (output, error) {
 		return output{
-			ID:   id,
+			ID:   req.ID,
 			Name: "Alice",
-			Role: req.Query("role"),
+			Role: req.Role,
 		}, nil
 	}))
 
@@ -61,12 +63,12 @@ func TestIntegration_GetUser(t *testing.T) {
 func TestIntegration_CreateUser(t *testing.T) {
 	s := New(WithProduces(MIMEJSON))
 
+	type body struct {
+		Name string `json:"name"`
+	}
 	type input struct {
-		Params `json:"-"`
-
-		Body struct {
-			Name string `json:"name"`
-		}
+		ID   int
+		Name string
 	}
 
 	type output struct {
@@ -74,11 +76,12 @@ func TestIntegration_CreateUser(t *testing.T) {
 		Name string `json:"name"`
 	}
 
-	s.MustMount(Handle(Post("/users/{id}"), StructInput[input](), JSONOutput[output](), func(ctx context.Context, req input) (output, error) {
-		id, _ := strconv.Atoi(req.Path("id"))
+	s.MustMount(Handle(Post("/users/{id}"), MapInputs(PathInt64("id"), JSONBody[body](), func(id int64, b body) input {
+		return input{ID: int(id), Name: b.Name}
+	}), JSONOutput[output](), func(ctx context.Context, req input) (output, error) {
 		return output{
-			ID:   id,
-			Name: req.Body.Name,
+			ID:   req.ID,
+			Name: req.Name,
 		}, nil
 	}))
 
@@ -104,8 +107,8 @@ func TestIntegration_ValidationError(t *testing.T) {
 	s := New(WithProduces(MIMEJSON))
 	s.validator = &mockValidator{}
 
-	s.MustMount(Handle(Get("/users/{id}"), StructInput[struct{ Body struct{} }](), JSONOutput[struct{ Body struct{} }](), func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
-		return struct{ Body struct{} }{}, nil
+	s.MustMount(Handle(Get("/users/{id}"), NoInput(), JSONOutput[struct{}](), func(ctx context.Context, _ EmptyInput) (struct{}, error) {
+		return struct{}{}, nil
 	}))
 
 	ts := httptest.NewServer(s)
@@ -133,7 +136,7 @@ func (m *mockValidator) Validate(ctx context.Context, i interface{}) error {
 
 func TestIntegration_NotFound(t *testing.T) {
 	s := New(WithProduces(MIMEJSON))
-	s.MustMount(Handle(Get("/exists"), StructInput[struct{}](), JSONOutput[struct{}](), func(ctx context.Context, req struct{}) (struct{}, error) {
+	s.MustMount(Handle(Get("/exists"), NoInput(), JSONOutput[struct{}](), func(ctx context.Context, _ EmptyInput) (struct{}, error) {
 		return struct{}{}, nil
 	}))
 
@@ -151,19 +154,14 @@ func TestIntegration_NotFound(t *testing.T) {
 func TestIntegration_OpenAPIEndpoint(t *testing.T) {
 	s := New(WithOpenAPI("test", "1.0.0"), WithProduces(MIMEJSON))
 
-	s.MustMount(Handle(Get("/users/{id}"), StructInput[struct {
-		Params `json:"-"`
-	}](), JSONOutput[struct {
+	s.MustMount(Handle(Get("/users/{id}"), PathInt64("id"), JSONOutput[struct {
 		ID int `json:"id"`
-	}](), func(ctx context.Context, req struct {
-		Params `json:"-"`
-	}) (struct {
+	}](), func(ctx context.Context, id int64) (struct {
 		ID int `json:"id"`
 	}, error) {
-		id, _ := strconv.Atoi(req.Path("id"))
 		return struct {
 			ID int `json:"id"`
-		}{id}, nil
+		}{int(id)}, nil
 	}))
 
 	ts := httptest.NewServer(s)
@@ -200,13 +198,8 @@ func TestIntegration_ClientGetAndUnwrapEnvelope(t *testing.T) {
 		Name string `json:"name"`
 	}
 
-	s.MustMount(Handle(Get("/users/{id}"), StructInput[struct {
-		Params `json:"-"`
-	}](), JSONOutput[output](), func(ctx context.Context, req struct {
-		Params `json:"-"`
-	}) (output, error) {
-		id, _ := strconv.Atoi(req.Path("id"))
-		return output{ID: id, Name: "Client-Test"}, nil
+	s.MustMount(Handle(Get("/users/{id}"), PathInt64("id"), JSONOutput[output](), func(ctx context.Context, id int64) (output, error) {
+		return output{ID: int(id), Name: "Client-Test"}, nil
 	}))
 
 	ts := httptest.NewServer(s)
@@ -234,13 +227,10 @@ func TestIntegration_ClientGetChain(t *testing.T) {
 		Role string `json:"role"`
 	}
 
-	s.MustMount(Handle(Get("/users/{id}"), StructInput[struct {
-		Params `json:"-"`
-	}](), JSONOutput[output](), func(ctx context.Context, req struct {
-		Params `json:"-"`
-	}) (output, error) {
-		id, _ := strconv.Atoi(req.Path("id"))
-		return output{ID: id, Name: "Chain", Role: req.Query("role")}, nil
+	s.MustMount(Handle(Get("/users/{id}"), MapInputs(PathInt64("id"), QueryStringDefault("role", ""), func(id int64, role string) output {
+		return output{ID: int(id), Name: "Chain", Role: role}
+	}), JSONOutput[output](), func(ctx context.Context, req output) (output, error) {
+		return req, nil
 	}))
 
 	ts := httptest.NewServer(s)
@@ -268,11 +258,8 @@ func TestIntegration_GenericClientPOST(t *testing.T) {
 	s := New(WithProduces(MIMEJSON))
 
 	type createReq struct {
-		Params `json:"-"`
-
-		Body struct {
-			Name string `json:"name"`
-		}
+		ID       string
+		BodyName string
 	}
 
 	type createResp struct {
@@ -281,9 +268,9 @@ func TestIntegration_GenericClientPOST(t *testing.T) {
 		Role string `json:"role"`
 	}
 
-	s.MustMount(Handle(Post("/users"), StructInput[createReq](), JSONOutput[createResp](), func(ctx context.Context, req createReq) (createResp, error) {
-		id, _ := strconv.Atoi(req.Path("id"))
-		return createResp{ID: id, Name: req.Body.Name, Role: "generic"}, nil
+	s.MustMount(Handle(Post("/users"), JSONBody[createReq](), JSONOutput[createResp](), func(ctx context.Context, req createReq) (createResp, error) {
+		id, _ := strconv.Atoi(req.ID)
+		return createResp{ID: id, Name: req.BodyName, Role: "generic"}, nil
 	}))
 
 	ts := httptest.NewServer(s)
@@ -291,13 +278,11 @@ func TestIntegration_GenericClientPOST(t *testing.T) {
 
 	client := NewClient(WithBaseURL(ts.URL))
 
-	// The generic POST sends Body field content.
-	// Server receives the body and decodes into Body nested struct.
-	// Path params need to be in the URL.
+	// The generic POST sends the createReq fields; the server decodes them via
+	// JSONBody. Path params need to be in the URL.
 	input := &createReq{
-		Body: struct {
-			Name string `json:"name"`
-		}{Name: "GenericAlice"},
+		ID:       "55",
+		BodyName: "GenericAlice",
 	}
 
 	resp, err := POST[createReq, createResp](context.Background(), client, "/users?id=55", input)
@@ -312,7 +297,7 @@ func TestIntegration_GenericClientPOST(t *testing.T) {
 func TestIntegration_SSE(t *testing.T) {
 	s := New(WithProduces(MIMEJSON))
 
-	s.MustMount(SSEOperation("/events", StructInput[Params](), func(ctx context.Context, params Params, stream *SSEWriter) error {
+	s.MustMount(SSEOperation("/events", NoInput(), func(ctx context.Context, _ EmptyInput, stream *SSEWriter) error {
 		_ = stream.WriteEvent("message", "hello")
 		_ = stream.WriteEvent("message", "world")
 		return nil
@@ -339,25 +324,21 @@ func TestIntegration_MiddlewareOrder(t *testing.T) {
 
 	var order []string
 
-	s.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			order = append(order, "mw1-in")
-			next.ServeHTTP(w, r)
-			order = append(order, "mw1-out")
-		})
+	s.Use(func(c *Ctx) {
+		order = append(order, "mw1-in")
+		c.Next()
+		order = append(order, "mw1-out")
 	})
 
-	s.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			order = append(order, "mw2-in")
-			next.ServeHTTP(w, r)
-			order = append(order, "mw2-out")
-		})
+	s.Use(func(c *Ctx) {
+		order = append(order, "mw2-in")
+		c.Next()
+		order = append(order, "mw2-out")
 	})
 
-	s.MustMount(Handle(Get("/test"), StructInput[struct{ Body struct{} }](), JSONOutput[struct {
+	s.MustMount(Handle(Get("/test"), NoInput(), JSONOutput[struct {
 		ID int `json:"id"`
-	}](), func(ctx context.Context, req struct{ Body struct{} }) (struct {
+	}](), func(ctx context.Context, _ EmptyInput) (struct {
 		ID int `json:"id"`
 	}, error) {
 		order = append(order, "handler")
@@ -379,10 +360,8 @@ func TestIntegration_OperationRegistrationWithOpenAPI(t *testing.T) {
 	s := New(WithOpenAPI("test", "1.0.0"), WithProduces(MIMEJSON))
 
 	type createRequest struct {
-		Body struct {
-			Name  string `json:"name"`
-			Email string `json:"email"`
-		}
+		Name  string `json:"name"`
+		Email string `json:"email"`
 	}
 
 	type createResponse struct {
@@ -391,8 +370,8 @@ func TestIntegration_OperationRegistrationWithOpenAPI(t *testing.T) {
 		Email string `json:"email"`
 	}
 
-	s.MustMount(Handle(Post("/api/users/new"), StructInput[createRequest](), JSONOutput[createResponse](), func(ctx context.Context, req createRequest) (createResponse, error) {
-		return createResponse{ID: 1, Name: req.Body.Name, Email: req.Body.Email}, nil
+	s.MustMount(Handle(Post("/api/users/new"), JSONBody[createRequest](), JSONOutput[createResponse](), func(ctx context.Context, req createRequest) (createResponse, error) {
+		return createResponse{ID: 1, Name: req.Name, Email: req.Email}, nil
 	}).Doc(Summary("Create a new user"),
 		Tags("users"),
 		Success(Message("User created"))))
@@ -447,8 +426,8 @@ func TestIntegration_StaticFile(t *testing.T) {
 func TestIntegration_ErrorHandling(t *testing.T) {
 	s := New(WithProduces(MIMEJSON))
 
-	s.MustMount(Handle(Get("/error"), StructInput[struct{ Body struct{} }](), JSONOutput[struct{ Body struct{} }](), func(ctx context.Context, req struct{ Body struct{} }) (struct{ Body struct{} }, error) {
-		return struct{ Body struct{} }{}, Err(http.StatusBadRequest, "invalid input", WithCause(fmt.Errorf("name is required")))
+	s.MustMount(Handle(Get("/error"), NoInput(), JSONOutput[EmptyInput](), func(ctx context.Context, _ EmptyInput) (EmptyInput, error) {
+		return EmptyInput{}, Err(http.StatusBadRequest, "invalid input", WithCause(fmt.Errorf("name is required")))
 	}))
 
 	ts := httptest.NewServer(s)
@@ -485,7 +464,7 @@ func TestIntegration_CustomEnvelope(t *testing.T) {
 		Pong string `json:"pong"`
 	}
 
-	s.MustMount(Handle(Get("/ping"), StructInput[struct{ Body struct{} }](), JSONOutput[pongResp](), func(ctx context.Context, req struct{ Body struct{} }) (pongResp, error) {
+	s.MustMount(Handle(Get("/ping"), NoInput(), JSONOutput[pongResp](), func(ctx context.Context, _ EmptyInput) (pongResp, error) {
 		return pongResp{Pong: "ok"}, nil
 	}))
 

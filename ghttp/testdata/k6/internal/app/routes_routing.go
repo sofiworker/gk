@@ -19,29 +19,33 @@ func registerRouting(server *ghttp.Server, state *stateController, metrics *Runt
 	server.MustMount(ghttp.RawOperation(http.MethodGet, "/routes/static", rawJSON(map[string]string{"route": "static"})))
 	server.MustMount(ghttp.RawOperation(http.MethodGet, "/routes/users/new", rawJSON(map[string]string{"id": "new", "route": "static"})))
 
-	server.MustMount(ghttp.HandleHTTP(ghttp.Get("/routes/users/{id}"), ghttp.StructInput[ghttp.Params](), jsonParams(func(_ *http.Request, params ghttp.Params) any {
-		return map[string]string{"id": params.Path("id")}
+	server.MustMount(ghttp.HandleHTTP(ghttp.Get("/routes/users/{id}"), ghttp.PathString("id"), jsonValue(func(_ *http.Request, id string) any {
+		return map[string]string{"id": id}
 	})))
-	server.MustMount(ghttp.HandleHTTP(ghttp.Get("/routes/pairs/{left}/{right}"), ghttp.StructInput[ghttp.Params](), jsonParams(func(_ *http.Request, params ghttp.Params) any {
-		return map[string]string{"left": params.Path("left"), "right": params.Path("right")}
+	server.MustMount(ghttp.HandleHTTP(ghttp.Get("/routes/pairs/{left}/{right}"),
+		ghttp.MapInputs(ghttp.PathString("left"), ghttp.PathString("right"), func(left, right string) struct{ Left, Right string } {
+			return struct{ Left, Right string }{Left: left, Right: right}
+		}),
+		jsonValue(func(_ *http.Request, in struct{ Left, Right string }) any {
+			return map[string]string{"left": in.Left, "right": in.Right}
+		})))
+	server.MustMount(ghttp.HandleHTTP(ghttp.Get("/routes/files/{path...}"), ghttp.PathString("path"), jsonValue(func(_ *http.Request, path string) any {
+		return map[string]string{"path": path}
 	})))
-	server.MustMount(ghttp.HandleHTTP(ghttp.Get("/routes/files/{path...}"), ghttp.StructInput[ghttp.Params](), jsonParams(func(_ *http.Request, params ghttp.Params) any {
-		return map[string]string{"path": params.Path("path")}
+	server.Group("/routes/groups/v1").MustMount(ghttp.HandleHTTP(ghttp.Get("/items/{id}"), ghttp.PathString("id"), jsonValue(func(_ *http.Request, id string) any {
+		return map[string]string{"id": id}
 	})))
-	server.Group("/routes/groups/v1").MustMount(ghttp.HandleHTTP(ghttp.Get("/items/{id}"), ghttp.StructInput[ghttp.Params](), jsonParams(func(_ *http.Request, params ghttp.Params) any {
-		return map[string]string{"id": params.Path("id")}
-	})))
-	server.MustMount(ghttp.HandleHTTP(ghttp.Get("/routes/unicode/{value}"), ghttp.StructInput[ghttp.Params](), jsonParams(func(_ *http.Request, params ghttp.Params) any {
-		return map[string]string{"value": params.Path("value")}
+	server.MustMount(ghttp.HandleHTTP(ghttp.Get("/routes/unicode/{value}"), ghttp.PathString("value"), jsonValue(func(_ *http.Request, value string) any {
+		return map[string]string{"value": value}
 	})))
 
 	methodHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	server.MustMount(ghttp.RawOperation(http.MethodPost, "/routes/method", methodHandler))
 	server.MustMount(ghttp.RawOperation(http.MethodDelete, "/routes/method", methodHandler))
 
-	server.MustMount(ghttp.HandleHTTP(ghttp.Get("/routes/raw-path/{value}"), ghttp.StructInput[ghttp.Params](), jsonParams(func(r *http.Request, params ghttp.Params) any {
+	server.MustMount(ghttp.HandleHTTP(ghttp.Get("/routes/raw-path/{value}"), ghttp.PathString("value"), jsonValue(func(r *http.Request, value string) any {
 		return map[string]string{
-			"value":        params.Path("value"),
+			"value":        value,
 			"path_value":   r.PathValue("value"),
 			"path":         r.URL.Path,
 			"raw_path":     r.URL.RawPath,
@@ -61,9 +65,9 @@ func registerRouting(server *ghttp.Server, state *stateController, metrics *Runt
 	})))
 }
 
-func jsonParams(value func(*http.Request, ghttp.Params) any) ghttp.HTTPHandlerFunc[ghttp.Params] {
-	return func(w http.ResponseWriter, r *http.Request, params ghttp.Params) error {
-		writeJSON(w, value(r, params))
+func jsonValue[I any](value func(*http.Request, I) any) ghttp.HTTPHandlerFunc[I] {
+	return func(w http.ResponseWriter, r *http.Request, input I) error {
+		writeJSON(w, value(r, input))
 		return nil
 	}
 }

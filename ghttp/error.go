@@ -19,7 +19,6 @@ var (
 	ErrOpenAPIDisabled    = errors.New("openapi disabled")
 	ErrHandlerPanic       = errors.New("handler panic")
 
-	ErrInvalidParamsUsage   = errors.New("invalid params usage")
 	ErrUnsupportedMediaType = errors.New("unsupported media type")
 	ErrRequestBodyTooLarge  = errors.New("request body too large")
 

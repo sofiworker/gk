@@ -9,8 +9,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -22,23 +24,23 @@ import (
 func TestFeatureCoverage_RoutingAndHTTPMethods(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 
-	app.MustMount(Handle(Get("/users/{id}"), StructInput[Params](), JSONOutput[struct {
+	app.MustMount(Handle(Get("/users/{id}"), PathString("id"), JSONOutput[struct {
 		ID string `json:"id"`
-	}](), func(_ context.Context, in Params) (struct {
+	}](), func(_ context.Context, id string) (struct {
 		ID string `json:"id"`
 	}, error) {
 		return struct {
 			ID string `json:"id"`
-		}{ID: in.Path("id")}, nil
+		}{ID: id}, nil
 	}))
-	app.MustMount(Handle(Delete("/users/{id}"), StructInput[Params](), WithStatus(http.StatusNoContent, JSONOutput[struct{}]()), func(context.Context, Params) (struct{}, error) {
+	app.MustMount(Handle(Delete("/users/{id}"), NoInput(), WithStatus(http.StatusNoContent, JSONOutput[struct{}]()), func(context.Context, EmptyInput) (struct{}, error) {
 		return struct{}{}, nil
 	}))
-	app.MustMount(HandleHTTP(Options("/users/{id}"), StructInput[Params](), func(w http.ResponseWriter, _ *http.Request, _ Params) error {
+	app.MustMount(HandleHTTP(Options("/users/{id}"), NoInput(), func(w http.ResponseWriter, _ *http.Request, _ EmptyInput) error {
 		w.WriteHeader(http.StatusNoContent)
 		return nil
 	}))
-	app.MustMount(AllMethods(Handle(Get("/any"), StructInput[Params](), JSONOutput[struct{}](), func(context.Context, Params) (struct{}, error) {
+	app.MustMount(AllMethods(Handle(Get("/any"), NoInput(), JSONOutput[struct{}](), func(context.Context, EmptyInput) (struct{}, error) {
 		return struct{}{}, nil
 	}))...)
 
@@ -84,11 +86,11 @@ func TestFeatureCoverage_RoutingAndHTTPMethods(t *testing.T) {
 }
 
 type coverageBindInput struct {
-	Params
-	ID    int    `path:"id"`
-	Page  int    `query:"page" default:"1"`
-	Token string `header:"X-Token"`
-	Sess  string `cookie:"sid"`
+	ID    int
+	Page  int
+	Token string
+	Sess  string
+	IP    string
 }
 
 type coverageBindOutput struct {
@@ -101,13 +103,31 @@ type coverageBindOutput struct {
 
 func TestFeatureCoverage_ParamsBinding(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	app.MustMount(Handle(Get("/users/{id}"), StructInput[coverageBindInput](), JSONOutput[coverageBindOutput](), func(_ context.Context, in coverageBindInput) (coverageBindOutput, error) {
+	input := MapInputs(
+		MapInputs4(
+			PathInt64("id"),
+			QueryIntDefault("page", 1),
+			HeaderString("X-Token"),
+			CookieString("sid"),
+			func(id int64, page int, token, sess string) coverageBindInput {
+				return coverageBindInput{ID: int(id), Page: page, Token: token, Sess: sess}
+			},
+		),
+		InputFunc(func(view RequestView) (string, error) {
+			return view.ClientIP(), nil
+		}),
+		func(in coverageBindInput, ip string) coverageBindInput {
+			in.IP = ip
+			return in
+		},
+	)
+	app.MustMount(Handle(Get("/users/{id}"), input, JSONOutput[coverageBindOutput](), func(_ context.Context, in coverageBindInput) (coverageBindOutput, error) {
 		return coverageBindOutput{
 			ID:   in.ID,
 			Page: in.Page,
 			Tok:  in.Token,
 			Sess: in.Sess,
-			IP:   in.ClientIP(),
+			IP:   in.IP,
 		}, nil
 	}))
 
@@ -131,23 +151,7 @@ func TestFeatureCoverage_ParamsBinding(t *testing.T) {
 
 func TestFeatureCoverage_BodyCodecs(t *testing.T) {
 	type jsonInput struct {
-		Params
-		Body struct {
-			Name string `json:"name"`
-		}
-	}
-	type formInput struct {
-		Params
-		Body struct {
-			Name string `form:"name"`
-			Age  int    `form:"age"`
-		}
-	}
-	type noTagFormInput struct {
-		Params
-		Body struct {
-			Name string `json:"name"`
-		}
+		Name string `json:"name"`
 	}
 	type out struct {
 		Name string `json:"name"`
@@ -155,14 +159,15 @@ func TestFeatureCoverage_BodyCodecs(t *testing.T) {
 	}
 
 	app := New(WithProduces(MIMEJSON))
-	app.MustMount(Handle(Post("/json"), StructInput[jsonInput](), JSONOutput[out](), func(_ context.Context, in jsonInput) (out, error) {
-		return out{Name: in.Body.Name}, nil
+	app.MustMount(Handle(Post("/json"), JSONBody[jsonInput](), JSONOutput[out](), func(_ context.Context, in jsonInput) (out, error) {
+		return out{Name: in.Name}, nil
 	}))
-	app.MustMount(Handle(Post("/form"), StructInput[formInput](), JSONOutput[out](), func(_ context.Context, in formInput) (out, error) {
-		return out{Name: in.Body.Name, Age: in.Body.Age}, nil
+	app.MustMount(Handle(Post("/form"), FormBody(), JSONOutput[out](), func(_ context.Context, values url.Values) (out, error) {
+		age, _ := strconv.Atoi(values.Get("age"))
+		return out{Name: values.Get("name"), Age: age}, nil
 	}))
-	app.MustMount(Handle(Post("/no-tag-form"), StructInput[noTagFormInput](), JSONOutput[out](), func(_ context.Context, in noTagFormInput) (out, error) {
-		return out{Name: in.Body.Name}, nil
+	app.MustMount(Handle(Post("/no-tag-form"), JSONBody[jsonInput](), JSONOutput[out](), func(_ context.Context, in jsonInput) (out, error) {
+		return out{Name: in.Name}, nil
 	}))
 
 	jsonRec := httptest.NewRecorder()
@@ -176,8 +181,8 @@ func TestFeatureCoverage_BodyCodecs(t *testing.T) {
 	missingCT := httptest.NewRecorder()
 	missingCTReq := httptest.NewRequest(http.MethodPost, "/json", strings.NewReader(`{"name":"bob"}`))
 	app.ServeHTTP(missingCT, missingCTReq)
-	if missingCT.Code != http.StatusOK {
-		t.Fatalf("missing content type status = %d, want 200", missingCT.Code)
+	if missingCT.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("missing content type status = %d, want 415", missingCT.Code)
 	}
 
 	formRec := httptest.NewRecorder()
@@ -200,30 +205,27 @@ func TestFeatureCoverage_BodyCodecs(t *testing.T) {
 	noTagReq := httptest.NewRequest(http.MethodPost, "/no-tag-form", strings.NewReader("name=dan"))
 	noTagReq.Header.Set("Content-Type", MIMEPOSTForm)
 	app.ServeHTTP(noTagRec, noTagReq)
-	if noTagRec.Code != http.StatusBadRequest {
-		t.Fatalf("no-tag form status = %d, want 400", noTagRec.Code)
+	if noTagRec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("no-tag form status = %d, want 415", noTagRec.Code)
 	}
 }
 
 func TestFeatureCoverage_Validation(t *testing.T) {
 	type input struct {
-		Params
-		Body struct {
-			Name string `json:"name" validate:"required"`
-		}
+		Name string `json:"name" validate:"required"`
 	}
 	type output struct {
 		Name string `json:"name"`
 	}
 	handler := func(_ context.Context, in input) (output, error) {
-		return output{Name: in.Body.Name}, nil
+		return output{Name: in.Name}, nil
 	}
 
 	app := New(WithProduces(MIMEJSON), WithValidator(newDefaultValidator()))
-	app.MustMount(Handle(Post("/required"), StructInput[input](), JSONOutput[output](), handler))
-	app.MustMount(Handle(Post("/skip"), StructInput[input](), JSONOutput[output](), handler).WithoutServerValidation())
-	app.MustMount(Handle(Post("/mapped"), ValidatedInput(StructInput[input](), func(_ context.Context, in input) error {
-		if in.Body.Name == "bad" {
+	app.MustMount(Handle(Post("/required"), JSONBody[input](), JSONOutput[output](), handler))
+	app.MustMount(Handle(Post("/skip"), JSONBody[input](), JSONOutput[output](), handler).WithoutServerValidation())
+	app.MustMount(Handle(Post("/mapped"), ValidatedInput(JSONBody[input](), func(_ context.Context, in input) error {
+		if in.Name == "bad" {
 			return errors.New("bad name")
 		}
 		return nil
@@ -258,32 +260,26 @@ func TestFeatureCoverage_Validation(t *testing.T) {
 func TestFeatureCoverage_MiddlewareGroupsCapabilities(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
 	var order []string
-	app.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			order = append(order, "server")
-			next.ServeHTTP(w, r)
-		})
+	app.Use(func(c *Ctx) {
+		order = append(order, "server")
+		c.Next()
 	})
-	group := app.Group("/api", func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			order = append(order, "group")
-			next.ServeHTTP(w, r)
-		})
+	group := app.Group("/api", func(c *Ctx) {
+		order = append(order, "group")
+		c.Next()
 	})
 
-	group.MustMount(Handle(Get("/users/{id}"), StructInput[Params](), JSONOutput[struct {
+	group.MustMount(Handle(Get("/users/{id}"), PathString("id"), JSONOutput[struct {
 		ID string `json:"id"`
-	}](), func(_ context.Context, in Params) (struct {
+	}](), func(_ context.Context, id string) (struct {
 		ID string `json:"id"`
 	}, error) {
 		return struct {
 			ID string `json:"id"`
-		}{ID: in.Path("id")}, nil
-	}).WithMiddleware(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			order = append(order, "route")
-			next.ServeHTTP(w, r)
-		})
+		}{ID: id}, nil
+	}).WithMiddleware(func(c *Ctx) {
+		order = append(order, "route")
+		c.Next()
 	}))
 
 	w := httptest.NewRecorder()
@@ -303,13 +299,11 @@ func TestFeatureCoverage_MatchedParamsRequestIDCORS(t *testing.T) {
 		AllowOrigins: []string{"*"},
 		AllowMethods: []string{http.MethodGet},
 	}))
-	app.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("X-Matched", app.MatchedParams(r).Path("id"))
-			next.ServeHTTP(w, r)
-		})
+	app.Use(func(c *Ctx) {
+		c.W.Header().Set("X-Matched", app.MatchedParams(c.R).Path("id"))
+		c.Next()
 	})
-	app.MustMount(Handle(Get("/users/{id}"), StructInput[Params](), JSONOutput[struct{}](), func(context.Context, Params) (struct{}, error) {
+	app.MustMount(Handle(Get("/users/{id}"), NoInput(), JSONOutput[struct{}](), func(context.Context, EmptyInput) (struct{}, error) {
 		return struct{}{}, nil
 	}))
 
@@ -348,7 +342,7 @@ func TestFeatureCoverage_LoggerAndRBAC(t *testing.T) {
 		func(r *http.Request) string { return "users:read" },
 		func(r *http.Request) string { return r.URL.Path },
 	))
-	app.MustMount(Handle(Get("/users"), StructInput[Params](), JSONOutput[struct{}](), func(context.Context, Params) (struct{}, error) {
+	app.MustMount(Handle(Get("/users"), NoInput(), JSONOutput[struct{}](), func(context.Context, EmptyInput) (struct{}, error) {
 		return struct{}{}, nil
 	}))
 
@@ -397,13 +391,13 @@ func (o coverageCookieResp) Cookies() []*http.Cookie {
 
 func TestFeatureCoverage_OutputAndErrors(t *testing.T) {
 	app := New(WithProduces(MIMEJSON))
-	app.MustMount(Handle(Post("/created"), StructInput[struct{}](), JSONOutput[coverageCreatedResp](), func(context.Context, struct{}) (coverageCreatedResp, error) {
+	app.MustMount(Handle(Post("/created"), NoInput(), JSONOutput[coverageCreatedResp](), func(context.Context, EmptyInput) (coverageCreatedResp, error) {
 		return coverageCreatedResp{ID: "u-1"}, nil
 	}))
-	app.MustMount(Handle(Delete("/nocontent"), StructInput[struct{}](), JSONOutput[coverageNoContentResp](), func(context.Context, struct{}) (coverageNoContentResp, error) {
+	app.MustMount(Handle(Delete("/nocontent"), NoInput(), JSONOutput[coverageNoContentResp](), func(context.Context, EmptyInput) (coverageNoContentResp, error) {
 		return coverageNoContentResp{}, nil
 	}))
-	app.MustMount(Handle(Get("/cookie"), StructInput[struct{}](), JSONOutput[coverageCookieResp](), func(context.Context, struct{}) (coverageCookieResp, error) {
+	app.MustMount(Handle(Get("/cookie"), NoInput(), JSONOutput[coverageCookieResp](), func(context.Context, EmptyInput) (coverageCookieResp, error) {
 		return coverageCookieResp{Token: "t-1"}, nil
 	}))
 
@@ -430,19 +424,19 @@ func TestFeatureCoverage_OutputAndErrors(t *testing.T) {
 func TestFeatureCoverage_EnvelopeAndErrorModels(t *testing.T) {
 	app := New(WithProduces(MIMEJSON), WithEnvelope(DefaultEnvelope))
 
-	app.MustMount(Handle(Get("/ok"), StructInput[Params](), JSONOutput[struct {
+	app.MustMount(Handle(Get("/ok"), NoInput(), JSONOutput[struct {
 		ID string `json:"id"`
-	}](), func(context.Context, Params) (struct {
+	}](), func(context.Context, EmptyInput) (struct {
 		ID string `json:"id"`
 	}, error) {
 		return struct {
 			ID string `json:"id"`
 		}{ID: "42"}, nil
 	}))
-	app.MustMount(Handle(Get("/notfound"), StructInput[Params](), JSONOutput[struct{}](), func(context.Context, Params) (struct{}, error) {
+	app.MustMount(Handle(Get("/notfound"), NoInput(), JSONOutput[struct{}](), func(context.Context, EmptyInput) (struct{}, error) {
 		return struct{}{}, Err(http.StatusNotFound, "user not found")
 	}))
-	app.MustMount(Handle(Get("/problem"), StructInput[Params](), JSONOutput[struct{}](), func(context.Context, Params) (struct{}, error) {
+	app.MustMount(Handle(Get("/problem"), NoInput(), JSONOutput[struct{}](), func(context.Context, EmptyInput) (struct{}, error) {
 		return struct{}{}, Err(http.StatusBadRequest, "bad request")
 	}).WithProblemDetails())
 
@@ -470,8 +464,8 @@ func TestFeatureCoverage_Negotiation(t *testing.T) {
 		ID string `json:"id" xml:"id"`
 	}
 	app := New(WithProduces(MIMEJSON, MIMEXML))
-	app.MustMount(Handle(Get("/users/{id}"), StructInput[Params](), CodecOutput[out](MIMEJSON, MIMEXML), func(_ context.Context, in Params) (out, error) {
-		return out{ID: in.Path("id")}, nil
+	app.MustMount(Handle(Get("/users/{id}"), PathString("id"), CodecOutput[out](MIMEJSON, MIMEXML), func(_ context.Context, id string) (out, error) {
+		return out{ID: id}, nil
 	}))
 
 	xmlRec := httptest.NewRecorder()
@@ -499,7 +493,7 @@ func TestFeatureCoverage_Negotiation(t *testing.T) {
 	}
 
 	lenient := New(WithProduces(MIMEJSON), WithLenientContentNegotiation())
-	lenient.MustMount(Handle(Get("/ping"), StructInput[Params](), CodecOutput[map[string]string](MIMEJSON), func(context.Context, Params) (map[string]string, error) {
+	lenient.MustMount(Handle(Get("/ping"), NoInput(), CodecOutput[map[string]string](MIMEJSON), func(context.Context, EmptyInput) (map[string]string, error) {
 		return map[string]string{"pong": "1"}, nil
 	}))
 	lenientRec := httptest.NewRecorder()
@@ -519,8 +513,8 @@ func TestFeatureCoverage_EscapeHatches(t *testing.T) {
 	app.MustMount(RawOperation(http.MethodGet, "/http", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("plain"))
 	})))
-	app.MustMount(HandleHTTP(Get("/httpfunc/{id}"), StructInput[Params](), func(w http.ResponseWriter, _ *http.Request, in Params) error {
-		_, _ = w.Write([]byte(in.Path("id")))
+	app.MustMount(HandleHTTP(Get("/httpfunc/{id}"), PathString("id"), func(w http.ResponseWriter, _ *http.Request, id string) error {
+		_, _ = w.Write([]byte(id))
 		return nil
 	}))
 	app.MustMount(RedirectOperation(http.MethodGet, "/redirect", http.StatusFound, "/target"))
@@ -559,7 +553,7 @@ func TestFeatureCoverage_StaticAndHTMLAndSSE(t *testing.T) {
 	app := New(WithProduces(MIMEJSON), WithRenderer(NewRenderer(tmpDir, ".html", template.FuncMap{}, false)))
 	app.MustMount(StaticDirectory("/static", tmpDir))
 	app.MustMount(HTMLViewOperation(http.MethodGet, "/page", http.StatusOK, "page", map[string]interface{}{"Title": "Hello"}))
-	app.MustMount(SSEOperation("/events", StructInput[Params](), func(_ context.Context, _ Params, stream *SSEWriter) error {
+	app.MustMount(SSEOperation("/events", NoInput(), func(_ context.Context, _ EmptyInput, stream *SSEWriter) error {
 		return stream.WriteEvent("message", "line1\nline2")
 	}))
 
@@ -584,12 +578,12 @@ func TestFeatureCoverage_StaticAndHTMLAndSSE(t *testing.T) {
 
 func TestFeatureCoverage_WebSocket(t *testing.T) {
 	app := New()
-	app.MustMount(WebSocketOperation("/ws/{room}", StructInput[Params](), func(_ context.Context, in Params, conn *WebSocketConn) error {
+	app.MustMount(WebSocketOperation("/ws/{room}", PathString("room"), func(_ context.Context, room string, conn *WebSocketConn) error {
 		var msg map[string]string
 		if err := conn.ReadJSON(&msg); err != nil {
 			return err
 		}
-		msg["room"] = in.Path("room")
+		msg["room"] = room
 		return conn.WriteJSON(msg)
 	}))
 
@@ -617,7 +611,7 @@ func TestFeatureCoverage_OpenAPI(t *testing.T) {
 		WithOpenAPISecurity(map[string][]string{"apiKey": {}}),
 		WithEnvelope(DefaultEnvelope),
 	)
-	app.MustMount(Handle(Post("/users"), StructInput[Params](), WithStatus(http.StatusCreated, JSONOutput[coverageCreatedResp]()), func(context.Context, Params) (coverageCreatedResp, error) {
+	app.MustMount(Handle(Post("/users"), NoInput(), WithStatus(http.StatusCreated, JSONOutput[coverageCreatedResp]()), func(context.Context, EmptyInput) (coverageCreatedResp, error) {
 		return coverageCreatedResp{ID: "u-1"}, nil
 	}).Doc(Tags("users"), OperationID("createUser"), Summary("create a user")))
 
@@ -651,7 +645,7 @@ func TestFeatureCoverage_SetupErrors(t *testing.T) {
 	t.Run("timeout", func(t *testing.T) {
 		app := New(WithProduces(MIMEJSON))
 		app.Use(Timeout(50 * time.Millisecond))
-		app.MustMount(HandleNoOutput(Get("/slow"), StructInput[Params](), func(context.Context, Params) error {
+		app.MustMount(HandleNoOutput(Get("/slow"), NoInput(), func(context.Context, EmptyInput) error {
 			time.Sleep(300 * time.Millisecond)
 			return nil
 		}))

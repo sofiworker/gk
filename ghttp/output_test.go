@@ -55,7 +55,7 @@ func TestEnvelopeUsesRouteProduces(t *testing.T) {
 		Name string `json:"name"`
 	}
 	app := New(WithEnvelope(DefaultEnvelope), WithProduces(MIMEJSON))
-	app.MustMount(Handle(Get("/users/{id}"), StructInput[struct{}](), CodecOutput[Resp](MIMEXML), func(context.Context, struct{}) (Resp, error) {
+	app.MustMount(Handle(Get("/users/{id}"), NoInput(), CodecOutput[Resp](MIMEXML), func(context.Context, EmptyInput) (Resp, error) {
 		return Resp{Name: "alice"}, nil
 	}))
 
@@ -82,7 +82,7 @@ func TestTypedRouteAlwaysWritesOK(t *testing.T) {
 	}
 
 	server := New(WithProduces(MIMEJSON))
-	server.MustMount(Handle(Get("/created"), StructInput[struct{}](), JSONOutput[response](), func(context.Context, struct{}) (response, error) {
+	server.MustMount(Handle(Get("/created"), NoInput(), JSONOutput[response](), func(context.Context, EmptyInput) (response, error) {
 		return response{Status: http.StatusCreated}, nil
 	}))
 

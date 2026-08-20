@@ -123,11 +123,8 @@ func TestServerOpenAPIDescribesRawCatchAllRouteBestEffort(t *testing.T) {
 func TestServerOpenAPIMarksTypedCatchAllParameter(t *testing.T) {
 	t.Parallel()
 
-	type request struct {
-		Path string `path:"path"`
-	}
 	server := New(WithOpenAPI("example", "1.0.0"), WithProduces(MIMEJSON))
-	server.MustMount(Handle(Get("/files/{path...}"), StructInput[request](), JSONOutput[struct{}](), func(context.Context, request) (struct{}, error) {
+	server.MustMount(Handle(Get("/files/{path...}"), PathString("path"), JSONOutput[struct{}](), func(_ context.Context, _ string) (struct{}, error) {
 		return struct{}{}, nil
 	}))
 
@@ -200,9 +197,9 @@ func TestServerOpenAPIDerivesContentFreeHEADFallback(t *testing.T) {
 
 	server := New(WithOpenAPI("example", "1.0.0"), WithProduces(MIMEJSON))
 
-	server.MustMount(Handle(Get("/users"), StructInput[struct{}](), JSONOutput[struct {
+	server.MustMount(Handle(Get("/users"), NoInput(), JSONOutput[struct {
 		Name string `json:"name"`
-	}](), func(context.Context, struct{}) (struct {
+	}](), func(_ context.Context, _ EmptyInput) (struct {
 		Name string `json:"name"`
 	}, error) {
 		return struct {
@@ -258,7 +255,7 @@ func TestOpenAPIEnvelopeErrorResponsesAndServers(t *testing.T) {
 		WithOpenAPIServers("https://api.example.com"),
 		WithOpenAPISecurity(map[string][]string{"apiKey": {}}),
 	)
-	app.MustMount(Handle(Post("/users"), StructInput[Params](), WithStatus(http.StatusCreated, JSONOutput[openAPIResp]()), func(context.Context, Params) (openAPIResp, error) {
+	app.MustMount(Handle(Post("/users"), NoInput(), WithStatus(http.StatusCreated, JSONOutput[openAPIResp]()), func(_ context.Context, _ EmptyInput) (openAPIResp, error) {
 		return openAPIResp{ID: "u-1"}, nil
 	}))
 

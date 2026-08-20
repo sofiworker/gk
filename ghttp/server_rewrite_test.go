@@ -1,11 +1,8 @@
 package ghttp
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -20,11 +17,10 @@ type rewriteBody struct {
 }
 
 type rewriteInput struct {
-	Params
-	ID      string `path:"id"`
-	Page    int    `query:"page"`
-	Trace   string `header:"X-Trace"`
-	Session string `cookie:"sid"`
+	ID      string
+	Page    int
+	Trace   string
+	Session string
 	Body    rewriteBody
 }
 
@@ -41,15 +37,22 @@ type rewriteRecursiveOutput struct {
 	Next *rewriteRecursiveOutput `json:"next,omitempty"`
 }
 
-type rewriteRecursiveParameter []rewriteRecursiveParameter
-
 func TestServerRewriteTypedParamsBodyAndOpenAPI(t *testing.T) {
 	server := New(
 		WithOpenAPI("rewrite", "1.0.0"),
 		WithConsumes(MIMEJSON),
 		WithProduces(MIMEJSON),
 	)
-	server.MustMount(Handle(Post("/users/{id}"), StructInput[rewriteInput](), JSONOutput[rewriteOutput](), func(_ context.Context, input rewriteInput) (rewriteOutput, error) {
+	server.MustMount(Handle(Post("/users/{id}"), MapInputs5(
+		PathString("id"),
+		QueryInt("page"),
+		HeaderString("X-Trace"),
+		CookieString("sid"),
+		JSONBody[rewriteBody](),
+		func(id string, page int, trace, session string, body rewriteBody) rewriteInput {
+			return rewriteInput{ID: id, Page: page, Trace: trace, Session: session, Body: body}
+		},
+	), JSONOutput[rewriteOutput](), func(_ context.Context, input rewriteInput) (rewriteOutput, error) {
 		return rewriteOutput{
 			ID:      input.ID,
 			Page:    input.Page,
@@ -107,11 +110,8 @@ func TestServerRewriteTypedParamsBodyAndOpenAPI(t *testing.T) {
 
 func TestServerRewriteCatchAllOpenAPIAndEscapedPath(t *testing.T) {
 	server := New(WithOpenAPI("rewrite", "1.0.0"), WithProduces(MIMEJSON))
-	type input struct {
-		Path string `path:"path"`
-	}
-	server.MustMount(Handle(Get("/files/{path...}"), StructInput[input](), JSONOutput[map[string]string](), func(_ context.Context, in input) (map[string]string, error) {
-		return map[string]string{"path": in.Path}, nil
+	server.MustMount(Handle(Get("/files/{path...}"), PathRemainder("path"), JSONOutput[map[string]string](), func(_ context.Context, path string) (map[string]string, error) {
+		return map[string]string{"path": path}, nil
 	}))
 
 	rec := httptest.NewRecorder()
@@ -131,9 +131,8 @@ func TestServerRewriteCatchAllOpenAPIAndEscapedPath(t *testing.T) {
 
 func TestServerRewriteDecodesScalarBodyFields(t *testing.T) {
 	server := New(WithProduces(MIMEJSON))
-	type input struct{ Body string }
-	server.MustMount(Handle(Post("/echo"), StructInput[input](), JSONOutput[map[string]string](), func(_ context.Context, in input) (map[string]string, error) {
-		return map[string]string{"body": in.Body}, nil
+	server.MustMount(Handle(Post("/echo"), JSONBody[string](), JSONOutput[map[string]string](), func(_ context.Context, body string) (map[string]string, error) {
+		return map[string]string{"body": body}, nil
 	}))
 	req := httptest.NewRequest(http.MethodPost, "/echo", strings.NewReader(`"hello"`))
 	req.Header.Set("Content-Type", MIMEJSON)
@@ -146,12 +145,11 @@ func TestServerRewriteDecodesScalarBodyFields(t *testing.T) {
 
 func TestServerRewriteDecodesPointerBodyFields(t *testing.T) {
 	server := New(WithProduces(MIMEJSON))
-	type input struct{ Body *rewriteBody }
-	server.MustMount(Handle(Post("/echo"), StructInput[input](), JSONOutput[map[string]string](), func(_ context.Context, in input) (map[string]string, error) {
-		if in.Body == nil {
+	server.MustMount(Handle(Post("/echo"), JSONBody[*rewriteBody](), JSONOutput[map[string]string](), func(_ context.Context, body *rewriteBody) (map[string]string, error) {
+		if body == nil {
 			return map[string]string{"body": "nil"}, nil
 		}
-		return map[string]string{"body": in.Body.Name}, nil
+		return map[string]string{"body": body.Name}, nil
 	}))
 	req := httptest.NewRequest(http.MethodPost, "/echo", strings.NewReader(`{"name":"Ada"}`))
 	req.Header.Set("Content-Type", MIMEJSON)
@@ -162,85 +160,42 @@ func TestServerRewriteDecodesPointerBodyFields(t *testing.T) {
 	}
 }
 
-func TestServerRewriteDecodesPointerBodyAcrossBuiltInCodecs(t *testing.T) {
-	type formBody struct {
-		Name string `form:"name"`
-	}
-	type plainInput struct{ Body *string }
-	type formInput struct{ Body *formBody }
-
-	server := New(WithProduces(MIMEJSON))
-	server.MustMount(Handle(Post("/plain"), StructInput[plainInput](MIMEPlain), JSONOutput[map[string]string](), func(_ context.Context, in plainInput) (map[string]string, error) {
-		if in.Body == nil {
-			return map[string]string{"body": "nil"}, nil
-		}
-		return map[string]string{"body": *in.Body}, nil
-	}))
-	server.MustMount(Handle(Post("/form"), StructInput[formInput](MIMEPOSTForm), JSONOutput[map[string]string](), func(_ context.Context, in formInput) (map[string]string, error) {
-		if in.Body == nil {
-			return map[string]string{"body": "nil"}, nil
-		}
-		return map[string]string{"body": in.Body.Name}, nil
-	}))
-	server.MustMount(Handle(Post("/multipart"), StructInput[formInput](), JSONOutput[map[string]string](), func(_ context.Context, in formInput) (map[string]string, error) {
-		if in.Body == nil {
-			return map[string]string{"body": "nil"}, nil
-		}
-		return map[string]string{"body": in.Body.Name}, nil
-	}))
-
-	tests := []struct {
-		name        string
-		path        string
-		contentType string
-		body        *bytes.Buffer
-		want        string
-	}{
-		{name: "plain", path: "/plain", contentType: MIMEPlain, body: bytes.NewBufferString("hello"), want: "hello"},
-		{name: "form", path: "/form", contentType: MIMEPOSTForm, body: bytes.NewBufferString("name=Ada"), want: "Ada"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, tt.path, tt.body)
-			req.Header.Set("Content-Type", tt.contentType)
-			rec := httptest.NewRecorder()
-			server.ServeHTTP(rec, req)
-			if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"body":"`+tt.want+`"`) {
-				t.Fatalf("response = %d %q", rec.Code, rec.Body.String())
-			}
-		})
-	}
-
-	var multipartBody bytes.Buffer
-	writer := multipart.NewWriter(&multipartBody)
-	if err := writer.WriteField("name", "Ada"); err != nil {
-		t.Fatalf("WriteField: %v", err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatalf("Close multipart writer: %v", err)
-	}
-	req := httptest.NewRequest(http.MethodPost, "/multipart", &multipartBody)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"body":"Ada"`) {
-		t.Fatalf("multipart response = %d %q", rec.Code, rec.Body.String())
-	}
-}
-
 func TestServerRewriteBindsRepeatedQueryAndHeaderValues(t *testing.T) {
 	server := New(WithProduces(MIMEJSON))
 	type input struct {
-		Tags    []string `query:"tag"`
-		Codes   [2]int   `header:"X-Code"`
-		Default []string `query:"missing" default:"fallback"`
+		Tags    []string
+		Codes   [2]int
+		Default []string
 	}
 	type output struct {
 		Tags    []string `json:"tags"`
 		Codes   [2]int   `json:"codes"`
 		Default []string `json:"default"`
 	}
-	server.MustMount(Handle(Get("/items"), StructInput[input](), JSONOutput[output](), func(_ context.Context, in input) (output, error) {
+	server.MustMount(Handle(Get("/items"), MapInputs3(
+		QueryStrings("tag"),
+		InputFunc(func(v RequestView) ([2]int, error) {
+			values := v.Header().Values("X-Code")
+			var codes [2]int
+			for i := 0; i < len(codes) && i < len(values); i++ {
+				n, err := strconv.Atoi(values[i])
+				if err != nil {
+					return codes, BadRequest("invalid X-Code header")
+				}
+				codes[i] = n
+			}
+			return codes, nil
+		}),
+		InputFunc(func(v RequestView) ([]string, error) {
+			if values, ok := v.Query()["missing"]; ok {
+				return values, nil
+			}
+			return []string{"fallback"}, nil
+		}),
+		func(tags []string, codes [2]int, fallback []string) input {
+			return input{Tags: tags, Codes: codes, Default: fallback}
+		},
+	), JSONOutput[output](), func(_ context.Context, in input) (output, error) {
 		return output{Tags: in.Tags, Codes: in.Codes, Default: in.Default}, nil
 	}))
 
@@ -262,31 +217,20 @@ func TestServerRewriteBindsRepeatedQueryAndHeaderValues(t *testing.T) {
 	}
 }
 
-func TestServerRewriteCollectionBindingErrorsNameSource(t *testing.T) {
-	type input struct {
-		Codes [2]int `header:"X-Code"`
-	}
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Add("X-Code", "7")
-	var target input
-	err := ParseInput(req, &target)
-	if err == nil || !strings.Contains(err.Error(), `bind header parameter "X-Code"`) {
-		t.Fatalf("ParseInput error = %v, want header source", err)
-	}
-}
-
 func TestServerRewriteTaggedPathPopulatesEmbeddedParams(t *testing.T) {
 	server := New(WithProduces(MIMEJSON))
 	type input struct {
-		Params
-		ID string `path:"id"`
+		ID     string
+		Params string
 	}
 	type output struct {
 		Tagged string `json:"tagged"`
 		Params string `json:"params"`
 	}
-	server.MustMount(Handle(Get("/items/{id}"), StructInput[input](), JSONOutput[output](), func(_ context.Context, in input) (output, error) {
-		return output{Tagged: in.ID, Params: in.Params.Path("id")}, nil
+	server.MustMount(Handle(Get("/items/{id}"), MapInputs(PathString("id"), HTTPRequest(), func(id string, r *http.Request) input {
+		return input{ID: id, Params: server.MatchedParams(r).Path("id")}
+	}), JSONOutput[output](), func(_ context.Context, in input) (output, error) {
+		return output{Tagged: in.ID, Params: in.Params}, nil
 	}))
 
 	rec := httptest.NewRecorder()
@@ -305,11 +249,8 @@ func TestServerRewriteTaggedPathPopulatesEmbeddedParams(t *testing.T) {
 
 func TestServerRewritePathOnlyInputCompilesDirectTerminal(t *testing.T) {
 	server := New(WithProduces(MIMEJSON))
-	type input struct {
-		ID int64 `path:"id"`
-	}
-	server.MustMount(Handle(Get("/items/{id}"), StructInput[input](), JSONOutput[map[string]int64](), func(_ context.Context, in input) (map[string]int64, error) {
-		return map[string]int64{"id": in.ID}, nil
+	server.MustMount(Handle(Get("/items/{id}"), PathInt64("id"), JSONOutput[map[string]int64](), func(_ context.Context, id int64) (map[string]int64, error) {
+		return map[string]int64{"id": id}, nil
 	}))
 
 	server.finalizeRoutes()
@@ -317,16 +258,16 @@ func TestServerRewritePathOnlyInputCompilesDirectTerminal(t *testing.T) {
 	if state == nil || len(state.mux.routes) != 1 {
 		t.Fatalf("compiled routes = %#v, want one route", state)
 	}
-	if state.mux.routes[0].fastDirect == nil {
+	r := state.mux.routes[0]
+	if len(r.compiledHandlers) == 0 || r.needsState {
 		t.Fatal("path-only input did not compile a stateless direct call")
 	}
 	matched := state.mux.match(http.MethodGet, "/items/42", false)
-	if matched.kind != routeMatchFound || matched.route != state.mux.routes[0] {
-		t.Fatalf("direct param match = %#v, want route %p", matched, state.mux.routes[0])
+	if matched.kind != routeMatchFound || matched.route != r {
+		t.Fatalf("direct param match = %#v, want route %p", matched, r)
 	}
-	params, err := matched.route.extract(matched.path)
-	if err != nil || params.Get("id") != "42" {
-		t.Fatalf("extracted params = %#v, err = %v, want id=42", params, err)
+	if matched.params.Get("id") != "42" {
+		t.Fatalf("matched params id = %q, want 42", matched.params.Get("id"))
 	}
 }
 
@@ -341,7 +282,8 @@ func TestServerRewriteNoInputGenericOperationCompilesStaticFastHandler(t *testin
 	if state == nil || len(state.mux.routes) != 1 {
 		t.Fatalf("compiled routes = %#v, want one route", state)
 	}
-	if state.mux.routes[0].fastDirect == nil {
+	r := state.mux.routes[0]
+	if len(r.compiledHandlers) == 0 || r.needsState {
 		t.Fatal("generic no-input operation did not compile a stateless direct call")
 	}
 
@@ -353,20 +295,22 @@ func TestServerRewriteNoInputGenericOperationCompilesStaticFastHandler(t *testin
 }
 
 func TestServerRewriteNoInputGenericOperationKeepsStatelessDirectWithMiddleware(t *testing.T) {
-	// stateFree 输入(NoInput)不读 requestState,即使有中间件也免状态注入:
-	// fastDirect 经 route.handler 执行中间件链,与历史 fast 分支语义一致。
-	// a stateFree input (NoInput) never reads requestState, so middleware does
-	// not force state injection: fastDirect runs the middleware chain through
-	// route.handler, matching the historical fast-branch semantics.
+	// 新执行模型下中间件永远经 Ctx 切片链运行(c.server 直接挂在 Ctx 上,
+	// 不再依赖 requestState 注入);无参数无 body 的 fastBuild 路由不再为
+	// 中间件强制 attachCtx——needsState 只由错误模型/参数/typed 输入决定,
+	// 中间件调用顺序与响应结果不变。
+	// under the new execution model middleware always runs via the Ctx slice
+	// chain (c.server sits on the Ctx directly; no requestState injection).
+	// fastBuild routes without params or body no longer force attachCtx for
+	// middleware: needsState depends only on the error model / params / typed
+	// inputs, while middleware order and the response stay identical.
 	called := false
 	server := New()
 	server.MustMount(Handle(Get("/ready"), NoInput(), TextOutput(), func(context.Context, EmptyInput) (string, error) {
 		return "ready", nil
-	}).WithMiddleware(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			called = true
-			next.ServeHTTP(w, r)
-		})
+	}).WithMiddleware(func(c *Ctx) {
+		called = true
+		c.Next()
 	}))
 
 	server.finalizeRoutes()
@@ -374,8 +318,9 @@ func TestServerRewriteNoInputGenericOperationKeepsStatelessDirectWithMiddleware(
 	if state == nil || len(state.mux.routes) != 1 {
 		t.Fatalf("compiled routes = %#v, want one route", state)
 	}
-	if state.mux.routes[0].fastDirect == nil {
-		t.Fatal("state-free operation with middleware did not compile a stateless direct call")
+	r := state.mux.routes[0]
+	if r.needsState {
+		t.Fatal("paramless fastBuild route with middleware forced state attach, want stateless")
 	}
 
 	recorder := httptest.NewRecorder()
@@ -400,7 +345,7 @@ func TestServerRewriteRawSimpleParamCompilesDirectTerminal(t *testing.T) {
 		t.Fatalf("compiled routes = %#v, want one route", state)
 	}
 	route := state.mux.routes[0]
-	if route.fastDirect == nil {
+	if len(route.compiledHandlers) == 0 || route.needsState {
 		t.Fatal("raw route did not compile a stateless direct call")
 	}
 	matched := state.mux.match(http.MethodGet, "/items/42", false)
@@ -416,14 +361,11 @@ func TestServerRewriteRawSimpleParamCompilesDirectTerminal(t *testing.T) {
 
 func TestServerRewriteDirectParamPreservesRoutingSemantics(t *testing.T) {
 	server := New(WithProduces(MIMEJSON))
-	type input struct {
-		ID string `path:"id"`
-	}
 	type output struct {
 		Value string `json:"value"`
 	}
-	server.MustMount(Handle(Get("/items/{id}"), StructInput[input](), JSONOutput[output](), func(_ context.Context, in input) (output, error) {
-		return output{Value: "param:" + in.ID}, nil
+	server.MustMount(Handle(Get("/items/{id}"), PathString("id"), JSONOutput[output](), func(_ context.Context, id string) (output, error) {
+		return output{Value: "param:" + id}, nil
 	}))
 	server.MustMount(HandleNoInput(Get("/items/new"), JSONOutput[output](), func(_ context.Context) (output, error) {
 		return output{Value: "static"}, nil
@@ -458,60 +400,9 @@ func TestServerRewriteDirectParamPreservesRoutingSemantics(t *testing.T) {
 	}
 }
 
-func TestServerRewriteMultipartRejectsNonStructBodies(t *testing.T) {
-	type pointerInput struct{ Body *string }
-	type sliceInput struct{ Body []byte }
-
-	server := New(WithProduces(MIMEJSON))
-	pointerCalled := false
-	sliceCalled := false
-	server.MustMount(Handle(Post("/pointer"), StructInput[pointerInput](), JSONOutput[struct{}](), func(_ context.Context, _ pointerInput) (struct{}, error) {
-		pointerCalled = true
-		return struct{}{}, nil
-	}))
-	server.MustMount(Handle(Post("/slice"), StructInput[sliceInput](), JSONOutput[struct{}](), func(_ context.Context, _ sliceInput) (struct{}, error) {
-		sliceCalled = true
-		return struct{}{}, nil
-	}))
-
-	newRequest := func(path string) *http.Request {
-		var body bytes.Buffer
-		writer := multipart.NewWriter(&body)
-		if err := writer.WriteField("value", "data"); err != nil {
-			t.Fatalf("WriteField: %v", err)
-		}
-		if err := writer.Close(); err != nil {
-			t.Fatalf("Close multipart writer: %v", err)
-		}
-		req := httptest.NewRequest(http.MethodPost, path, &body)
-		req.Header.Set("Content-Type", writer.FormDataContentType())
-		return req
-	}
-
-	for _, path := range []string{"/pointer", "/slice"} {
-		rec := httptest.NewRecorder()
-		server.ServeHTTP(rec, newRequest(path))
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("POST %s status = %d, want 400; body = %q", path, rec.Code, rec.Body.String())
-		}
-	}
-	if pointerCalled || sliceCalled {
-		t.Fatalf("invalid multipart body reached handler: pointer=%v slice=%v", pointerCalled, sliceCalled)
-	}
-
-	var target pointerInput
-	err := parseInput(newRequest("/pointer"), &target)
-	if !errors.Is(err, ErrInvalidBody) {
-		t.Fatalf("parseInput error = %v, want ErrInvalidBody", err)
-	}
-	if target.Body != nil {
-		t.Fatalf("Body = %q, want nil after rejected multipart target", *target.Body)
-	}
-}
-
 func TestServerRewriteOpenAPIHandlesRecursiveSchemas(t *testing.T) {
 	server := New(WithOpenAPI("rewrite", "1.0.0"), WithProduces(MIMEJSON))
-	server.MustMount(Handle(Get("/nodes"), StructInput[struct{}](), JSONOutput[rewriteRecursiveOutput](), func(_ context.Context, _ struct{}) (rewriteRecursiveOutput, error) {
+	server.MustMount(Handle(Get("/nodes"), NoInput(), JSONOutput[rewriteRecursiveOutput](), func(_ context.Context, _ EmptyInput) (rewriteRecursiveOutput, error) {
 		return rewriteRecursiveOutput{Name: "root"}, nil
 	}))
 	document, err := server.OpenAPI()
@@ -545,26 +436,6 @@ func TestServerRewriteOpenAPIParameterFormats(t *testing.T) {
 				t.Fatalf("schema = %#v, want %#v", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestServerRewriteOpenAPIHandlesRecursiveCollectionParameter(t *testing.T) {
-	server := New(WithOpenAPI("rewrite", "1.0.0"), WithProduces(MIMEJSON))
-	type input struct {
-		Values rewriteRecursiveParameter `query:"value"`
-	}
-	server.MustMount(Handle(Get("/recursive-parameters"), StructInput[input](), JSONOutput[struct{}](), func(_ context.Context, _ input) (struct{}, error) {
-		return struct{}{}, nil
-	}))
-
-	document, err := server.OpenAPI()
-	if err != nil {
-		t.Fatalf("OpenAPI: %v", err)
-	}
-	for _, fragment := range []string{`"/recursive-parameters"`, `"name":"value"`, `"items":{}`} {
-		if !strings.Contains(string(document), fragment) {
-			t.Fatalf("OpenAPI missing %s: %s", fragment, document)
-		}
 	}
 }
 
@@ -663,12 +534,8 @@ func TestServerRewriteStaticIndexPreservesExplicitHEADResult(t *testing.T) {
 func TestServerRewriteConcurrentDispatch(t *testing.T) {
 	server := New(WithProduces(MIMEJSON))
 
-	server.MustMount(Handle(Get("/items/{id}"), StructInput[struct {
-		ID string `path:"id"`
-	}](), JSONOutput[map[string]string](), func(_ context.Context, input struct {
-		ID string `path:"id"`
-	}) (map[string]string, error) {
-		return map[string]string{"id": input.ID}, nil
+	server.MustMount(Handle(Get("/items/{id}"), PathString("id"), JSONOutput[map[string]string](), func(_ context.Context, id string) (map[string]string, error) {
+		return map[string]string{"id": id}, nil
 	}))
 
 	const workers = 32
