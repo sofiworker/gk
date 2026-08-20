@@ -236,11 +236,14 @@ func (r *hertzMatchRunner) probe(spec reqSpec) int {
 var noopHTTP = http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 
 func buildGhttpMatch(routes []apiRoute) matchRunner {
-	s := ghttp.New(ghttp.WithProduces(ghttp.MIMEJSON))
+	m := ghttp.New()
+	fn := func(context.Context, *ghttp.Request, *ghttp.Response) error { return nil }
 	for _, rt := range routes {
-		s.MustMount(ghttp.RawOperation(rt.method, curlyPath(rt.path), noopHTTP))
+		if err := m.RawHandle(rt.method, curlyPath(rt.path), fn); err != nil {
+			panic(err)
+		}
 	}
-	return httpMatchRunner{h: s}
+	return httpMatchRunner{h: m}
 }
 
 func buildWebMatch(routes []apiRoute) matchRunner {
