@@ -15,21 +15,10 @@ type compiledHandler interface {
 }
 
 // RawHandlerFunc 是完全接管 HTTP 响应的原始处理器形态,作为一等公民逃生入口,
-// 而非隐藏在分派内部的 bypass。
+// 而非隐藏在分派内部的 bypass。它与 Handler 同签名,注册时直接转为 Handler 进链,
+// 与 typed 终端共享同一执行路径(无需额外适配器)。
 // RawHandlerFunc is the raw handler form that fully owns the HTTP response. It
-// is a first-class escape hatch, not a bypass hidden inside dispatch.
+// is a first-class escape hatch, not a bypass hidden inside dispatch. It shares
+// Handler's signature and is converted straight to a Handler at registration,
+// sharing the same execution path as typed terminals (no adapter needed).
 type RawHandlerFunc func(ctx context.Context, req *Request, resp *Response) error
-
-// rawHandler 把 RawHandlerFunc 适配成 compiledHandler,使其与 typed handler
-// 共享同一执行路径。
-// rawHandler adapts a RawHandlerFunc into a compiledHandler so it shares the
-// same execution path as typed handlers.
-type rawHandler struct {
-	fn RawHandlerFunc
-}
-
-// serve 实现 compiledHandler。
-// serve implements compiledHandler.
-func (h rawHandler) serve(ctx context.Context, req *Request, resp *Response) error {
-	return h.fn(ctx, req, resp)
-}

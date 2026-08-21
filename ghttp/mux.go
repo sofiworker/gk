@@ -17,6 +17,11 @@ type Mux struct {
 	trees []*methodTree
 	pool  sync.Pool
 
+	// mws 是全局中间件栈,注册路由时折叠进链;须在注册路由前经 Use 追加(gin 同款约束)。
+	// mws is the global middleware stack, folded into the chain at route
+	// registration; append via Use before registering routes (gin's constraint).
+	mws []Middleware
+
 	// strictPath 决定请求路径校验强度。默认 false(快速模式):仅拦截 dot 段
 	// (防路径遍历),用一次 SIMD 字节扫描粗筛,空段放行交给匹配(对齐 gin)。
 	// 置 true(严格模式):完整校验 dot 段 + 空段,任一非法即 400。
@@ -75,6 +80,24 @@ func (m *Mux) findTree(method string) *methodTree {
 	return nil
 }
 
+// Use 追加全局中间件,按追加顺序执行(先加先执行)。须在注册路由前调用:中间件在
+// 注册期折叠进每条路由的链,已注册的路由不受其后 Use 影响(gin 同款语义)。
+// Use appends global middleware, executed in append order (first added runs
+// first). Call it before registering routes: middleware is folded into each
+// route's chain at registration time, so routes already registered are
+// unaffected by a later Use (gin's semantics).
+func (m *Mux) Use(mws ...Middleware) *Mux {
+	m.mws = append(m.mws, mws...)
+	return m
+}
+
+// register 实现 router:把 terminal 折叠上全局中间件栈后注册到 method + path。
+// register implements router: fold terminal with the global middleware stack,
+// then register at method + path.
+func (m *Mux) register(method, path string, terminal Handler) error {
+	return m.handle(method, path, chain(terminal, m.mws))
+}
+
 // handle 将一个已编译的 handler 注册到 method + path。path 先由模板语法翻译为 gin
 // 形式(:name / *name)再插入。
 // handle registers a compiled handler for method + path. The path is first
@@ -128,12 +151,15 @@ func (m *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 复用随 Request 池化的 Response,免去每请求 &Response{} 堆分配。
-	// Reuse the pooled Response, avoiding a per-request &Response{} heap alloc.
+	// 复用随 Request 池化的 Response,免去每请求 &Response{} 堆分配;
+	// 先 reset 清掉上一请求残留的 status/written,再挂上本请求的 writer。
+	// Reuse the pooled Response, avoiding a per-request &Response{} heap alloc;
+	// reset the leftover status/written first, then attach this request's writer.
+	req.resp.reset()
 	req.resp.ResponseWriter = w
 	serr := m.serve(v.handler, r.Context(), req, &req.resp)
 
-	req.resp.ResponseWriter = nil
+	req.resp.reset()
 	req.Request = nil
 	m.pool.Put(req)
 
@@ -215,11 +241,11 @@ func (m *Mux) serve(h compiledHandler, ctx context.Context, req *Request, resp *
 	return h.serve(ctx, req, resp)
 }
 
-// RawHandle 注册一个原始处理器(完全接管响应)。这是骨架阶段唯一可用的注册入口;
-// typed 的 Handle[P,Q,B,O] 在阶段 1 落地。
-// RawHandle registers a raw handler (full response ownership). It is the only
-// registration entry available in the skeleton stage; the typed Handle[P,Q,B,O]
-// lands in stage 1.
+// RawHandle 注册一个原始处理器(完全接管响应),作为一等公民逃生入口。它与 typed
+// 端点共享同一执行路径,并同样经过全局/分组中间件链。
+// RawHandle registers a raw handler (full response ownership) as a first-class
+// escape hatch. It shares the same execution path as typed endpoints and is
+// likewise wrapped by the global/group middleware chain.
 func (m *Mux) RawHandle(method, path string, fn RawHandlerFunc) error {
-	return m.handle(method, path, rawHandler{fn: fn})
+	return m.register(method, path, Handler(fn))
 }
