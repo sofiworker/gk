@@ -1,16 +1,18 @@
 package ghttp
 
 import (
-	"encoding/json"
 	"net/http"
 )
 
-// jsonOutput 以 JSON 编码输出 T,状态码可经 Status 覆盖(默认 200)。
-// 本阶段用标准库 encoding/json;零反射编码器随阶段 3 引入(设计 §9.3)。
-// jsonOutput encodes T as JSON; the status code is overridable via Status
-// (default 200). Uses standard encoding/json this stage; a zero-reflection
-// encoder arrives in stage 3 (design §9.3).
-type jsonOutput[T any] struct{ status int }
+// jsonOutput 以 JSON 编码输出 T,状态码可经 Status 覆盖(默认 200)。默认用内置 JSONCodec
+// 编码,也可经 WithEncoder 替换为任意 ResponseEncoder(自定义 JSON 库、XML、模板等)。
+// jsonOutput encodes T as JSON; status overridable via Status (default 200).
+// Encodes with the built-in JSONCodec by default, or any ResponseEncoder via
+// WithEncoder (custom JSON lib, XML, templates, etc.).
+type jsonOutput[T any] struct {
+	status int
+	enc    ResponseEncoder // nil 表示用内置 JSONCodec;非 nil 则用该编码器。
+}
 
 // Status 覆盖该输出的状态码,返回新值(值语义,便于链式:JSON[T]().Status(201))。
 // Status overrides this output's status code, returning the new value (value
@@ -20,19 +22,31 @@ func (o jsonOutput[T]) Status(code int) jsonOutput[T] {
 	return o
 }
 
+// WithEncoder 用自定义编码器替换内置 JSON 编码,返回新值。只换编码器、状态码不变。
+// WithEncoder replaces the built-in JSON encoding with a custom encoder,
+// returning the new value; only the encoder changes, status stays.
+func (o jsonOutput[T]) WithEncoder(enc ResponseEncoder) jsonOutput[T] {
+	o.enc = enc
+	return o
+}
+
 func (o jsonOutput[T]) encode(resp *Response, v T) error {
 	status := o.status
 	if status == 0 {
 		status = http.StatusOK
 	}
+	if o.enc != nil {
+		resp.WriteHeader(status)
+		return o.enc.Encode(resp, v)
+	}
 	resp.Header().Set("Content-Type", "application/json; charset=utf-8")
 	resp.WriteHeader(status)
-	return json.NewEncoder(resp).Encode(v)
+	return jsonCodec{}.Encode(resp, v)
 }
 
-// JSON 返回一个 JSON 输出契约,默认状态码 200,可用 .Status(code) 覆盖。
+// JSON 返回一个 JSON 输出契约,默认状态码 200,可用 .Status(code) 覆盖、.WithEncoder 替换编码器。
 // JSON returns a JSON output contract, default status 200, overridable with
-// .Status(code).
+// .Status(code) and .WithEncoder(enc).
 func JSON[T any]() jsonOutput[T] { return jsonOutput[T]{} }
 
 // noContent 是无响应体输出:写状态码(默认 204),不写 body。O 为占位类型。

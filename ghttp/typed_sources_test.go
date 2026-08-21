@@ -101,7 +101,7 @@ func TestLoggerUnwrittenPlaceholder(t *testing.T) {
 
 // JSONBody codec 的 contentType 声明正确(供阶段 3/OpenAPI)。
 func TestJSONBodyContentType(t *testing.T) {
-	if ct := JSONBody().contentType(); ct != "application/json" {
-		t.Errorf("JSONBody contentType = %q, want application/json", ct)
+	if ct := JSONBody().ContentType(); ct != "application/json" {
+		t.Errorf("JSONBody ContentType = %q, want application/json", ct)
 	}
 }
