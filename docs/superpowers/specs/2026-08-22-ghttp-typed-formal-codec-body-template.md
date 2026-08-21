@@ -152,3 +152,39 @@ func PostParamsBody[P, B, O any](router, path string, enc ResponseEncoder, dec R
 2. **内置 codec 首批几个**: JSON(必) + XML(建议),YAML/Form 按需。
 3. **render 子包首批是否做**:先不做，只保证 `ResponseEncoder` 能接；有需求再加 `ghttp/render`。
 4. **Content-Type 策略**:一接口一值；多格式用中间件 `SupportedFormats` 协商 —— 认可吗？
+
+## 阶段 7(v4 正式)进度追踪
+
+- [x] **阶段 1**: RequestDecoder/ResponseEncoder/Codec接口导出+内置JSONCodec/XMLCodec
+  - `codec.go`, `input.go`, `output.go`, `codec_test.go`  
+  - `Typed`入口接受单侧 decoder/encoder
+  
+- [x] **阶段 2**: 绑定计划内核(replace POC v3→production)  
+  - `bind_plan.go`: buildBindPlan() + apply(req)  
+  - tag:path/query/header;无 tag 静默跳过;upload 支持
+  
+- [x] **阶段 3**: typed 入口矩阵(甲 -2 全拼命名)  
+  - GetNone/O, GetParams/P,O, DeleteParams/P,O  
+  - PostBody/B,O, PutBody/PatchBody/B,O  
+  - PostParamsBody/P,B,O, PutParamsBody, PatchParamsBody  
+
+- [x] **阶段 4**: Query 缓存与池化  
+  - `Request.queryCache`字段，Query() 首次解析后复用指针  
+  - `mux.go`重置 queryCache=nil供下一请求复用  
+  - Output 池化:现有 `compiledV4.out.encode`直接调 typed output 契约，已实现  
+    (但 noContent 仍需改进以追平 echo 的 zero-alloc)
+  
+- [x] **阶段 5**: LimitBody 中间件  
+  - `middleware.go`:LimitBody(maxBytes int64)Middleware  
+  - 检查 Content-Length 或包装 MaxBytesReader，超限 413  
+  - `middleware_test.go`单元测试  
+
+- [ ] **阶段 6**: 消除 reflect.ValueOf alloc + bindbench 复测  
+  - bind_plan.go 中的 `reflect.ValueOf(paramsPtr).Elem()`是必要开销，无法消除但不显著(注册期一次)  
+  - 需迁移 bindbench 到 v4 入口测量实际收益(当前只跑了旧 typed 体系)  
+  - TODO:创建 ghttp_v4_test.go 或使用 ghttpc_test.go 框架跑新基准  
+
+- [ ] **阶段 7**: 迁移 POC v3 测试 →正式版本;补文档;bindbench v4 场景  
+  - v4_test.go已有 7 个单元测试覆盖 Params/body/mixed/no-input  
+  - 待迁移：poc_c1v3_demo_test.go 的 7 场景 demo → 正式版 v4 用例  
+  - 文档:godoc 完善+v4 API README 章节  
