@@ -99,6 +99,36 @@ func registerParams[P, O any](r router, method, path string, out OutputSpec[O], 
 	return r.register(method, path, c.serve)
 }
 
+// ——— 无参数入口（仅输出，无 params 无 body）——
+
+// GetNone GET 专用入口：无 params 无 body，只返回输出。适用于健康检查等简单端点。
+// GetNone is the GET entry for endpoints without params or body, returning just output.
+// Suitable for health checks and simple endpoints.
+func GetNone[O any](r router, path string, out OutputSpec[O], h func(context.Context) (O, error)) error {
+	if out == nil {
+		return ErrMissingOutput
+	}
+	c := &compiledNone[O]{out: out, h: h}
+	return r.register(http.MethodGet, path, c.serve)
+}
+
+// compiledNone[O] 是无 params 无 body 的极简执行器：只调业务函数再编码输出。
+// compiledNone[O] is the minimal executor for endpoints without params or body:
+// calls business function then encodes output.
+type compiledNone[O any] struct {
+	out OutputSpec[O]
+	h   func(context.Context) (O, error)
+}
+
+func (e *compiledNone[O]) serve(ctx context.Context, req *Request, resp *Response) error {
+	out, err := e.h(ctx)
+	if err != nil {
+		return err
+	}
+	return e.out.encode(resp, out)
+}
+
+// ——— Post/Put/Patch 专用入口（params+body）——
 // ——— Post/Put/Patch 专用入口（params+body）——
 
 // PostParamsBody POST 专用入口：同时接收 params（path/query/header）与请求体（经 dec 解码）。
@@ -138,4 +168,60 @@ func registerParamsBody[P, B, O any](r router, method, path string, dec RequestD
 	}
 	c := &compiledV4Body[P, B, O]{plan: plan, dec: dec, out: out, h: h}
 	return r.register(method, path, c.serve)
+}
+
+// ——— 仅 body 入口（无 params）——
+
+// PostBody POST 专用入口：无 params，只接收请求体并解码。适用于创建资源。
+// PostBody is the POST entry with no params, only receiving a decoded body.
+// Suitable for resource creation endpoints.
+func PostBody[B, O any](r router, path string, dec RequestDecoder, out OutputSpec[O], h func(context.Context, B) (O, error)) error {
+	return registerBody(r, http.MethodPost, path, dec, out, h)
+}
+
+// compiledBody[B,O] 是仅 body 场景的执行器：params为空，只解码 body。
+// compiledBody[B,O] is the executor for body-only scenarios: params empty,
+// only decoding body.
+type compiledBody[B, O any] struct {
+	dec RequestDecoder
+	out OutputSpec[O]
+	h   func(context.Context, B) (O, error)
+}
+
+func (e *compiledBody[B, O]) serve(ctx context.Context, req *Request, resp *Response) error {
+	var b B
+	if err := e.dec.Decode(req, &b); err != nil {
+		return err
+	}
+	out, err := e.h(ctx, b)
+	if err != nil {
+		return err
+	}
+	return e.out.encode(resp, out)
+}
+
+// registerBody 是仅 body 入口的共享注册逻辑；dec 为 nil 时报 ErrMissingCodec。
+// registerBody is the shared registration logic for body-only entries; returns
+// ErrMissingCodec if dec is nil.
+func registerBody[B, O any](r router, method, path string, dec RequestDecoder, out OutputSpec[O], h func(context.Context, B) (O, error)) error {
+	if out == nil {
+		return ErrMissingOutput
+	}
+	if dec == nil {
+		return ErrMissingCodec
+	}
+	c := &compiledBody[B, O]{dec: dec, out: out, h: h}
+	return r.register(method, path, c.serve)
+}
+
+// PutBody PUT 专用入口（同 PostBody）。
+// PutBody PUT entry (same as PostBody).
+func PutBody[B, O any](r router, path string, dec RequestDecoder, out OutputSpec[O], h func(context.Context, B) (O, error)) error {
+	return registerBody(r, http.MethodPut, path, dec, out, h)
+}
+
+// PatchBody PATCH 专用入口（同 PostBody）。
+// PatchBody PATCH entry (same as PostBody).
+func PatchBody[B, O any](r router, path string, dec RequestDecoder, out OutputSpec[O], h func(context.Context, B) (O, error)) error {
+	return registerBody(r, http.MethodPatch, path, dec, out, h)
 }

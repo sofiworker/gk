@@ -152,3 +152,86 @@ func TestGetParams_UntaggedFieldSkipped(t *testing.T) {
 		t.Errorf("code=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+// ——— GetNone（无 params 无 body）——
+
+func TestGetNone_HealthCheck(t *testing.T) {
+	m := New()
+	if err := GetNone(m, "/health", JSON[v4Out](), func(ctx context.Context) (v4Out, error) {
+		return v4Out{ID: 1, Name: "ok"}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	m.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"name":"ok"`) {
+		t.Errorf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// ——— PostBody（仅 body，无 params）——
+
+func TestPostBody_NoParams(t *testing.T) {
+	m := New()
+	if err := PostBody(m, "/register", JSONBody(), JSON[v4Out]().Status(http.StatusCreated),
+		func(ctx context.Context, b v4Body) (v4Out, error) {
+			return v4Out{ID: 0, Name: b.Name}, nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/register", strings.NewReader(`{"name":"carol","email":"c@x.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	m.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"name":"carol"`) {
+		t.Errorf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// ——— PutBody 用 PUT method 注册（回归 method 委托 bug）——
+
+func TestPutBody_UsesPutMethod(t *testing.T) {
+	m := New()
+	if err := PutBody(m, "/replace", JSONBody(), JSON[v4Out](),
+		func(ctx context.Context, b v4Body) (v4Out, error) {
+			return v4Out{Name: b.Name}, nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+	// PUT 请求应命中
+	rec := httptest.NewRecorder()
+	m.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/replace", strings.NewReader(`{"name":"x"}`)))
+	if rec.Code != http.StatusOK {
+		t.Errorf("PUT should hit: code=%d", rec.Code)
+	}
+	// POST 请求不应命中（405 或 404），验证没有错误地注册成 POST
+	rec2 := httptest.NewRecorder()
+	m.ServeHTTP(rec2, httptest.NewRequest(http.MethodPost, "/replace", strings.NewReader(`{"name":"x"}`)))
+	if rec2.Code == http.StatusOK {
+		t.Errorf("POST should NOT hit a PUT route, but got 200 — method delegation bug")
+	}
+}
+
+// ——— XMLCodec 作为 body decoder（验证单侧可替换）——
+
+type v4XMLBody struct {
+	XMLName struct{} `xml:"user"`
+	Name    string   `xml:"name"`
+}
+
+func TestPostBody_XMLDecoder(t *testing.T) {
+	m := New()
+	if err := PostBody(m, "/xml", XMLCodec(), JSON[v4Out](),
+		func(ctx context.Context, b v4XMLBody) (v4Out, error) {
+			return v4Out{Name: b.Name}, nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/xml", strings.NewReader(`<user><name>xmluser</name></user>`))
+	req.Header.Set("Content-Type", "application/xml")
+	m.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"name":"xmluser"`) {
+		t.Errorf("XML decode failed: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
