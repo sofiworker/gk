@@ -1,6 +1,11 @@
 package ghttp
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"strconv"
+)
 
 // Handler 是执行链中的一环,与 compiledHandler.serve 同签名。typed 终端(compiled.serve)
 // 与 RawHandler 都归一为它,因此中间件对二者一视同仁,类型契约的解码/编码只发生在终端内部。
@@ -50,4 +55,31 @@ type router interface {
 	// register registers terminal (possibly partially folded by the caller) at
 	// method + path.
 	register(method, path string, terminal Handler) error
+}
+
+// LimitBody 是请求体大小限制中间件：超过 maxBytes 即返回 413 PayloadTooLarge,
+// 无需用户自行读取 Body 或判断 Content-Length。maxBytes<=0 时跳过校验(防御性)。
+// LimitBody is a request body size limit middleware: returns 413 PayloadTooLarge
+// when exceeding maxBytes, without requiring user to read Body or check
+// Content-Length. Skips validation defensively if maxBytes<=0.
+func LimitBody(maxBytes int64) Middleware {
+	if maxBytes <= 0 {
+		return func(next Handler) Handler {
+			return next // 无效参数，直接透传避免滥用
+		}
+	}
+	return func(next Handler) Handler {
+		return func(ctx context.Context, req *Request, resp *Response) error {
+			if cl := req.Header.Get("Content-Length"); cl != "" {
+				if clen, err := strconv.ParseInt(cl, 10, 64); err == nil && clen > maxBytes {
+					resp.WriteHeader(http.StatusRequestEntityTooLarge)
+					return fmt.Errorf("%w: %s (limit %d)", ErrInvalidInput, "request entity too large", maxBytes)
+				}
+			}
+			// 无 Content-Length 时，包装 Body 为 MaxBytesReader,解码期触发 413。
+			// no Content-Length: wrap Body in MaxBytesReader, triggers 413 during decode.
+			req.Body = http.MaxBytesReader(resp.ResponseWriter, req.Body, maxBytes)
+			return next(ctx, req, resp)
+		}
+	}
 }

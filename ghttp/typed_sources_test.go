@@ -105,3 +105,12 @@ func TestJSONBodyContentType(t *testing.T) {
 		t.Errorf("JSONBody ContentType = %q, want application/json", ct)
 	}
 }
+
+// doRequest 辅助函数：发送请求并返回记录器供断言。
+func doRequest(t *testing.T, m http.Handler, method, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(method, path, nil)
+	m.ServeHTTP(rec, req)
+	return rec
+}
