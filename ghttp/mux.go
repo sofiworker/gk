@@ -139,6 +139,7 @@ func (m *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	req := m.pool.Get().(*Request)
 	req.Request = r
+	req.queryCache = nil // 清空上一请求的 query cache。clear previous request cache.
 	req.Params.reset()
 	req.skipped = req.skipped[:0]
 
