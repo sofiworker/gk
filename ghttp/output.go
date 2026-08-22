@@ -78,8 +78,8 @@ func (o noContent[T]) encode(resp *Response, _ T) error {
 }
 
 // NoContent 返回一个无响应体输出契约(默认 204)。业务函数仍需返回一个 O 值(通常用
-// 占位类型如 NoBody),但不会被写出。
+// struct{} 之类的占位类型),但不会被写出。
 // NoContent returns a body-less output contract (default 204). The business
-// function still returns an O value (typically a placeholder like NoBody), which
-// is not written.
+// function still returns an O value (typically a placeholder like struct{}),
+// which is not written.
 func NoContent[T any]() noContent[T] { return noContent[T]{} }
