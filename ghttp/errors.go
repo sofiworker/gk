@@ -1,6 +1,9 @@
 package ghttp
 
-import "errors"
+import (
+	"errors"
+	"net/http"
+)
 
 // 注册期错误(骨架阶段先声明哨兵,后续阶段填充校验逻辑)。
 // Registration-time errors (sentinels declared now; validation logic lands in
@@ -54,4 +57,54 @@ var (
 	// so the caller and stage 4's error chain can distinguish "missing" from
 	// "type mismatch".
 	ErrMissingRequired = errors.New("ghttp: missing required field")
+)
+
+// 运行期/服务错误。
+// Runtime/server errors.
+var (
+	// ErrNotReady 表示就绪门闸尚未置为就绪,由 Ready 探针据此返回 503。
+	// ErrNotReady indicates a readiness gate is not yet ready; the Ready probe
+	// returns 503 based on it.
+	ErrNotReady = errors.New("ghttp: not ready")
+
+	// ErrServerClosed 是 Serve 系方法在正常关闭后返回的哨兵,等价于
+	// http.ErrServerClosed。导出以供调用方 errors.Is 判断"正常关闭"而非异常。
+	// ErrServerClosed is the sentinel returned by the Serve family after a clean
+	// shutdown; it aliases http.ErrServerClosed. Exported so callers can errors.Is
+	// it to distinguish a normal close from a failure.
+	ErrServerClosed = http.ErrServerClosed
+
+	// ErrServerStarted 表示 Server 已启动,再次启动(重复启动)失败。
+	// ErrServerStarted indicates the Server was already started, so starting it
+	// again fails.
+	ErrServerStarted = errors.New("ghttp: server already started")
+
+	// ErrServerNotStartable 表示 Server 已关闭(经 Shutdown 或 Close),不可再启动。
+	// 与 ErrServerClosed 区分:后者表示一次正常关闭的【结果】,本错误表示生命周期
+	// 阶段错误——试图复用一个已终结的 Server。
+	// ErrServerNotStartable indicates the Server is already closed (via Shutdown or
+	// Close) and cannot be started again. Distinct from ErrServerClosed: the latter
+	// is the OUTCOME of a clean close, while this is a lifecycle error — attempting
+	// to reuse a terminated Server.
+	ErrServerNotStartable = errors.New("ghttp: server already closed")
+
+	// ErrEngineNotStarted 表示未先经 Engine.Run/RunTLS 启动就调用 Engine.Shutdown。
+	// ErrEngineNotStarted indicates Engine.Shutdown was called before the engine was
+	// started via Engine.Run/RunTLS.
+	ErrEngineNotStarted = errors.New("ghttp: engine not started via Run/RunTLS")
+
+	// ErrTLSConfig 表示 TLS 配置不足:ServeTLS/ListenAndServeTLS 既未注入含证书的
+	// TLSConfig,也未提供 certFile/keyFile。调用方可经 errors.Is 判定 TLS 校验失败。
+	// ErrTLSConfig indicates insufficient TLS configuration: ServeTLS/
+	// ListenAndServeTLS was given neither a TLSConfig with certificates nor
+	// certFile/keyFile. Callers can errors.Is it to detect a TLS-validation failure.
+	ErrTLSConfig = errors.New("ghttp: TLS requires certFile and keyFile, or a TLSConfig")
+
+	// ErrHandlerPanic 是无 Recovery 中间件时,最外层兜底 recover 把 handler panic
+	// 收敛成的错误(经统一错误链写 500)。调用方可经 errors.Is 区分 panic 与普通错误。
+	// ErrHandlerPanic is the error the outermost safety-net recover collapses a
+	// handler panic into when no Recovery middleware is present (written as 500 via
+	// the unified error chain). Callers can errors.Is it to distinguish a panic from
+	// an ordinary error.
+	ErrHandlerPanic = errors.New("ghttp: handler panicked")
 )
