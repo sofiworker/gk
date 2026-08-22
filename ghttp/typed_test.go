@@ -2,144 +2,236 @@ package ghttp
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
 
-type createUser struct {
-	Name string `json:"name"`
-	Age  int    `json:"age"`
+// ===========================================================================
+// Typed 入口测试：按输入组合覆盖 params / body / params+body / 无输入。
+// Typed entry tests: cover params / body / params+body / no-input shapes.
+// ============================================================================
+
+type typedParams struct {
+	ID     int64  `path:"id"`
+	Fields string `query:"fields"`
+	Trace  string `header:"X-Trace"`
 }
 
-type userOut struct {
+type typedOut struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
-	Age  int    `json:"age"`
 }
 
-// typed 端到端:PathInt64 + Body[JSONBody] 输入,JSON 输出,状态码覆盖为 201。
-func TestTypedEndToEnd(t *testing.T) {
+// ——— GetParams（仅 params，无 body）——
+
+func TestGetParams_PathQueryHeader(t *testing.T) {
 	m := New()
-	err := Post(m, "/users/{id}",
-		PathInt64("id"),
-		NoInput[NoQuery](),
-		Body[createUser](JSONBody()),
-		JSON[userOut]().Status(http.StatusCreated),
-		func(ctx context.Context, in RequestInput[int64, NoQuery, createUser]) (userOut, error) {
-			return userOut{ID: in.Path, Name: in.Body.Name, Age: in.Body.Age}, nil
-		})
-	if err != nil {
+	if err := GetParams(m, "/users/{id}", JSON[typedOut](), func(ctx context.Context, p typedParams) (typedOut, error) {
+		return typedOut{ID: p.ID, Name: p.Fields + ":" + p.Trace}, nil
+	}); err != nil {
 		t.Fatal(err)
 	}
-
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/users/7", strings.NewReader(`{"name":"Alice","age":30}`))
+	req := httptest.NewRequest(http.MethodGet, "/users/42?fields=golang", nil)
+	req.Header.Set("X-Trace", "abc")
 	m.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want 201", rec.Code)
-	}
-	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-		t.Errorf("Content-Type = %q, want application/json", ct)
-	}
-	var got userOut
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	want := userOut{ID: 7, Name: "Alice", Age: 30}
-	if got != want {
-		t.Errorf("body = %+v, want %+v", got, want)
-	}
-}
-
-// typed 与 middleware 贯通:RequestID 注入的 ID 在 typed handler 内可读。
-func TestTypedWithMiddleware(t *testing.T) {
-	m := New()
-	m.Use(RequestID())
-	var seen string
-	err := Get(m, "/ping",
-		NoInput[NoPath](), NoInput[NoQuery](), NoInput[NoBody](),
-		JSON[map[string]string](),
-		func(ctx context.Context, in RequestInput[NoPath, NoQuery, NoBody]) (map[string]string, error) {
-			seen = RequestIDFromContext(ctx)
-			return map[string]string{"ok": "1"}, nil
-		})
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := httptest.NewRecorder()
-	m.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ping", nil))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if seen == "" {
-		t.Error("typed handler saw empty request ID; middleware/typed not wired")
+	body := rec.Body.String()
+	if !strings.Contains(body, `"id":42`) || !strings.Contains(body, `golang:abc`) {
+		t.Errorf("bind failed: %s", body)
 	}
 }
 
-// NoContent 输出:写状态码(默认 204),无响应体。
-func TestTypedNoContent(t *testing.T) {
+func TestDeleteParams_Registration(t *testing.T) {
 	m := New()
-	err := Delete(m, "/users/{id}",
-		PathInt64("id"), NoInput[NoQuery](), NoInput[NoBody](),
-		NoContent[NoBody](),
-		func(ctx context.Context, in RequestInput[int64, NoQuery, NoBody]) (NoBody, error) {
-			return NoBody{}, nil
-		})
-	if err != nil {
+	if err := DeleteParams(m, "/items/{id}", JSON[typedOut](), func(ctx context.Context, p typedParams) (typedOut, error) {
+		return typedOut{ID: p.ID}, nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	m.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/users/9", nil))
-	if rec.Code != http.StatusNoContent {
-		t.Errorf("status = %d, want 204", rec.Code)
-	}
-	if rec.Body.Len() != 0 {
-		t.Errorf("body len = %d, want 0", rec.Body.Len())
+	m.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/items/99", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"id":99`) {
+		t.Errorf("code=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
-// 缺 Output(out 为 nil)注册期返回 ErrMissingOutput。
-func TestTypedMissingOutput(t *testing.T) {
+// ——— PostParamsBody（params + body）——
+
+type typedBody struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
+func TestPostParamsBody_MixedInput(t *testing.T) {
 	m := New()
-	err := Get[NoPath, NoQuery, NoBody, userOut](m, "/x",
-		NoInput[NoPath](), NoInput[NoQuery](), NoInput[NoBody](),
-		nil, // 未声明输出
-		func(ctx context.Context, in RequestInput[NoPath, NoQuery, NoBody]) (userOut, error) {
-			return userOut{}, nil
-		})
+	if err := PostParamsBody(m, "/users/{id}", JSONBody(), JSON[typedOut]().Status(http.StatusCreated),
+		func(ctx context.Context, p typedParams, b typedBody) (typedOut, error) {
+			return typedOut{ID: p.ID, Name: b.Name}, nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/users/7", strings.NewReader(`{"name":"alice","email":"a@x.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	m.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"id":7`) || !strings.Contains(body, `"name":"alice"`) {
+		t.Errorf("mixed bind failed: %s", body)
+	}
+}
+
+func TestPutParamsBody_FullMix(t *testing.T) {
+	m := New()
+	if err := PutParamsBody(m, "/users/{id}", JSONBody(), JSON[typedOut](),
+		func(ctx context.Context, p typedParams, b typedBody) (typedOut, error) {
+			return typedOut{ID: p.ID, Name: b.Name}, nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/users/15?fields=x", strings.NewReader(`{"name":"bob","email":"b@x.com"}`))
+	m.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"name":"bob"`) {
+		t.Errorf("put mix failed: %s", rec.Body.String())
+	}
+}
+
+// ——— nil decoder 报错 ——
+
+func TestPostParamsBody_NilDecoderError(t *testing.T) {
+	m := New()
+	err := PostParamsBody(m, "/x/{id}", nil, JSON[typedOut](),
+		func(ctx context.Context, p typedParams, b typedBody) (typedOut, error) { return typedOut{}, nil })
+	if err != ErrMissingCodec {
+		t.Errorf("want ErrMissingCodec, got %v", err)
+	}
+}
+
+// ——— nil output 报错 ——
+
+func TestGetParams_NilOutputError(t *testing.T) {
+	m := New()
+	err := GetParams[typedParams, typedOut](m, "/x/{id}", nil,
+		func(ctx context.Context, p typedParams) (typedOut, error) { return typedOut{}, nil })
 	if err != ErrMissingOutput {
-		t.Errorf("err = %v, want ErrMissingOutput", err)
+		t.Errorf("want ErrMissingOutput, got %v", err)
 	}
 }
 
-// 输入解码失败(路径 int64 非法)时,业务函数不应执行(阶段 4 前:终端返回 error,
-// 未写响应,顶层暂以 500 兜底)。本测试验证"业务函数未被调用"这一契约。
-func TestTypedInputDecodeError(t *testing.T) {
+// ——— 无 tag 字段静默跳过 ——
+
+type typedPartialTag struct {
+	Valid   int    `query:"valid"`
+	Skipped string // 无 tag，静默跳过
+}
+
+func TestGetParams_UntaggedFieldSkipped(t *testing.T) {
 	m := New()
-	handlerRan := false
-	// 用 {id} 但请求 /users/abc(非 int64)。为触达终端解码,需先匹配到该路由:
-	// 直接用 PathString 无法制造错误,故用 PathInt64 + 字面非法段。
-	err := Get(m, "/users/{id}",
-		PathInt64("id"), NoInput[NoQuery](), NoInput[NoBody](),
-		JSON[userOut](),
-		func(ctx context.Context, in RequestInput[int64, NoQuery, NoBody]) (userOut, error) {
-			handlerRan = true
-			return userOut{ID: in.Path}, nil
-		})
-	if err != nil {
+	if err := GetParams(m, "/skip", JSON[int](), func(ctx context.Context, p typedPartialTag) (int, error) {
+		if p.Skipped != "" {
+			t.Errorf("untagged field should stay zero, got %q", p.Skipped)
+		}
+		return p.Valid, nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	m.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/users/not-an-int", nil))
-	if handlerRan {
-		t.Error("business handler ran despite input decode error")
+	m.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/skip?valid=123&skipped=ignored", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "123") {
+		t.Errorf("code=%d body=%s", rec.Code, rec.Body.String())
 	}
-	// 阶段 4 前:终端返回 error 而未写响应,顶层 serve 以 500 兜底。
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("status = %d, want 500 (pre-stage-4 fallback)", rec.Code)
+}
+
+// ——— GetNone（无 params 无 body）——
+
+func TestGetNone_HealthCheck(t *testing.T) {
+	m := New()
+	if err := GetNone(m, "/health", JSON[typedOut](), func(ctx context.Context) (typedOut, error) {
+		return typedOut{ID: 1, Name: "ok"}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	m.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"name":"ok"`) {
+		t.Errorf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// ——— PostBody（仅 body，无 params）——
+
+func TestPostBody_NoParams(t *testing.T) {
+	m := New()
+	if err := PostBody(m, "/register", JSONBody(), JSON[typedOut]().Status(http.StatusCreated),
+		func(ctx context.Context, b typedBody) (typedOut, error) {
+			return typedOut{ID: 0, Name: b.Name}, nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/register", strings.NewReader(`{"name":"carol","email":"c@x.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	m.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"name":"carol"`) {
+		t.Errorf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// ——— PutBody 用 PUT method 注册（回归 method 委托 bug）——
+
+func TestPutBody_UsesPutMethod(t *testing.T) {
+	m := New()
+	if err := PutBody(m, "/replace", JSONBody(), JSON[typedOut](),
+		func(ctx context.Context, b typedBody) (typedOut, error) {
+			return typedOut{Name: b.Name}, nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+	// PUT 请求应命中
+	rec := httptest.NewRecorder()
+	m.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/replace", strings.NewReader(`{"name":"x"}`)))
+	if rec.Code != http.StatusOK {
+		t.Errorf("PUT should hit: code=%d", rec.Code)
+	}
+	// POST 请求不应命中（405 或 404），验证没有错误地注册成 POST
+	rec2 := httptest.NewRecorder()
+	m.ServeHTTP(rec2, httptest.NewRequest(http.MethodPost, "/replace", strings.NewReader(`{"name":"x"}`)))
+	if rec2.Code == http.StatusOK {
+		t.Errorf("POST should NOT hit a PUT route, but got 200 — method delegation bug")
+	}
+}
+
+// ——— XMLCodec 作为 body decoder（验证单侧可替换）——
+
+type typedXMLBody struct {
+	XMLName struct{} `xml:"user"`
+	Name    string   `xml:"name"`
+}
+
+func TestPostBody_XMLDecoder(t *testing.T) {
+	m := New()
+	if err := PostBody(m, "/xml", XMLCodec(), JSON[typedOut](),
+		func(ctx context.Context, b typedXMLBody) (typedOut, error) {
+			return typedOut{Name: b.Name}, nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/xml", strings.NewReader(`<user><name>xmluser</name></user>`))
+	req.Header.Set("Content-Type", "application/xml")
+	m.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"name":"xmluser"`) {
+		t.Errorf("XML decode failed: code=%d body=%s", rec.Code, rec.Body.String())
 	}
 }

@@ -68,6 +68,13 @@ func (jsonCodec) Encode(resp *Response, v any) error {
 // ResponseEncoder (a full Codec). Pass it whole, or use just one side.
 func JSONCodec() Codec { return jsonCodec{} }
 
+// JSONBody 返回一个 JSON 请求体解码器,供 PostBody/PostParamsBody 等入口的 dec 参数使用。
+// 等价于 JSONCodec() 的解码侧,是 params+body / body-only 入口最常用的 dec。
+// JSONBody returns a JSON request-body decoder for the dec parameter of entries
+// like PostBody/PostParamsBody. Equivalent to the decode side of JSONCodec(),
+// it is the most common dec for params+body / body-only entries.
+func JSONBody() RequestDecoder { return jsonCodec{} }
+
 // xmlCodec 用标准库 encoding/xml 实现 XML 的解码与编码,解码同样流式。
 // xmlCodec implements XML decoding and encoding with the standard encoding/xml;
 // decoding likewise streams.

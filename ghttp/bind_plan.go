@@ -37,17 +37,13 @@ type BindPlan struct {
 	steps      []bindStep
 	uploadIdx  int
 	uploadName string
-	isNone     bool // params类型是 NoInput(无 params 槽)
 }
 
-// buildBindPlan 注册期反射遍历 params 结构体建计划。NoInput 返回空计划；无 tag 字段静默跳过。
-// buildBindPlan reflects over params struct at registration; NoInput yields empty plan; untagged fields skipped.
+// buildBindPlan 注册期反射遍历 params 结构体建计划；无 tag 字段静默跳过。空结构体产出空计划。
+// buildBindPlan reflects over params struct at registration; untagged fields are
+// skipped. An empty struct yields an empty plan.
 func buildBindPlan(t reflect.Type) (*BindPlan, error) {
 	plan := &BindPlan{uploadIdx: -1}
-	if t == reflect.TypeOf(noInput{}) {
-		plan.isNone = true
-		return plan, nil
-	}
 	if t.Kind() != reflect.Struct {
 		return nil, fmt.Errorf("%w: params must be struct, got %v", ErrInvalidParam, t.Kind())
 	}
@@ -87,7 +83,7 @@ func buildBindPlan(t reflect.Type) (*BindPlan, error) {
 // apply 请求期跑计划：query 由调用方预解析一次传入（避免重复 URL.Query()开销）。
 // apply executes the plan at request time: query pre-parsed once by caller (avoids repeated URL.Query() cost).
 func (p *BindPlan) apply(req *Request, query url.Values, paramsPtr any) error {
-	if p.isNone || (len(p.steps) == 0 && p.uploadIdx < 0) {
+	if len(p.steps) == 0 && p.uploadIdx < 0 {
 		return nil
 	}
 	v := reflect.ValueOf(paramsPtr).Elem()
@@ -146,10 +142,6 @@ func bindSrcName(src bindSrc) string {
 	}
 	return "?"
 }
-
-// noInput 是无 params 槽的占位类型（仅用于内部执行器的类型参数，入口层不暴露它）。
-// noInput is a no-params placeholder used internally in executors; not exposed at entry layer.
-type noInput struct{}
 
 // Upload 承接一个 multipart 上传文件。params 结构体放此类型字段即自动绑定。
 // Upload receives one multipart uploaded file; include this field type in params struct to auto-bind.

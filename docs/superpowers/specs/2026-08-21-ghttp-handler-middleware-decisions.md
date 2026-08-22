@@ -1,6 +1,6 @@
 # ghttp handler / middleware 执行模型拍板（阶段 1 前置）
 
-- 状态：**已拍板**，据此实现。取代 `2026-08-19-ghttp-internal-new-typed-rewrite.md` §10 的 T1–T4「待评审」，并补齐该设计 §5.2 只一句话带过的**中间件类型契约**。
+- 状态：**已拍板**，据此实现。锁定 handler/middleware 执行模型的类型契约。
 - 背景：地基（阶段 0/0.5，提交 `451463f`）已落地纯 net/http + gin 算法路由，执行签名收敛为
   `serve(ctx context.Context, req *Request, resp *Response) error`，**已无 `*Ctx`**。本文据此
   定死 handler 与 middleware 的类型模型，避免倒退回被删的 gin 式 `*Ctx`+`Next()` 双模型。

@@ -75,13 +75,16 @@ func TestResponsePoolHygiene(t *testing.T) {
 }
 
 // 并发命中 typed 路由,-race 下无竞争、参数无跨协程串扰。
+// Concurrent hits on a typed route: no race under -race, params do not leak
+// across goroutines.
 func TestConcurrentTypedHits(t *testing.T) {
+	type idParam struct {
+		ID int64 `path:"id"`
+	}
 	m := New()
-	if err := Get(m, "/users/{id}",
-		PathInt64("id"), NoInput[NoQuery](), NoInput[NoBody](),
-		JSON[int64](),
-		func(ctx context.Context, in RequestInput[int64, NoQuery, NoBody]) (int64, error) {
-			return in.Path, nil
+	if err := GetParams(m, "/users/{id}", JSON[int64](),
+		func(ctx context.Context, p idParam) (int64, error) {
+			return p.ID, nil
 		}); err != nil {
 		t.Fatal(err)
 	}
@@ -105,4 +108,15 @@ func TestConcurrentTypedHits(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// doRequest 辅助函数：发送请求并返回记录器供断言。
+// doRequest is a helper that issues a request and returns the recorder for
+// assertions.
+func doRequest(t *testing.T, m http.Handler, method, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(method, path, nil)
+	m.ServeHTTP(rec, req)
+	return rec
 }

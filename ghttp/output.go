@@ -4,6 +4,15 @@ import (
 	"net/http"
 )
 
+// OutputSpec 是输出契约:注册期固定格式/状态码,encode 在请求期写响应。(Out, error)
+// 不默认 JSON、不默认 200,格式与状态码必须显式声明。
+// OutputSpec is the output contract: format/status fixed at registration, encode
+// writes the response at request time. (Out, error) defaults to neither JSON nor
+// 200; format and status must be declared explicitly.
+type OutputSpec[T any] interface {
+	encode(resp *Response, v T) error
+}
+
 // jsonOutput 以 JSON 编码输出 T,状态码可经 Status 覆盖(默认 200)。默认用内置 JSONCodec
 // 编码,也可经 WithEncoder 替换为任意 ResponseEncoder(自定义 JSON 库、XML、模板等)。
 // jsonOutput encodes T as JSON; status overridable via Status (default 200).

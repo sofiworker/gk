@@ -10,9 +10,9 @@ import (
 )
 
 // ===========================================================================
-// v4 typed 入口基准：测量甲 -2 入口的端到端绑定+编码开销，含 alloc 归因。
-// v4 typed entry benchmarks: measures the v4-style entries' end-to-end binding +
-// encoding cost, with allocation attribution.
+// Typed 入口基准：测量端到端绑定+编码开销，含 alloc 归因。
+// Typed entry benchmarks: measures end-to-end binding + encoding cost, with
+// allocation attribution.
 // ===========================================================================
 
 type benchParams struct {
@@ -44,8 +44,8 @@ type benchOut struct {
 	Name string `json:"name"`
 }
 
-// BenchmarkV4GetParamsSmall 测量 1 path + 2 query 的绑定+输出编码。
-func BenchmarkV4GetParamsSmall(b *testing.B) {
+// BenchmarkTypedGetParamsSmall 测量 1 path + 2 query 的绑定+输出编码。
+func BenchmarkTypedGetParamsSmall(b *testing.B) {
 	m := New()
 	_ = GetParams(m, "/users/{id}", JSON[benchOut](), func(ctx context.Context, p benchParams) (benchOut, error) {
 		return benchOut{ID: p.ID, Name: p.Filter}, nil
@@ -59,8 +59,8 @@ func BenchmarkV4GetParamsSmall(b *testing.B) {
 	}
 }
 
-// BenchmarkV4GetParamsLarge 测量 1 path + 5 query + 3 header 的绑定+输出编码。
-func BenchmarkV4GetParamsLarge(b *testing.B) {
+// BenchmarkTypedGetParamsLarge 测量 1 path + 5 query + 3 header 的绑定+输出编码。
+func BenchmarkTypedGetParamsLarge(b *testing.B) {
 	m := New()
 	_ = GetParams(m, "/users/{id}", JSON[benchOut](), func(ctx context.Context, p benchLargeParams) (benchOut, error) {
 		return benchOut{ID: p.ID, Name: p.Filter}, nil
@@ -77,10 +77,10 @@ func BenchmarkV4GetParamsLarge(b *testing.B) {
 	}
 }
 
-// BenchmarkV4PostParamsBody 测量 1 path + body 解码 + 输出编码。
+// BenchmarkTypedPostParamsBody 测量 1 path + body 解码 + 输出编码。
 // 用预建 request + 每轮重置 body reader,剔除 httptest.NewRequest 的构造 alloc,
 // 只测框架绑定/解码/编码开销。
-func BenchmarkV4PostParamsBody(b *testing.B) {
+func BenchmarkTypedPostParamsBody(b *testing.B) {
 	m := New()
 	_ = PostParamsBody(m, "/users/{id}", JSONBody(), JSON[benchOut](), func(ctx context.Context, p benchParams, body benchBody) (benchOut, error) {
 		return benchOut{ID: p.ID, Name: body.Name}, nil
@@ -96,8 +96,8 @@ func BenchmarkV4PostParamsBody(b *testing.B) {
 	}
 }
 
-// BenchmarkV4PostBody 测量仅 body 解码 + 输出编码（无 params）。
-func BenchmarkV4PostBody(b *testing.B) {
+// BenchmarkTypedPostBody 测量仅 body 解码 + 输出编码（无 params）。
+func BenchmarkTypedPostBody(b *testing.B) {
 	m := New()
 	_ = PostBody(m, "/register", JSONBody(), JSON[benchOut](), func(ctx context.Context, body benchBody) (benchOut, error) {
 		return benchOut{Name: body.Name}, nil
@@ -113,8 +113,8 @@ func BenchmarkV4PostBody(b *testing.B) {
 	}
 }
 
-// BenchmarkV4GetNone 测量无 params 无 body 的纯输出编码。
-func BenchmarkV4GetNone(b *testing.B) {
+// BenchmarkTypedGetNone 测量无 params 无 body 的纯输出编码。
+func BenchmarkTypedGetNone(b *testing.B) {
 	m := New()
 	_ = GetNone(m, "/health", JSON[benchOut](), func(ctx context.Context) (benchOut, error) {
 		return benchOut{ID: 1, Name: "ok"}, nil
