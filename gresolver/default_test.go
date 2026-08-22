@@ -3,6 +3,7 @@ package gresolver
 import (
 	"context"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -74,7 +75,10 @@ func TestLookupCNAME(t *testing.T) {
 }
 
 type testDNSServer struct {
-	conn     net.PacketConn
+	conn net.PacketConn
+	// mu 保护 recordsA/cnames：serve goroutine 读、测试主体写。
+	// mu guards recordsA/cnames: read by the serve goroutine, written by the test body.
+	mu       sync.RWMutex
 	recordsA map[string][4]byte
 	cnames   map[string]string
 }
@@ -105,10 +109,14 @@ func (s *testDNSServer) address() string {
 }
 
 func (s *testDNSServer) answerA(name string, ip [4]byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.recordsA[name] = ip
 }
 
 func (s *testDNSServer) answerCNAME(name, target string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.cnames[name] = target
 }
 
@@ -138,7 +146,10 @@ func (s *testDNSServer) serve() {
 		name := question.Name.String()
 		switch question.Type {
 		case dnsmessage.TypeA:
-			if ip, ok := s.recordsA[name]; ok {
+			s.mu.RLock()
+			ip, ok := s.recordsA[name]
+			s.mu.RUnlock()
+			if ok {
 				resp.Answers = append(resp.Answers, dnsmessage.Resource{
 					Header: dnsmessage.ResourceHeader{
 						Name:  question.Name,
@@ -150,7 +161,10 @@ func (s *testDNSServer) serve() {
 				})
 			}
 		case dnsmessage.TypeCNAME:
-			if target, ok := s.cnames[name]; ok {
+			s.mu.RLock()
+			target, ok := s.cnames[name]
+			s.mu.RUnlock()
+			if ok {
 				cname, err := dnsmessage.NewName(target)
 				if err == nil {
 					resp.Answers = append(resp.Answers, dnsmessage.Resource{
