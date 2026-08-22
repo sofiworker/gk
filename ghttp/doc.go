@@ -17,23 +17,32 @@
 // hatch; a pure net/http foundation with no fasthttp or self-managed TCP;
 // performance comes only from pooled contexts and zero-reflection codecs.
 //
-// # 引擎与中间件模型 / Engine and middleware model
+// # Server 与中间件模型 / Server and middleware model
 //
-// New 返回 *Engine（Mux 为其兼容别名）。Engine 既是 http.Handler，又自带一步式
-// Run / RunTLS / Shutdown（gin 风格），无需显式构造 Server；需要精细控制底层
-// http.Server 时再用 NewServer(engine, opts...)。全局中间件经 Use 追加，在 ServeHTTP
-// 期组装到统一分发器外层（gin 语义），因此对【所有】请求生效——包括未命中路由与未
-// 注册 OPTIONS 的预检。这意味着 CORS 等横切中间件用普通 Use 即可正确处理预检，无需
-// 任何路由前包装。无全局中间件时走零开销直连路径；有则把链折叠一次并缓存，请求期零组装。
-// New returns an *Engine (Mux is its compatibility alias). Engine is both an
-// http.Handler and carries one-liner Run / RunTLS / Shutdown (gin-style), needing
-// no explicit Server; use NewServer(engine, opts...) for fine-grained http.Server
-// control. Global middleware appended via Use is assembled around a unified
+// New 返回 *Server —— 本包唯一的顶层类型，它【就是】一个 HTTP server：内部组合路由
+// 核心与 *http.Server，用户在它上面挂中间件、注册路由，然后 Run / Shutdown，不必再
+// 认识第二个类型。它同时实现 http.Handler，可直接塞进 httptest 或他人的 http.Server。
+//
+// 全局中间件经 Server.Use 追加，在 ServeHTTP 期组装到统一分发器外层（gin 语义），
+// 因此对【所有】请求生效——包括未命中路由与未注册 OPTIONS 的预检。这意味着 CORS 等
+// 横切中间件用普通 Use 即可正确处理预检，无需任何路由前包装。分组中间件（Group）只
+// 折叠自己那几层，与全局相加即该路由的完整链，各执行一次。无全局中间件时走零开销直连
+// 路径；有则把链折叠一次并缓存，请求期零组装、零额外分配。
+//
+// New returns a *Server — this package's only top-level type. It IS an HTTP
+// server: internally composing the routing core and an *http.Server, so users
+// attach middleware, register routes, then Run / Shutdown on it without meeting a
+// second type. It also implements http.Handler and drops straight into httptest or
+// someone else's http.Server.
+//
+// Global middleware appended via Server.Use is assembled around a unified
 // dispatcher at ServeHTTP time (gin semantics), so it applies to ALL requests —
 // including route misses and unregistered-OPTIONS preflight. Thus cross-cutting
 // middleware like CORS handles preflight via a plain Use, with no pre-routing
-// wrapper. With no global middleware it takes a zero-overhead direct path; with it,
-// the chain is folded once and cached, assembling nothing per request.
+// wrapper. Group middleware folds only its own layers; together with the global
+// stack it forms the route's complete chain, each running exactly once. With no
+// global middleware it takes a zero-overhead direct path; with it, the chain is
+// folded once and cached, assembling nothing and allocating nothing per request.
 //
 // # 生产能力 / Production capabilities
 //
@@ -41,9 +50,9 @@
 // Beyond routing and typed entries, the package ships the pieces needed to run a
 // real service:
 //
-//   - 启动与关闭：Engine.Run / RunTLS（一步式，超时等经 ServerOption 透传）、
-//     Engine.Shutdown（优雅关闭）；或 NewServer 走底层 http.Server 精细控制
-//     （ListenAndServeTLS / Serve / ServeTLS / Close / WithTLSConfig 等）。
+//   - 启动与关闭：Server.Run / RunTLS（按地址监听）、Serve / ServeTLS（复用已有
+//     net.Listener）、Shutdown（优雅关闭）、Close（强制关闭）；超时、TLS、
+//     BaseContext 等经 New 的 Option 配置。
 //
 //   - 中间件：RequestID、Logger、LimitBody 之外，另有 Recovery（panic→500 且不
 //     泄露细节）、CORS（含预检）、Timeout（协作式，尊重池化生命周期）。
@@ -54,9 +63,9 @@
 //   - 健康检查：Health（liveness）、Ready（readiness，多 Checker）、
 //     NewReadinessGate（运行时开关，用于启动完成/开始排水）。
 //
-//   - Startup/shutdown: Engine.Run / RunTLS (one-liner, timeouts via ServerOption)
-//     and Engine.Shutdown (graceful); or NewServer for fine-grained http.Server
-//     control (ListenAndServeTLS / Serve / ServeTLS / Close / WithTLSConfig, ...).
+//   - Startup/shutdown: Server.Run / RunTLS (listen on an address), Serve /
+//     ServeTLS (reuse an existing net.Listener), Shutdown (graceful), and Close
+//     (forced); timeouts, TLS, and BaseContext are configured via New's Options.
 //
 //   - Middleware: besides RequestID, Logger, LimitBody, there are Recovery
 //     (panic→500 without leaking details), CORS (with preflight), and Timeout

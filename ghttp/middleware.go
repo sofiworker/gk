@@ -45,9 +45,9 @@ func chain(terminal Handler, mws []Middleware) Handler {
 	return terminal
 }
 
-// router 是包内密封接口,统一 Mux 与 Group 的注册入口,使泛型自由函数 Handle/Get/...
+// router 是包内密封接口,统一 Server 与 Group 的注册入口,使泛型自由函数 Handle/Get/...
 // 能对二者通用。register 收到的是 typed 或 raw 终端,由实现方按需再叠加自己的中间件栈。
-// router is the package-sealed registration interface unifying Mux and Group, so
+// router is the package-sealed registration interface unifying Server and Group, so
 // the generic free functions Handle/Get/... work against both. register receives
 // a typed or raw terminal; the implementation layers its own middleware stack.
 type router interface {

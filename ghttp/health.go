@@ -37,7 +37,7 @@ type Checker struct {
 // Health registers a liveness probe (GET/HEAD) at path, always returning 200 with
 // {"status":"ok"}. For a K8s livenessProbe: it only signals the process is alive
 // and does not check dependencies.
-func Health(m *Mux, path string) error {
+func Health(m *Server, path string) error {
 	handler := func(ctx context.Context, req *Request, resp *Response) error {
 		writeJSON(resp, http.StatusOK, map[string]string{"status": "ok"})
 		return nil
@@ -52,7 +52,7 @@ func Health(m *Mux, path string) error {
 // returning 200 if all pass and 503 if any fails. The JSON body reports each
 // check's status. For a K8s readinessProbe. A checkTimeout<=0 imposes no per-check
 // timeout.
-func Ready(m *Mux, path string, checkTimeout time.Duration, checks ...Checker) error {
+func Ready(m *Server, path string, checkTimeout time.Duration, checks ...Checker) error {
 	handler := func(ctx context.Context, req *Request, resp *Response) error {
 		result := runChecks(ctx, checkTimeout, checks)
 		code := http.StatusOK
@@ -108,7 +108,7 @@ func runChecks(ctx context.Context, timeout time.Duration, checks []Checker) rea
 
 // registerProbe 为探针路径注册 GET 与 HEAD。
 // registerProbe registers GET and HEAD for a probe path.
-func registerProbe(m *Mux, path string, h Handler) error {
+func registerProbe(m *Server, path string, h Handler) error {
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		if err := m.RawHandle(method, path, RawHandlerFunc(h)); err != nil {
 			return err
@@ -133,11 +133,11 @@ func LivenessChecker(name string) Checker {
 	return Checker{Name: name, Check: func(context.Context) error { return nil }}
 }
 
-// atomicReady 是一个可运行时切换的就绪门闸：适合“启动完成/开始排水”场景。
+// ReadinessGate 是一个可运行时切换的就绪门闸：适合“启动完成/开始排水”场景。
 // 它以 Checker 形式接入 Ready，通过 Set 在运行时开关。
-// atomicReady is a runtime-toggleable readiness gate for "startup complete / begin
+// ReadinessGate is a runtime-toggleable readiness gate for "startup complete / begin
 // draining" scenarios. It plugs into Ready as a Checker and toggles via Set.
-type atomicReady struct {
+type ReadinessGate struct {
 	mu    sync.RWMutex
 	ready bool
 	err   error
@@ -146,8 +146,8 @@ type atomicReady struct {
 // NewReadinessGate 返回一个初始未就绪的门闸与其 Checker。调用 Set(true,nil) 置为就绪。
 // NewReadinessGate returns an initially-not-ready gate and its Checker. Call
 // Set(true, nil) to mark ready.
-func NewReadinessGate(name string) (*atomicReady, Checker) {
-	g := &atomicReady{err: ErrNotReady}
+func NewReadinessGate(name string) (*ReadinessGate, Checker) {
+	g := &ReadinessGate{err: ErrNotReady}
 	c := Checker{Name: name, Check: func(context.Context) error {
 		g.mu.RLock()
 		defer g.mu.RUnlock()
@@ -163,7 +163,7 @@ func NewReadinessGate(name string) (*atomicReady, Checker) {
 // （nil 时回退到 ErrNotReady）。
 // Set toggles the gate: ready=true marks ready; when ready=false, cause is the
 // not-ready reason (falling back to ErrNotReady when nil).
-func (g *atomicReady) Set(ready bool, cause error) {
+func (g *ReadinessGate) Set(ready bool, cause error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.ready = ready

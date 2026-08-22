@@ -463,3 +463,116 @@ func TestPanic_RecoveryCatchesThroughChain(t *testing.T) {
 		t.Errorf("captured=%v, want 'deep boom' (panic must bubble through inner MW to Recovery)", got.Value)
 	}
 }
+
+// TestGlobalAndGroupMW_EachRunsOnce 验证全局中间件与分组中间件各只执行一次。
+// 这是架构改造的关键回归点:全局中间件改为 ServeHTTP 期施加后,Group 若仍把全局快照
+// 折进自己的链,就会对分组路由执行两次。
+// TestGlobalAndGroupMW_EachRunsOnce verifies global and group middleware each run
+// exactly once. This is the key regression from the refactor: with global middleware
+// applied at ServeHTTP time, a Group that still folded the global snapshot into its
+// own chain would run globals twice for group routes.
+func TestGlobalAndGroupMW_EachRunsOnce(t *testing.T) {
+	var globalRuns, groupRuns int
+	count := func(n *int) Middleware {
+		return func(next Handler) Handler {
+			return func(ctx context.Context, req *Request, resp *Response) error {
+				*n++
+				return next(ctx, req, resp)
+			}
+		}
+	}
+
+	s := New()
+	s.Use(count(&globalRuns))
+	g := s.Group("/api", count(&groupRuns))
+	if err := g.RawHandle(http.MethodGet, "/items", RawHandlerFunc(func(ctx context.Context, req *Request, resp *Response) error {
+		resp.WriteHeader(http.StatusOK)
+		return nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/items", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200", rec.Code)
+	}
+	if globalRuns != 1 {
+		t.Errorf("global middleware ran %d times, want exactly 1", globalRuns)
+	}
+	if groupRuns != 1 {
+		t.Errorf("group middleware ran %d times, want exactly 1", groupRuns)
+	}
+}
+
+// TestGroupMW_OrderGlobalBeforeGroup 验证执行顺序:全局在外、分组在内、handler 最内。
+// TestGroupMW_OrderGlobalBeforeGroup verifies ordering: global outermost, group
+// inside it, handler innermost.
+func TestGroupMW_OrderGlobalBeforeGroup(t *testing.T) {
+	var order []string
+	mark := func(tag string) Middleware {
+		return func(next Handler) Handler {
+			return func(ctx context.Context, req *Request, resp *Response) error {
+				order = append(order, tag)
+				return next(ctx, req, resp)
+			}
+		}
+	}
+
+	s := New()
+	s.Use(mark("global"))
+	g := s.Group("/api", mark("group"))
+	_ = g.RawHandle(http.MethodGet, "/x", RawHandlerFunc(func(ctx context.Context, req *Request, resp *Response) error {
+		order = append(order, "handler")
+		resp.WriteHeader(http.StatusOK)
+		return nil
+	}))
+
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/x", nil))
+
+	want := []string{"global", "group", "handler"}
+	if len(order) != len(want) {
+		t.Fatalf("order=%v, want %v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Errorf("order[%d]=%q, want %q", i, order[i], want[i])
+		}
+	}
+}
+
+// TestNestedGroupMW_EachRunsOnce 验证嵌套分组:全局 + 父组 + 子组各执行一次。
+// TestNestedGroupMW_EachRunsOnce verifies nested groups: global + parent + child
+// each run exactly once.
+func TestNestedGroupMW_EachRunsOnce(t *testing.T) {
+	var g0, g1, g2 int
+	count := func(n *int) Middleware {
+		return func(next Handler) Handler {
+			return func(ctx context.Context, req *Request, resp *Response) error {
+				*n++
+				return next(ctx, req, resp)
+			}
+		}
+	}
+
+	s := New()
+	s.Use(count(&g0))
+	parent := s.Group("/api", count(&g1))
+	child := parent.Group("/v1", count(&g2))
+	_ = child.RawHandle(http.MethodGet, "/x", RawHandlerFunc(func(ctx context.Context, req *Request, resp *Response) error {
+		resp.WriteHeader(http.StatusOK)
+		return nil
+	}))
+
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/x", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200", rec.Code)
+	}
+	if g0 != 1 || g1 != 1 || g2 != 1 {
+		t.Errorf("runs = global:%d parent:%d child:%d, want 1/1/1", g0, g1, g2)
+	}
+}

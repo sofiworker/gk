@@ -53,6 +53,12 @@
 - gcache：**破坏性变更**——`LRUCache`/`LFUCache`/`TimedCache` 泛型化为 `[K comparable, V any]`，值不再是 `interface{}`（构造需给出类型参数，如 `NewLRUCache[string, any](2)`）。
 - gcache：**破坏性变更**——三种本地缓存改为内建锁、默认线程安全，删除 `ThreadSafeLRUCache`/`ThreadSafeLFUCache` 及其构造函数。修复两处既有数据竞争：`ThreadSafeLRUCache.Get` 用 `RLock` 却经由 `MoveToFront` 改写共享链表（`LRUCache.Get` 现取写锁）、`TimedCache` 的 `cleanupLoop` 无锁读 `stop` 而 `Close` 持锁写它（改用 `sync.Once` 幂等关闭固定通道）。`go test -race ./gcache/...` 由红转绿。
 - 仓库：修复 gresolver 测试脚手架的既有数据竞争——`testDNSServer` 的 `recordsA`/`cnames` 由 `serve` goroutine 读、测试主体写，现以 `sync.RWMutex` 保护。`go test -race ./...` 门禁恢复全绿。
+- ghttp：**破坏性变更**——`Engine`/`Mux` 与 `Server` 合并为唯一顶层类型 `Server`（gin 式「engine 与 server 一体」）。`New()` 返回 `*Server`，路由注册、中间件挂载、启动与优雅关闭都在同一个对象上完成，用户不再需要认识第二个类型。`mux` 以首个嵌入字段并入 `Server`（零偏移），`ServeHTTP`/`Group`/`RawHandle` 由字段提升直接成为 `Server` 的方法，不产生手写委托层，请求热路径无额外间接；`ServeStatic`/`ServeMiss`/`ServeMW1Hit`/`ServeMW5Hit` 与合并前持平，且保持 0 B/op、0 allocs/op。
+- ghttp：**破坏性变更**——`Option` 由 `func(*Engine)` 改为 `func(*Server)`，原 `ServerOption` 的全部选项（`WithAddr`/`WithReadTimeout`/`WithReadHeaderTimeout`/`WithWriteTimeout`/`WithIdleTimeout`/`WithMaxHeaderBytes`/`WithTLSConfig`/`WithBaseContext`）并入 `Option`，统一由 `New(opts...)` 接收。
+- ghttp：**破坏性变更**——`IsStarted()` 语义由「曾经启动过」改为「正在运行」，关闭后返回 false。生命周期由 `started`/`closed` 两个 bool 收敛为单一三态 `state`（idle/running/closed），消除两个 bool 可表达但实际非法的状态组合。
+- ghttp：**破坏性变更**——`Shutdown`/`Close` 重复调用不再短路 `return nil`，每次都下沉到标准库。原实现会在首次调用尚在排空时，给第二个调用方一个假的「已完成」信号（实测该调用方在 120–180ns 返回，而真实排空需要 400ms）。
+- ghttp：**破坏性变更**——`NewReadinessGate` 的返回类型由未导出的 `*atomicReady` 改为导出的 `*ReadinessGate`；原签名触发 golint「exported func returns unexported type」，调用方无法为其声明变量类型。
+- ghttp：**行为变更**——监听失败（端口被占用、权限不足、地址非法）时 `Server` 退回未启动状态，可换 addr 重试。原实现在 `ListenAndServe` 之前就把状态置为 running 且失败后不回滚，导致 `IsStarted()` 谎报正在服务、重试被 `ErrServerStarted` 挡回，`Server` 沦为僵尸对象。回滚是锁内的复合判定：仅当状态仍为 running 时才退回 idle，不覆盖并发 `Shutdown`/`Close` 已写入的终态。
 
 ### Deprecated
 
@@ -71,6 +77,7 @@
 - gcache：**破坏性变更**——删除大接口 `Cache`/`CacheWithContext`/`BasicCache`/`BasicCacheWithContext` 及各能力接口的 `*WithContext` 变体，改为在调用点按需组合小接口。
 - gcache：**破坏性变更**——`Options` 移除 9 个连接字段（`Address`/`Password`/`DB`/`PoolSize`/`MinIdleConns`/`DialTimeout`/`ReadTimeout`/`WriteTimeout`/`MaxRetries`）与对应 `With*`，仅保留 `CleanupInterval`。原映射本就有损（valkey 侧静默丢弃 `MinIdleConns`/`ReadTimeout`，`MaxRetries` 退化为布尔 `DisableRetry`），且无法表达 TLS/Cluster/Sentinel；改为由用户直接配置客户端。
 - gcache：**破坏性变更**——删除 `Serializer`/`JSONSerializer`（包内无消费者），改用 `GetJSON[T]`/`SetJSON[T]`；删除 `ErrNotSupported`。
+- ghttp：**破坏性变更**——删除 `Engine` 类型、`Mux = Engine` 类型别名、`NewServer(e *Engine, opts ...ServerOption)`、`ServerOption` 类型与 `ErrEngineNotStarted` 哨兵错误；删除 `Server.ListenAndServe`/`Server.ListenAndServeTLS`（改用 `Server.Run(addr)`/`Server.RunTLS(addr, certFile, keyFile)`）；`Static`/`StaticFS`/`File`/`Health`/`Ready` 的首参由 `*Mux` 改为 `*Server`。
 
 ## [0.1.0] - 待发布
 

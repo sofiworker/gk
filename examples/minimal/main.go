@@ -91,9 +91,8 @@ func main() {
 		addr = ":" + a
 	}
 	log.Printf("listening on %s", addr)
-	// 一步式启动：Engine 自带 Run（gin 风格），无需显式 http.Server 或 NewServer。
-	// One-liner startup: Engine carries Run (gin-style), no explicit http.Server or
-	// NewServer needed.
+	// New 返回的就是一个 HTTP server，直接 Run 即可，无需再包一层 http.Server。
+	// New returns an HTTP server outright — just Run it, no extra http.Server layer.
 	if err := m.Run(addr); err != nil {
 		log.Fatal(err)
 	}

@@ -21,7 +21,7 @@ import (
 // fuzz 请求打击。
 // fuzzMux builds a tree of mixed shapes (static / single-param / multi-param /
 // catch-all / multi-method) for fuzz requests to hammer.
-func fuzzMux(tb testing.TB) *Mux {
+func fuzzMux(tb testing.TB) *Server {
 	tb.Helper()
 	m := New()
 	routes := []routeSpec{

@@ -22,7 +22,7 @@ var benchNoop = func(context.Context, *Request, *Response) error { return nil }
 
 // benchMux 构建一棵含常见形态路由的树。
 // benchMux builds a tree with common route shapes.
-func benchMux() *Mux {
+func benchMux() *Server {
 	m := New()
 	_ = m.RawHandle(http.MethodGet, "/ping", benchNoop)
 	_ = m.RawHandle(http.MethodGet, "/users/{id}", benchNoop)
@@ -83,7 +83,7 @@ func passThroughMW() Middleware {
 
 // benchMuxMW 构建与 benchMux 相同的路由,但挂 n 个透传全局中间件。
 // benchMuxMW builds the same routes as benchMux but with n pass-through globals.
-func benchMuxMW(n int) *Mux {
+func benchMuxMW(n int) *Server {
 	m := New()
 	for i := 0; i < n; i++ {
 		m.Use(passThroughMW())

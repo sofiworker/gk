@@ -44,7 +44,18 @@ type createReq struct {
 }
 
 func main() {
-	m := ghttp.New()
+	// 一个 Server 就是一个 HTTP server：New 同时配置路由行为与监听参数（超时等），
+	// 随后在它上面挂中间件、注册路由，最后 Run / Shutdown。
+	// One Server IS one HTTP server: New configures both routing behavior and
+	// listener parameters (timeouts, ...); then attach middleware, register routes,
+	// and finally Run / Shutdown on it.
+	m := ghttp.New(
+		ghttp.WithAddr(addrFromEnv()),
+		ghttp.WithReadHeaderTimeout(5*time.Second),
+		ghttp.WithReadTimeout(15*time.Second),
+		ghttp.WithWriteTimeout(15*time.Second),
+		ghttp.WithIdleTimeout(60*time.Second),
+	)
 
 	// 生产中间件栈（顺序即洋葱外→内）：
 	//   Recovery 最外层，兜住其余中间件与 handler 的 panic；
@@ -76,7 +87,7 @@ func main() {
 
 // registerAPI 注册 typed 业务端点。
 // registerAPI registers typed business endpoints.
-func registerAPI(m *ghttp.Engine) {
+func registerAPI(m *ghttp.Server) {
 	// GET /api/items?keyword=&page=&size= — params 经 tag 绑定，输出 JSON。
 	must(ghttp.GetParams(m, "/api/items",
 		ghttp.JSON[map[string]any]().Status(http.StatusOK),
@@ -106,7 +117,7 @@ func registerAPI(m *ghttp.Engine) {
 
 // registerStatic 从 embed.FS 提供静态资源（SPA 回退演示）。
 // registerStatic serves static assets from embed.FS (with SPA fallback demo).
-func registerStatic(m *ghttp.Engine) {
+func registerStatic(m *ghttp.Server) {
 	// embed 的 FS 带有顶层 "web" 目录，用 fs.Sub 剥掉，使 /app/ 映射到其内容。
 	// The embedded FS has a top-level "web" dir; strip it with fs.Sub so /app/
 	// maps to its contents.
@@ -117,7 +128,7 @@ func registerStatic(m *ghttp.Engine) {
 
 // registerProbes 注册健康与就绪探针，并演示运行时就绪门闸。
 // registerProbes registers health/readiness probes and a runtime readiness gate.
-func registerProbes(m *ghttp.Engine) {
+func registerProbes(m *ghttp.Server) {
 	must(ghttp.Health(m, "/healthz"))
 
 	// 就绪门闸：进程刚起时未就绪，模拟初始化后置为就绪。
@@ -131,24 +142,16 @@ func registerProbes(m *ghttp.Engine) {
 	}()
 }
 
-// runWithGracefulShutdown 用 Engine 一步式 Run 启动并注入生产超时，收到 SIGINT/SIGTERM
-// 时经 Engine.Shutdown 优雅关闭。相比显式 NewServer，一步式更贴近 gin 手感，超时等仍
-// 经 ServerOption 透传。
-// runWithGracefulShutdown starts via Engine's one-liner Run with production
-// timeouts injected, then gracefully stops via Engine.Shutdown on SIGINT/SIGTERM.
-// Versus an explicit NewServer, the one-liner is closer to gin's feel while
-// timeouts still pass through as ServerOptions.
-func runWithGracefulShutdown(m *ghttp.Engine) {
-	addr := addrFromEnv()
+// runWithGracefulShutdown 启动 Server 并在收到 SIGINT/SIGTERM 时优雅关闭。监听地址与
+// 超时已在 New 处配置，故 Run 传空串沿用配置。
+// runWithGracefulShutdown starts the Server and gracefully stops it on
+// SIGINT/SIGTERM. The address and timeouts were configured at New, so Run takes an
+// empty string to reuse them.
+func runWithGracefulShutdown(m *ghttp.Server) {
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("listening on %s", addr)
-		errCh <- m.Run(addr,
-			ghttp.WithReadHeaderTimeout(5*time.Second),
-			ghttp.WithReadTimeout(15*time.Second),
-			ghttp.WithWriteTimeout(15*time.Second),
-			ghttp.WithIdleTimeout(60*time.Second),
-		)
+		log.Printf("listening on %s", addrFromEnv())
+		errCh <- m.Run("")
 	}()
 
 	stop := make(chan os.Signal, 1)

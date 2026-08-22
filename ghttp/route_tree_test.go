@@ -17,7 +17,7 @@ import (
 // 参数快照。
 // probe registers routes, issues one request for (method, target), and returns
 // the status code, body, and a snapshot of matched params.
-func probe(t *testing.T, reg func(*Mux), method, target string) (int, string, map[string]string) {
+func probe(t *testing.T, reg func(*Server), method, target string) (int, string, map[string]string) {
 	t.Helper()
 	m := New()
 	reg(m)
@@ -40,7 +40,7 @@ var capturedParams map[string]string
 // echoParams 注册一个把匹配参数写入 capturedParams 并返回 200 "ok" 的路由。
 // echoParams registers a route that copies matched params into capturedParams
 // and returns 200 "ok".
-func echoParams(m *Mux, method, pattern string, names ...string) {
+func echoParams(m *Server, method, pattern string, names ...string) {
 	_ = m.RawHandle(method, pattern, func(_ context.Context, req *Request, resp *Response) error {
 		if capturedParams != nil {
 			for _, n := range names {
@@ -54,7 +54,7 @@ func echoParams(m *Mux, method, pattern string, names ...string) {
 }
 
 func TestTreeStaticParamAlternation(t *testing.T) {
-	code, _, p := probe(t, func(m *Mux) {
+	code, _, p := probe(t, func(m *Server) {
 		echoParams(m, http.MethodGet, "/a/{p1}/b/{p2}", "p1", "p2")
 	}, http.MethodGet, "/a/v1/b/v2")
 	if code != 200 {
@@ -66,7 +66,7 @@ func TestTreeStaticParamAlternation(t *testing.T) {
 }
 
 func TestTreeDeepStaticChain(t *testing.T) {
-	code, _, _ := probe(t, func(m *Mux) {
+	code, _, _ := probe(t, func(m *Server) {
 		echoParams(m, http.MethodGet, "/api/v1/users/lists")
 	}, http.MethodGet, "/api/v1/users/lists")
 	if code != 200 {
@@ -75,7 +75,7 @@ func TestTreeDeepStaticChain(t *testing.T) {
 }
 
 func TestTreeForkMidChain(t *testing.T) {
-	reg := func(m *Mux) {
+	reg := func(m *Server) {
 		echoParams(m, http.MethodGet, "/a/{p1}/b/x")
 		echoParams(m, http.MethodGet, "/a/{p1}/b/y")
 	}
@@ -88,7 +88,7 @@ func TestTreeForkMidChain(t *testing.T) {
 }
 
 func TestTreeStaticBeatsParam(t *testing.T) {
-	reg := func(m *Mux) {
+	reg := func(m *Server) {
 		echoParams(m, http.MethodGet, "/a/{p1}/b", "p1")
 		echoParams(m, http.MethodGet, "/a/lit/b")
 	}
@@ -104,7 +104,7 @@ func TestTreeStaticBeatsParam(t *testing.T) {
 }
 
 func TestTreeInSegmentFragments(t *testing.T) {
-	reg := func(m *Mux) {
+	reg := func(m *Server) {
 		echoParams(m, http.MethodGet, "/u/ali")
 		echoParams(m, http.MethodGet, "/u/alice")
 	}
@@ -125,7 +125,7 @@ func TestTreeEscapeFallback(t *testing.T) {
 	// Strategy A: matching runs on the decoded URL.Path. %62 is decoded to "b"
 	// by the stdlib, so a request to /x/v/%62 (Path=/x/v/b) naturally hits the
 	// static literal "b" with v captured by {p1}.
-	code, _, p := probe(t, func(m *Mux) {
+	code, _, p := probe(t, func(m *Server) {
 		echoParams(m, http.MethodGet, "/x/{p1}/b", "p1")
 	}, http.MethodGet, "http://test/x/v/%62")
 	if code != 200 {
@@ -144,7 +144,7 @@ func TestTreeEscapedSlashSplitsSegment(t *testing.T) {
 	// is decoded to "/" by the stdlib and thus treated as a segment separator.
 	// /a/a%2Fb/b has Path /a/a/b/b (4 segments) and does not match /a/{p1}/b
 	// (3 segments) → 404. This is intentional and matches gin.
-	code, _, _ := probe(t, func(m *Mux) {
+	code, _, _ := probe(t, func(m *Server) {
 		echoParams(m, http.MethodGet, "/a/{p1}/b", "p1")
 	}, http.MethodGet, "http://test/a/a%2Fb/b")
 	if code != 404 {
@@ -156,7 +156,7 @@ func TestTreeTrailingCatchAll(t *testing.T) {
 	// gin 语义:catchAll 值 = 整个剩余 path,含前导 "/"。
 	// gin semantics: the catch-all value = the whole remaining path, including
 	// the leading "/".
-	code, _, p := probe(t, func(m *Mux) {
+	code, _, p := probe(t, func(m *Server) {
 		echoParams(m, http.MethodGet, "/files/{rest...}", "rest")
 	}, http.MethodGet, "/files/a/b/c")
 	if code != 200 {
@@ -171,7 +171,7 @@ func TestTreeCatchAllZeroSegments(t *testing.T) {
 	// gin 语义:/files(catchAll 零段)不直接命中,而是 301 重定向到 /files/。
 	// gin semantics: /files (zero-segment catch-all) does not hit directly; it
 	// issues a 301 redirect to /files/.
-	code, _, _ := probe(t, func(m *Mux) {
+	code, _, _ := probe(t, func(m *Server) {
 		echoParams(m, http.MethodGet, "/files/{rest...}", "rest")
 	}, http.MethodGet, "/files")
 	if code != http.StatusMovedPermanently {
@@ -179,7 +179,7 @@ func TestTreeCatchAllZeroSegments(t *testing.T) {
 	}
 	// /files/ 则命中,rest 为 "/"。
 	// /files/ hits, with rest = "/".
-	code, _, p := probe(t, func(m *Mux) {
+	code, _, p := probe(t, func(m *Server) {
 		echoParams(m, http.MethodGet, "/files/{rest...}", "rest")
 	}, http.MethodGet, "/files/")
 	if code != 200 {
@@ -205,7 +205,7 @@ func TestTreeMethodNotAllowed(t *testing.T) {
 }
 
 func TestTreeDeadEnds(t *testing.T) {
-	reg := func(m *Mux) {
+	reg := func(m *Server) {
 		echoParams(m, http.MethodGet, "/a/{p1}/b/{p2}", "p1", "p2")
 	}
 	for _, path := range []string{"/a/v1", "/a/v1/c/v2", "/a/v1/b/v2/extra"} {
@@ -219,7 +219,7 @@ func TestTreeTrailingSlashRedirect(t *testing.T) {
 	// gin 语义:注册 /a/{p1}/b,请求 /a/v1/b/ 触发 TSR → 301 重定向到 /a/v1/b。
 	// gin semantics: with /a/{p1}/b registered, /a/v1/b/ triggers TSR → 301 to
 	// /a/v1/b.
-	code, _, _ := probe(t, func(m *Mux) {
+	code, _, _ := probe(t, func(m *Server) {
 		echoParams(m, http.MethodGet, "/a/{p1}/b", "p1")
 	}, http.MethodGet, "/a/v1/b/")
 	if code != http.StatusMovedPermanently {
@@ -227,7 +227,7 @@ func TestTreeTrailingSlashRedirect(t *testing.T) {
 	}
 	// 反向:注册带尾斜杠,请求不带,也应 301 补上。
 	// Reverse: register with a trailing slash, request without → 301 to add it.
-	code, _, _ = probe(t, func(m *Mux) {
+	code, _, _ = probe(t, func(m *Server) {
 		echoParams(m, http.MethodGet, "/dir/")
 	}, http.MethodGet, "/dir")
 	if code != http.StatusMovedPermanently {
@@ -239,7 +239,7 @@ func TestTreeInvalidSegments(t *testing.T) {
 	// 默认(快速模式):dot 段 → 400(防路径遍历);空段放行交给匹配(与 gin 一致)。
 	// Default (fast mode): dot segment → 400 (traversal guard); empty segment
 	// passes to matching (aligned with gin).
-	reg := func(m *Mux) { echoParams(m, http.MethodGet, "/a/{p1}/b", "p1") }
+	reg := func(m *Server) { echoParams(m, http.MethodGet, "/a/{p1}/b", "p1") }
 	if code, _, _ := probe(t, reg, http.MethodGet, "/a/../b"); code != http.StatusBadRequest {
 		t.Fatalf("/a/../b code=%d, want 400 (dot segment rejected in fast mode)", code)
 	}
@@ -284,7 +284,7 @@ func TestTreeStrictPathValidation(t *testing.T) {
 // must hit /{p}/x (p=foo). This guards the iterative walk's in-place descent
 // against swallowing the param fallback.
 func TestTreeStaticThenParamFallback(t *testing.T) {
-	reg := func(m *Mux) {
+	reg := func(m *Server) {
 		echoParams(m, http.MethodGet, "/foo")
 		echoParams(m, http.MethodGet, "/{p}/x", "p")
 	}

@@ -70,7 +70,7 @@ func WithSPAFallback() StaticOption {
 // Static mounts the on-disk directory dir under prefix. prefix must start and end
 // with "/" (e.g. "/assets/"); an empty dir uses the working directory. Registers
 // catch-all routes for GET/HEAD.
-func Static(m *Mux, prefix, dir string, opts ...StaticOption) error {
+func Static(m *Server, prefix, dir string, opts ...StaticOption) error {
 	if dir == "" {
 		dir = "."
 	}
@@ -80,7 +80,7 @@ func Static(m *Mux, prefix, dir string, opts ...StaticOption) error {
 // StaticFS 把任意 fs.FS 挂载到 prefix 下，支持 embed.FS 等只读文件系统。
 // StaticFS mounts an arbitrary fs.FS under prefix, supporting read-only file
 // systems such as embed.FS.
-func StaticFS(m *Mux, prefix string, fsys fs.FS, opts ...StaticOption) error {
+func StaticFS(m *Server, prefix string, fsys fs.FS, opts ...StaticOption) error {
 	if !strings.HasPrefix(prefix, "/") || !strings.HasSuffix(prefix, "/") {
 		return fmt.Errorf("%w: static prefix %q must start and end with '/'", ErrInvalidParam, prefix)
 	}
@@ -180,7 +180,7 @@ func joinFSPath(dir, elem string) string {
 // fsys 为 nil 时用当前工作目录。为 GET/HEAD 注册精确路径。
 // File maps a single request path to the file name within fsys. A nil fsys uses
 // the working directory. Registers the exact path for GET/HEAD.
-func File(m *Mux, path, name string, fsys fs.FS) error {
+func File(m *Server, path, name string, fsys fs.FS) error {
 	if fsys == nil {
 		fsys = os.DirFS(".")
 	}

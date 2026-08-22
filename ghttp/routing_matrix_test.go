@@ -291,7 +291,7 @@ var githubRoutes = []routeSpec{
 // buildGithubMux 把 githubRoutes 全部注册进一个 Mux;注册失败即 fatal。
 // buildGithubMux registers every githubRoutes entry into a Mux; a registration
 // error is fatal.
-func buildGithubMux(t testing.TB) *Mux {
+func buildGithubMux(t testing.TB) *Server {
 	t.Helper()
 	m := New()
 	for _, r := range githubRoutes {

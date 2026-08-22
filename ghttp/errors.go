@@ -88,16 +88,11 @@ var (
 	// to reuse a terminated Server.
 	ErrServerNotStartable = errors.New("ghttp: server already closed")
 
-	// ErrEngineNotStarted 表示未先经 Engine.Run/RunTLS 启动就调用 Engine.Shutdown。
-	// ErrEngineNotStarted indicates Engine.Shutdown was called before the engine was
-	// started via Engine.Run/RunTLS.
-	ErrEngineNotStarted = errors.New("ghttp: engine not started via Run/RunTLS")
-
-	// ErrTLSConfig 表示 TLS 配置不足:ServeTLS/ListenAndServeTLS 既未注入含证书的
+	// ErrTLSConfig 表示 TLS 配置不足:RunTLS/ServeTLS 既未注入含证书的
 	// TLSConfig,也未提供 certFile/keyFile。调用方可经 errors.Is 判定 TLS 校验失败。
-	// ErrTLSConfig indicates insufficient TLS configuration: ServeTLS/
-	// ListenAndServeTLS was given neither a TLSConfig with certificates nor
-	// certFile/keyFile. Callers can errors.Is it to detect a TLS-validation failure.
+	// ErrTLSConfig indicates insufficient TLS configuration: RunTLS/ServeTLS was
+	// given neither a TLSConfig with certificates nor certFile/keyFile. Callers can
+	// errors.Is it to detect a TLS-validation failure.
 	ErrTLSConfig = errors.New("ghttp: TLS requires certFile and keyFile, or a TLSConfig")
 
 	// ErrHandlerPanic 是无 Recovery 中间件时,最外层兜底 recover 把 handler panic

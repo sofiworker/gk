@@ -12,7 +12,7 @@ import (
 
 // hitProbe 执行一次探针请求，返回状态码与解析后的 JSON body。
 // hitProbe issues one probe request, returning the status code and parsed JSON body.
-func hitProbe(t *testing.T, m *Mux, path string) (int, map[string]any) {
+func hitProbe(t *testing.T, m *Server, path string) (int, map[string]any) {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	m.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
