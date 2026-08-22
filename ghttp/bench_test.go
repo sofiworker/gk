@@ -69,3 +69,46 @@ func BenchmarkMatchOnly(b *testing.B) {
 		t.root.getValue(path, &p, &skipped)
 	}
 }
+
+// passThroughMW 是一个零逻辑透传中间件,仅用于测量中间件链的调用/分配开销本身。
+// passThroughMW is a zero-logic pass-through middleware, used solely to measure
+// the middleware chain's call/alloc overhead itself.
+func passThroughMW() Middleware {
+	return func(next Handler) Handler {
+		return func(ctx context.Context, req *Request, resp *Response) error {
+			return next(ctx, req, resp)
+		}
+	}
+}
+
+// benchMuxMW 构建与 benchMux 相同的路由,但挂 n 个透传全局中间件。
+// benchMuxMW builds the same routes as benchMux but with n pass-through globals.
+func benchMuxMW(n int) *Mux {
+	m := New()
+	for i := 0; i < n; i++ {
+		m.Use(passThroughMW())
+	}
+	_ = m.RawHandle(http.MethodGet, "/ping", benchNoop)
+	_ = m.RawHandle(http.MethodGet, "/users/{id}", benchNoop)
+	return m
+}
+
+func benchServeMW(b *testing.B, n int, method, path string) {
+	m := benchMuxMW(n)
+	w := newDiscardWriter()
+	req := httptest.NewRequest(method, path, nil)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		m.ServeHTTP(w, req)
+	}
+}
+
+// 命中路径 + 不同中间件深度。Hit path at various middleware depths.
+func BenchmarkServeMW0Hit(b *testing.B) { benchServeMW(b, 0, http.MethodGet, "/ping") }
+func BenchmarkServeMW1Hit(b *testing.B) { benchServeMW(b, 1, http.MethodGet, "/ping") }
+func BenchmarkServeMW5Hit(b *testing.B) { benchServeMW(b, 5, http.MethodGet, "/ping") }
+
+// miss 路径 + 中间件(改造后这里语义变化:miss 也走链)。
+// Miss path with middleware (post-refactor semantics change: miss goes through chain too).
+func BenchmarkServeMW5Miss(b *testing.B) { benchServeMW(b, 5, http.MethodGet, "/nope") }

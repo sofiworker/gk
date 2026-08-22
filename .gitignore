@@ -11,4 +11,7 @@ experiments
 benchmarks/bench_*.txt
 temp/ghttp.test
 *.test
+# 各 example 独立 module 的 go build 默认产物（产物名=目录名），避免误提交二进制。
+# Default `go build` artifacts of each example module (artifact name = dir name).
 examples/minimal/minimal
+examples/server/server-example

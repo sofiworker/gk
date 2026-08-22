@@ -91,7 +91,10 @@ func main() {
 		addr = ":" + a
 	}
 	log.Printf("listening on %s", addr)
-	if err := http.ListenAndServe(addr, m); err != nil {
+	// 一步式启动：Engine 自带 Run（gin 风格），无需显式 http.Server 或 NewServer。
+	// One-liner startup: Engine carries Run (gin-style), no explicit http.Server or
+	// NewServer needed.
+	if err := m.Run(addr); err != nil {
 		log.Fatal(err)
 	}
 }
