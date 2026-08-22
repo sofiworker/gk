@@ -32,7 +32,7 @@ type compiledV4[P, O any] struct {
 
 func (e *compiledV4[P, O]) serve(ctx context.Context, req *Request, resp *Response) error {
 	var p P
-	if err := e.plan.apply(req, req.URL.Query(), &p); err != nil {
+	if err := e.plan.apply(req, req.Query(), &p); err != nil {
 		return err
 	}
 	out, err := e.h(ctx, p)
@@ -55,7 +55,7 @@ type compiledV4Body[P, B, O any] struct {
 func (e *compiledV4Body[P, B, O]) serve(ctx context.Context, req *Request, resp *Response) error {
 	var p P
 	var b B
-	if err := e.plan.apply(req, req.URL.Query(), &p); err != nil {
+	if err := e.plan.apply(req, req.Query(), &p); err != nil {
 		return err
 	}
 	if err := e.dec.Decode(req, &b); err != nil {

@@ -59,10 +59,10 @@ func (p *Params) truncate(length int) {
 // query string is cached in queryCache (parsed on first Query() call).
 type Request struct {
 	*http.Request
-	Params       Params
-	queryCache   url.Values // filled on first Query() call; cleared at reset.
-	resp         Response
-	skipped      []skippedNode
+	Params     Params
+	queryCache url.Values // filled on first Query() call; cleared at reset.
+	resp       Response
+	skipped    []skippedNode
 }
 
 // Query 返回解析后的 URL 查询参数;首次调用时解析并缓存，后续复用该 url.Values 指针避免重新解析。

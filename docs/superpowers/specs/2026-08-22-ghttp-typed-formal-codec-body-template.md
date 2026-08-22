@@ -188,3 +188,29 @@ func PostParamsBody[P, B, O any](router, path string, enc ResponseEncoder, dec R
   - v4_test.go已有 7 个单元测试覆盖 Params/body/mixed/no-input  
   - 待迁移：poc_c1v3_demo_test.go 的 7 场景 demo → 正式版 v4 用例  
   - 文档:godoc 完善+v4 API README 章节  
+
+## 阶段 6 实测:v4 入口 alloc 归因与性能
+
+**方法**: `go test -bench=BenchmarkV4 -benchmem -benchtime=500ms`(discardWriter 剔除 I/O 噪声,POST 场景预建 request + 每轮重置 body reader 剔除构造 alloc)。
+
+| 场景 | ns/op | B/op | allocs/op |
+|---|---:|---:|---:|
+| GetNone (无输入) | 197 | 64 | 3 |
+| GetParamsSmall (1 path+2 query) | 683 | 528 | 8 |
+| GetParamsLarge (1 path+5 query+3 header) | 915 | 673 | 11 |
+| PostBody (仅 body) | 996 | 602 | 10 |
+| PostParamsBody (1 path+body) | 1112 | 682 | 12 |
+
+**pprof alloc 归因(GetParamsSmall 8 allocs)**:
+- `net/url.parseQuery` + `ParseQuery`(~47%):**query 字符串解析**,标准库固有开销,gin/echo 同样存在。
+- `reflect.unsafe_New`(~11%):**params 结构体反射创建**(bind plan 的 `reflect.ValueOf(&p).Elem()`);已最小化,注册期建计划,请求期仅创建实例。
+- `jsonOutput.encode`→`json.NewEncoder`(~15%):Go 1.24 encoding/json 已优化,实测 NewEncoder 仅 48B/2allocs,池化收益微乎其微(实验:BufPool 与 NewEncoder 持平)。
+- `net/textproto.MIMEHeader.Set`(~13%):Content-Type header 写入;此项部分来自 discardWriter 测试脚手架。
+
+**结论**:
+1. **无法进一步消除的 alloc**:query 解析 + params 反射创建是标准库/反射固有开销,与 gin/echo 同源。
+2. **`reflect.ValueOf(paramsPtr).Elem()`不产生额外 alloc**:泛型编译期特化,`.Elem()`零分配;`reflect.unsafe_New` 是结构体实例本身逃逸,非反射调用开销。
+3. **encoder 池化收益为负**:Go 1.24 的 json.Encoder 分配已足够小,池化引入的 sync.Pool 开销反而抵消收益,故不采纳。
+4. 相比 POC v3 独立轻量 mux(Small=585ns),正式版走完整 ServeHTTP(路径校验+池化+统一中间件链)= 683ns,+98ns 为架构统一代价,可接受。
+
+**已修正**:`compiledV4.serve`/`compiledV4Body.serve`原本调 `req.URL.Query()`,改为调阶段 4 新增的 `req.Query()`缓存方法,避免 handler 内多次读 query 重复解析。
