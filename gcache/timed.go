@@ -5,52 +5,55 @@ import (
 	"time"
 )
 
-type timedEntry struct {
-	value     interface{}
+type timedEntry[V any] struct {
+	value     V
 	expiresAt time.Time
 }
 
 // TimedCache 是基于超时（TTL）淘汰的线程安全缓存。
 // TimedCache is a thread-safe cache that evicts items by TTL.
-type TimedCache struct {
-	lock  sync.RWMutex
-	cache map[string]*timedEntry
-	stop  chan struct{}
+type TimedCache[K comparable, V any] struct {
+	lock     sync.RWMutex
+	cache    map[K]*timedEntry[V]
+	stop     chan struct{}
+	stopOnce sync.Once
 }
 
 // NewTimedCache 创建 TimedCache 并启动后台清理；cleanupInterval 小于等于 0 时不启动。
 // NewTimedCache starts background cleanup; interval <= 0 disables it.
-func NewTimedCache(cleanupInterval time.Duration) *TimedCache {
-	c := &TimedCache{
-		cache: make(map[string]*timedEntry),
+func NewTimedCache[K comparable, V any](cleanupInterval time.Duration) *TimedCache[K, V] {
+	c := &TimedCache[K, V]{
+		cache: make(map[K]*timedEntry[V]),
+		stop:  make(chan struct{}),
 	}
 
 	if cleanupInterval > 0 {
-		c.stop = make(chan struct{})
 		go c.cleanupLoop(cleanupInterval)
 	}
 
 	return c
 }
 
-func (c *TimedCache) Get(key string) (interface{}, bool) {
+func (c *TimedCache[K, V]) Get(key K) (V, bool) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 
 	entry, ok := c.cache[key]
 	if !ok {
-		return nil, false
+		var zero V
+		return zero, false
 	}
 
 	// 零值时间表示永不过期；a zero time means never expires.
 	if !entry.expiresAt.IsZero() && time.Now().After(entry.expiresAt) {
-		return nil, false
+		var zero V
+		return zero, false
 	}
 
 	return entry.value, true
 }
 
-func (c *TimedCache) Set(key string, value interface{}, ttl time.Duration) {
+func (c *TimedCache[K, V]) Set(key K, value V, ttl time.Duration) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
@@ -59,13 +62,13 @@ func (c *TimedCache) Set(key string, value interface{}, ttl time.Duration) {
 		expiresAt = time.Now().Add(ttl)
 	}
 
-	c.cache[key] = &timedEntry{
+	c.cache[key] = &timedEntry[V]{
 		value:     value,
 		expiresAt: expiresAt,
 	}
 }
 
-func (c *TimedCache) Delete(key string) {
+func (c *TimedCache[K, V]) Delete(key K) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	delete(c.cache, key)
@@ -73,24 +76,21 @@ func (c *TimedCache) Delete(key string) {
 
 // Len 返回缓存当前条目数（含已过期但未清理的条目）。
 // Len returns the current item count, including expired-but-uncleaned items.
-func (c *TimedCache) Len() int {
+func (c *TimedCache[K, V]) Len() int {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 	return len(c.cache)
 }
 
-// Close 停止后台清理 goroutine，避免 goroutine 泄漏。
-// Close stops the background cleanup goroutine to avoid leaks.
-func (c *TimedCache) Close() {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	if c.stop != nil {
+// Close 停止后台清理 goroutine，避免 goroutine 泄漏；多次调用是幂等的。
+// Close stops the background cleanup goroutine to avoid leaks; it is idempotent.
+func (c *TimedCache[K, V]) Close() {
+	c.stopOnce.Do(func() {
 		close(c.stop)
-		c.stop = nil
-	}
+	})
 }
 
-func (c *TimedCache) cleanupLoop(interval time.Duration) {
+func (c *TimedCache[K, V]) cleanupLoop(interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -104,7 +104,7 @@ func (c *TimedCache) cleanupLoop(interval time.Duration) {
 	}
 }
 
-func (c *TimedCache) evictExpired() {
+func (c *TimedCache[K, V]) evictExpired() {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 

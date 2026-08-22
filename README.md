@@ -15,7 +15,7 @@
 
 ## 模块
 
-- [gcache](gcache/README.md) - 缓存（内存、Redis、Valkey）
+- [gcache](gcache/README.md) - 缓存（进程内实现 + 注入式后端契约，零第三方依赖）
 - [gcompress](gcompress/README.md) - 压缩
 - [gconfig](gconfig/README.md) - 配置
 - [gcrypt](gcrypt/README.md) - 加密

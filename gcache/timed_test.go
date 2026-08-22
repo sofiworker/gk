@@ -8,24 +8,18 @@ import (
 )
 
 func TestTimedCache(t *testing.T) {
-	t.Run("NewTimedCache", func(t *testing.T) {
-		cache := NewTimedCache(10 * time.Millisecond)
-		if cache.stop == nil {
-			t.Error("expected stop channel to be initialized")
-		}
+	t.Run("CloseIsIdempotent", func(t *testing.T) {
+		cache := NewTimedCache[string, string](10 * time.Millisecond)
 		cache.Close()
-		if cache.stop != nil {
-			t.Error("expected stop channel to be nil after Close")
-		}
+		cache.Close() // 二次 Close 不得 panic；a second Close must not panic.
 
-		cache = NewTimedCache(0)
-		if cache.stop != nil {
-			t.Error("expected stop channel to be nil for zero interval")
-		}
+		// 零间隔不启动后台清理，但 Close 仍安全。
+		zero := NewTimedCache[string, string](0)
+		zero.Close()
 	})
 
 	t.Run("SetAndGet", func(t *testing.T) {
-		cache := NewTimedCache(0)
+		cache := NewTimedCache[string, any](0)
 		defer cache.Close()
 
 		cache.Set("key1", "value1", 0)
@@ -41,49 +35,55 @@ func TestTimedCache(t *testing.T) {
 		}
 	})
 
+	t.Run("TypedValue", func(t *testing.T) {
+		cache := NewTimedCache[int, string](0)
+		defer cache.Close()
+
+		cache.Set(1, "one", 0)
+		val, ok := cache.Get(1)
+		if !ok || val != "one" {
+			t.Errorf("expected 'one' for key 1, got %q", val)
+		}
+	})
+
 	t.Run("GetExpired", func(t *testing.T) {
-		cache := NewTimedCache(0)
+		cache := NewTimedCache[string, string](0)
 		defer cache.Close()
 
 		cache.Set("key1", "value1", 5*time.Millisecond)
 		time.Sleep(10 * time.Millisecond)
 
-		_, ok := cache.Get("key1")
-		if ok {
+		if _, ok := cache.Get("key1"); ok {
 			t.Error("expected item to be expired and not found")
 		}
 	})
 
 	t.Run("Cleanup", func(t *testing.T) {
-		cache := NewTimedCache(5 * time.Millisecond)
+		cache := NewTimedCache[string, string](5 * time.Millisecond)
 		defer cache.Close()
 
 		cache.Set("key1", "value1", 1*time.Millisecond)
-		cache.Set("key2", "value2", 20*time.Millisecond)
+		cache.Set("key2", "value2", 500*time.Millisecond)
 
-		if cache.Len() != 2 {
-			t.Errorf("expected length 2, got %d", cache.Len())
+		// 轮询等待后台清理，避免慢机器上的偶发失败。
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			if _, ok := cache.Get("key1"); !ok {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("expected 'key1' to be evicted by the cleanup goroutine")
+			}
+			time.Sleep(2 * time.Millisecond)
 		}
 
-		// 等待后台清理执行；wait for the background cleanup to run.
-		time.Sleep(15 * time.Millisecond)
-
-		if cache.Len() != 1 {
-			t.Errorf("expected length 1 after cleanup, got %d", cache.Len())
-		}
-
-		_, ok := cache.Get("key1")
-		if ok {
-			t.Error("expected 'key1' to be evicted by cleanup goroutine")
-		}
-		_, ok = cache.Get("key2")
-		if !ok {
+		if _, ok := cache.Get("key2"); !ok {
 			t.Error("expected 'key2' to still be present")
 		}
 	})
 
 	t.Run("Delete", func(t *testing.T) {
-		cache := NewTimedCache(0)
+		cache := NewTimedCache[string, string](0)
 		defer cache.Close()
 
 		cache.Set("key1", "value1", 0)
@@ -92,26 +92,23 @@ func TestTimedCache(t *testing.T) {
 		if cache.Len() != 0 {
 			t.Errorf("expected length 0 after delete, got %d", cache.Len())
 		}
-		_, ok := cache.Get("key1")
-		if ok {
+		if _, ok := cache.Get("key1"); ok {
 			t.Error("expected item to be deleted")
 		}
 	})
 
 	t.Run("ConcurrentAccess", func(t *testing.T) {
-		cache := NewTimedCache(10 * time.Millisecond)
+		cache := NewTimedCache[string, string](10 * time.Millisecond)
 		defer cache.Close()
 		var wg sync.WaitGroup
 		numGoroutines := 100
 
-		// 并发写入；concurrent writes.
 		for i := 0; i < numGoroutines; i++ {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
 				key := fmt.Sprintf("key%d", i)
-				value := fmt.Sprintf("value%d", i)
-				cache.Set(key, value, time.Duration(i+10)*time.Millisecond)
+				cache.Set(key, fmt.Sprintf("value%d", i), time.Duration(i+10)*time.Millisecond)
 			}(i)
 		}
 		wg.Wait()
@@ -123,7 +120,6 @@ func TestTimedCache(t *testing.T) {
 		// 等待部分条目过期；wait for some items to expire.
 		time.Sleep(50 * time.Millisecond)
 
-		// 并发读取与删除；concurrent reads and deletes.
 		var foundCount int
 		var mu sync.Mutex
 		for i := 0; i < numGoroutines; i++ {

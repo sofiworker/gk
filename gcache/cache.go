@@ -1,258 +1,113 @@
+// Package gcache 提供进程内缓存实现，以及一组与具体后端无关的缓存契约和工具函数。
+// Package gcache provides an in-process cache plus backend-agnostic cache contracts and helpers.
+//
+// 本包不 import 任何客户端库，也不识别具体后端。远端缓存由用户实现下面的接口后传入，
+// 依赖方向永远是「用户代码 → gcache」，因此只用内存缓存的程序不会链入任何网络栈。
+// It imports no client library and recognises no concrete backend. Remote caches are injected by
+// users implementing the interfaces below, so the dependency direction is always user code → gcache
+// and a memory-only program links in no networking stack.
 package gcache
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"time"
 )
 
 var (
+	// ErrCacheMiss 表示键不存在或已过期。注入方需要把后端的「未命中」错误翻译成它。
+	// ErrCacheMiss reports an absent or expired key; the injecting side translates the
+	// backend's own miss error into it.
 	ErrCacheMiss = errors.New("gcache: cache miss")
+
+	// ErrNilLoader 表示未命中时调用方没有提供 loader。
+	// ErrNilLoader reports that the caller supplied no loader for a miss.
 	ErrNilLoader = errors.New("gcache: loader is nil")
+
+	// ErrNotImplemented 表示注入的实现缺少该操作，例如 Funcs 的对应字段为 nil。
+	// ErrNotImplemented reports that the injected implementation lacks the operation,
+	// e.g. a nil field in Funcs.
+	ErrNotImplemented = errors.New("gcache: operation not implemented")
 )
 
-// KeyValueCacheWithContext defines the interface for key-value cache operations with context.
-type KeyValueCacheWithContext interface {
-	GetWithContext(ctx context.Context, key string) ([]byte, error)
-	SetWithContext(ctx context.Context, key string, value []byte, expiration time.Duration) error
-	DeleteWithContext(ctx context.Context, key string) error
-	ExistsWithContext(ctx context.Context, key string) (bool, error)
-	// GetOrSetWithContext 返回缓存值；未命中时调用 loader 加载并写入。
-	GetOrSetWithContext(ctx context.Context, key string, loader func(context.Context) ([]byte, error), expiration time.Duration) ([]byte, error)
+// Getter 读取一个键；未命中必须返回 ErrCacheMiss。
+// Getter reads one key and must return ErrCacheMiss when the key is absent.
+type Getter interface {
+	Get(ctx context.Context, key string) ([]byte, error)
 }
 
-// KeyValueCache defines the interface for key-value cache operations.
-type KeyValueCache interface {
-	Get(key string) ([]byte, error)
-	Set(key string, value []byte, expiration time.Duration) error
-	Delete(key string) error
-	Exists(key string) (bool, error)
-	// GetOrSet 返回缓存值；未命中时调用 loader 加载并写入。
-	GetOrSet(key string, loader func() ([]byte, error), expiration time.Duration) ([]byte, error)
+// Setter 写入一个键，ttl <= 0 表示不过期。
+// Setter writes one key; a ttl <= 0 means no expiration.
+type Setter interface {
+	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
 }
 
-// ExpirableCacheWithContext defines the interface for cache expiration operations with context.
-type ExpirableCacheWithContext interface {
-	ExpireWithContext(ctx context.Context, key string, expiration time.Duration) error
-	TTLWithContext(ctx context.Context, key string) (time.Duration, error)
+// Deleter 删除一个键。删除不存在的键是幂等操作，不得返回错误。
+// Deleter removes one key. Deleting an absent key is idempotent and must not error.
+type Deleter interface {
+	Delete(ctx context.Context, key string) error
 }
 
-// ExpirableCache defines the interface for cache expiration operations.
-type ExpirableCache interface {
-	Expire(key string, expiration time.Duration) error
-	TTL(key string) (time.Duration, error)
+// KV 是后端必须满足的唯一契约，其余能力一律可选。
+// KV is the only contract a backend must satisfy; every other capability is optional.
+type KV interface {
+	Getter
+	Setter
+	Deleter
 }
 
-// CounterCacheWithContext defines the interface for counter operations with context.
-type CounterCacheWithContext interface {
-	IncrementWithContext(ctx context.Context, key string, value int64) (int64, error)
-	DecrementWithContext(ctx context.Context, key string, value int64) (int64, error)
+// Exister 由具备原生存在性判断的后端实现；没有实现时用 Exists 函数回退到 Get。
+// Exister is implemented by backends with a native existence check; otherwise the
+// Exists helper falls back to Get.
+type Exister interface {
+	Exists(ctx context.Context, key string) (bool, error)
 }
 
-// CounterCache defines the interface for counter operations.
-type CounterCache interface {
-	Increment(key string, value int64) (int64, error)
-	Decrement(key string, value int64) (int64, error)
+// TTLReader 读取键的剩余生存时间：负值表示永不过期，键不存在时返回 ErrCacheMiss。
+// TTLReader reads a key's remaining lifetime: a negative value means no expiration,
+// and an absent key yields ErrCacheMiss.
+type TTLReader interface {
+	TTL(ctx context.Context, key string) (time.Duration, error)
 }
 
-// HashCacheWithContext defines the interface for hash operations with context.
-type HashCacheWithContext interface {
-	HashSetWithContext(ctx context.Context, key string, field string, value []byte) error
-	HashGetWithContext(ctx context.Context, key string, field string) ([]byte, error)
-	HashGetAllWithContext(ctx context.Context, key string) (map[string][]byte, error)
-	HashDeleteWithContext(ctx context.Context, key string, fields ...string) error
+// Expirer 为已存在的键重设过期时间；键不存在时返回 ErrCacheMiss。
+// 与 Setter 保持一致，ttl <= 0 表示清除过期时间（键转为永不过期），而不是立即删除。
+// Expirer resets the expiration of an existing key and returns ErrCacheMiss if it is absent.
+// Consistently with Setter, a ttl <= 0 clears the expiration (the key becomes permanent)
+// rather than deleting the key.
+type Expirer interface {
+	Expire(ctx context.Context, key string, ttl time.Duration) error
 }
 
-// HashCache defines the interface for hash operations.
-type HashCache interface {
-	HashSet(key string, field string, value []byte) error
-	HashGet(key string, field string) ([]byte, error)
-	HashGetAll(key string) (map[string][]byte, error)
-	HashDelete(key string, fields ...string) error
+// Counter 以 delta 原子增减并返回新值，delta 为负即递减。
+// Counter atomically adds delta and returns the new value; a negative delta decrements.
+type Counter interface {
+	Add(ctx context.Context, key string, delta int64) (int64, error)
 }
 
-// ListCacheWithContext defines the interface for list operations with context.
-type ListCacheWithContext interface {
-	ListPushWithContext(ctx context.Context, key string, values ...[]byte) error
-	ListPopWithContext(ctx context.Context, key string) ([]byte, error)
-	ListRangeWithContext(ctx context.Context, key string, start, stop int64) ([][]byte, error)
+// Pinger 探测后端可用性。
+// Pinger probes backend availability.
+type Pinger interface {
+	Ping(ctx context.Context) error
 }
 
-// ListCache defines the interface for list operations.
-type ListCache interface {
-	ListPush(key string, values ...[]byte) error
-	ListPop(key string) ([]byte, error)
-	ListRange(key string, start, stop int64) ([][]byte, error)
-}
-
-// SetCacheWithContext defines the interface for set operations with context.
-type SetCacheWithContext interface {
-	SetAddWithContext(ctx context.Context, key string, members ...[]byte) error
-	SetMembersWithContext(ctx context.Context, key string) ([][]byte, error)
-	SetIsMemberWithContext(ctx context.Context, key string, member []byte) (bool, error)
-}
-
-// SetCache defines the interface for set operations.
-type SetCache interface {
-	SetAdd(key string, members ...[]byte) error
-	SetMembers(key string) ([][]byte, error)
-	SetIsMember(key string, member []byte) (bool, error)
-}
-
-// HealthCheckerWithContext defines the interface for health check operations with context.
-type HealthCheckerWithContext interface {
-	PingWithContext(ctx context.Context) error
-}
-
-// HealthChecker defines the interface for health check operations.
-type HealthChecker interface {
-	Ping() error
-}
-
-// Closer defines the interface for closing a resource.
-type Closer interface {
-	Close() error
-}
-
-// BasicCacheWithContext is a composite interface for basic cache operations with context.
-type BasicCacheWithContext interface {
-	KeyValueCacheWithContext
-	ExpirableCacheWithContext
-	CounterCacheWithContext
-	HealthCheckerWithContext
-	Closer
-}
-
-// BasicCache is a composite interface for basic cache operations.
-type BasicCache interface {
-	KeyValueCache
-	ExpirableCache
-	CounterCache
-	HealthChecker
-	Closer
-}
-
-// CacheWithContext is a composite interface for all cache operations with context.
-type CacheWithContext interface {
-	BasicCacheWithContext
-	HashCacheWithContext
-	ListCacheWithContext
-	SetCacheWithContext
-}
-
-// Cache is a composite interface for all cache operations.
-type Cache interface {
-	BasicCache
-	HashCache
-	ListCache
-	SetCache
-}
-
-// Options holds configuration for cache clients.
+// Options 保存进程内缓存的配置。远端连接参数属于用户自行构造的客户端，
+// 刻意不在此处表达，以免复刻一份永远追不上上游的有损配置面。
+// Options holds in-process cache configuration. Remote connection settings belong to the
+// user-constructed client and are deliberately absent, so the package never mirrors a lossy
+// subset of an upstream client's configuration surface.
 type Options struct {
-	Address         string
-	Password        string
-	DB              int
-	PoolSize        int
-	MinIdleConns    int
-	DialTimeout     time.Duration
-	ReadTimeout     time.Duration
-	WriteTimeout    time.Duration
-	MaxRetries      int
-	CleanupInterval time.Duration // For MemoryCache
+	CleanupInterval time.Duration
 }
 
 // Option configures an Options struct.
 type Option func(*Options)
 
-// WithAddress sets the network address.
-func WithAddress(address string) Option {
-	return func(o *Options) {
-		o.Address = address
-	}
-}
-
-// WithPassword sets the password.
-func WithPassword(password string) Option {
-	return func(o *Options) {
-		o.Password = password
-	}
-}
-
-// WithDB sets the database index.
-func WithDB(db int) Option {
-	return func(o *Options) {
-		o.DB = db
-	}
-}
-
-// WithPoolSize sets the connection pool size.
-func WithPoolSize(poolSize int) Option {
-	return func(o *Options) {
-		o.PoolSize = poolSize
-	}
-}
-
-// WithMinIdleConns sets the minimum number of idle connections.
-func WithMinIdleConns(minIdleConns int) Option {
-	return func(o *Options) {
-		o.MinIdleConns = minIdleConns
-	}
-}
-
-// WithDialTimeout sets the dial timeout.
-func WithDialTimeout(timeout time.Duration) Option {
-	return func(o *Options) {
-		o.DialTimeout = timeout
-	}
-}
-
-// WithReadTimeout sets the read timeout.
-func WithReadTimeout(timeout time.Duration) Option {
-	return func(o *Options) {
-		o.ReadTimeout = timeout
-	}
-}
-
-// WithWriteTimeout sets the write timeout.
-func WithWriteTimeout(timeout time.Duration) Option {
-	return func(o *Options) {
-		o.WriteTimeout = timeout
-	}
-}
-
-// WithMaxRetries sets the maximum number of retries.
-func WithMaxRetries(maxRetries int) Option {
-	return func(o *Options) {
-		o.MaxRetries = maxRetries
-	}
-}
-
-// WithCleanupInterval sets the cleanup interval for expired items in MemoryCache.
+// WithCleanupInterval 设置 MemoryCache 清理过期项的间隔；非正值表示关闭后台清理。
+// WithCleanupInterval sets how often MemoryCache reaps expired items; a non-positive
+// value disables background cleanup.
 func WithCleanupInterval(interval time.Duration) Option {
 	return func(o *Options) {
 		o.CleanupInterval = interval
 	}
-}
-
-type Serializer interface {
-	Serialize(v interface{}) ([]byte, error)
-	Deserialize(data []byte, v interface{}) error
-}
-
-type JSONSerializer struct{}
-
-func (j JSONSerializer) Serialize(v interface{}) ([]byte, error) {
-	if v == nil {
-		return nil, nil
-	}
-	return json.Marshal(v)
-}
-
-func (j JSONSerializer) Deserialize(data []byte, v interface{}) error {
-	if len(data) == 0 {
-		return nil
-	}
-	return json.Unmarshal(data, v)
 }

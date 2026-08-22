@@ -23,7 +23,12 @@
 - gcrypt：新增 AES-GCM（`AESGCMEncrypt/Decrypt`）、Ed25519（`GenerateEd25519Key`/`SignWithEd25519`/`VerifyWithEd25519`）、`RandomBytes`。
 - gcompress：新增 zlib/flate 压缩（`Zlib*`/`Flate*`）。
 - glog：新增 `DebugfContext/InfofContext/WarnfContext/ErrorfContext`。
-- gcache：新增 `GetOrSet`/`GetOrSetWithContext`（loader 模式，未命中自动加载并写入），Memory/Redis/Valkey 均实现。
+- gcache：小接口契约族 `Getter`/`Setter`/`Deleter`（组合为 `KV`）与可选能力 `Exister`/`TTLReader`/`Expirer`/`Counter`/`Pinger`；后端由用户注入，本包不 import 任何客户端库。
+- gcache：接口之上的函数层 `GetOrLoad`（loader 模式，取代原先在三个实现里重复的 `GetOrSet`）、`Exists`（原生 EXISTS 优先、否则回退 `Get`）、`Incr`/`Decr`、`GetJSON[T]`/`SetJSON[T]`。
+- gcache：`Funcs` 闭包注入（仅覆盖 `KV`，避免可选能力被无条件满足而破坏类型断言式能力探测）。
+- gcache：新增 `gcache/cachetest` 子包——按能力拆分的契约一致性套件 `RunKV`/`RunTTL`/`RunCounter`，实现不支持的能力自动跳过；仅依赖标准库 `testing`，用户注入自建后端后可 import 它自证合规。
+- gcache：`MemoryCache` 的 `WithCleanupInterval` 传入非正值不再 panic，改为不启动后台清理（过期项仍在读取时剔除）。
+- 仓库：`scripts/check-deps.sh` 新增零第三方依赖断言，锁死 `gcache` 只依赖标准库。
 - gnet：`netinfo.Interface` 移除永不填充/错位字段（DNSServers/DHCPServer/Location/VendorID/DeviceID），新增 `BusInfo`/`DriverVersion` 正确映射 ethtool；`capture` 新增 `WithFilterInstructions`；`netinfo` 补测试与 gnet 子包文档。
 - 仓库：新增文档语言规范（README 与注释统一**中英双语**、错误消息保持英文、标识符与测试名保持英文），全部包 README 统一为中文为主的双语文档。
 - 仓库：注释语言规范修订为**中英双语**（中文在前、英文在后），并规定冗余注释（复述代码、无信息量标签）直接删除；首批完成 gresolver/gsql/gcache 库文件与 gretry/grx/gconfig/gresolver/gcrypt/gsd/glog 测试注释的清理。
@@ -41,6 +46,13 @@
 - ghttp：Timeout 超时取消 context 并丢弃迟到写入；writer 支持 Hijack/Flush。
 - ghttp：路径参数提取单次化，提取错误走路由级错误管线；SSE handler 错误落日志；`Server.Use` 链式化。
 - ghttp：client 钩子顺序固定为 client-before → request-before → 发送 → client-after → request-after。
+- gcache：**破坏性变更**——统一为 ctx 优先的单一方法集，删除全部 `*WithContext` 孪生方法（一个完整实现的方法数由 41 降到 9）。
+- gcache：**破坏性变更**——`Increment`/`Decrement` 合并为 `Add(ctx, key, delta)`（原本内部就是同一实现的两个门面）；`Incr`/`Decr` 降级为自由函数。
+- gcache：**破坏性变更**——`Expire` 语义收敛：键不存在时返回 `ErrCacheMiss`（原为静默返回 nil）；`ttl <= 0` 表示清除过期时间，与 `Set` 保持一致。
+- gcache：能力探测从运行期错误改为编译期/装配期的接口满足判定。
+- gcache：**破坏性变更**——`LRUCache`/`LFUCache`/`TimedCache` 泛型化为 `[K comparable, V any]`，值不再是 `interface{}`（构造需给出类型参数，如 `NewLRUCache[string, any](2)`）。
+- gcache：**破坏性变更**——三种本地缓存改为内建锁、默认线程安全，删除 `ThreadSafeLRUCache`/`ThreadSafeLFUCache` 及其构造函数。修复两处既有数据竞争：`ThreadSafeLRUCache.Get` 用 `RLock` 却经由 `MoveToFront` 改写共享链表（`LRUCache.Get` 现取写锁）、`TimedCache` 的 `cleanupLoop` 无锁读 `stop` 而 `Close` 持锁写它（改用 `sync.Once` 幂等关闭固定通道）。`go test -race ./gcache/...` 由红转绿。
+- 仓库：修复 gresolver 测试脚手架的既有数据竞争——`testDNSServer` 的 `recordsA`/`cnames` 由 `serve` goroutine 读、测试主体写，现以 `sync.RWMutex` 保护。`go test -race ./...` 门禁恢复全绿。
 
 ### Deprecated
 
@@ -54,6 +66,11 @@
 - ghttp：旧 `openAPIBuilder` 死代码、未用的 util/form 辅助函数、client 未用字段。
 - 仓库：删除基于已移除 RouteBuilder API 的陈旧示例（`example/ghttp_usage`、`example/server_review`、`example/server_review_v2`、`example/server_review_v3`）；相关评审文档（`docs/ghttp-server-review*.md`）随 typed API 正式化一并清理。
 - gnet/rawcap：库内 demo `main` 文件（不做 demo，方向改为真实库）。
+- gcache：**破坏性变更**——删除 Redis 与 Valkey 内置实现（`gcache/redis.go`、`gcache/valkey.go` 及其测试）、`NewRedisCache`/`NewValkeyCache`、`RedisCache`/`ValkeyCache`，并从根 `go.mod` 移除 `github.com/redis/go-redis/v9`、`github.com/valkey-io/valkey-go` 及其独有间接依赖 `github.com/cespare/xxhash/v2`、`github.com/dgryski/go-rendezvous`。本包退回纯进程内实现 + 注入式契约，远端后端由用户传入（迁移方式见 `gcache/README.md`）。实测：只用 `MemoryCache` 的程序由手写等价实现的 2.07x 降至 1.16x，单个二进制省下 2.04 MiB（原体积 43.7%）；`go list -deps ./gcache` 第三方包由 14 个降为 0。
+- gcache：**破坏性变更**——删除 `Hash*`/`List*`/`Set*` 接口与方法。它们是 Redis 族独有能力，Memcached、etcd 与全部 Go 进程内库均不支持，导致 `MemoryCache` 需要 20 个 `ErrNotSupported` 桩、一致性测试需按具体类型开洞。需要 Redis 数据结构者请直接使用 Redis 客户端。
+- gcache：**破坏性变更**——删除大接口 `Cache`/`CacheWithContext`/`BasicCache`/`BasicCacheWithContext` 及各能力接口的 `*WithContext` 变体，改为在调用点按需组合小接口。
+- gcache：**破坏性变更**——`Options` 移除 9 个连接字段（`Address`/`Password`/`DB`/`PoolSize`/`MinIdleConns`/`DialTimeout`/`ReadTimeout`/`WriteTimeout`/`MaxRetries`）与对应 `With*`，仅保留 `CleanupInterval`。原映射本就有损（valkey 侧静默丢弃 `MinIdleConns`/`ReadTimeout`，`MaxRetries` 退化为布尔 `DisableRetry`），且无法表达 TLS/Cluster/Sentinel；改为由用户直接配置客户端。
+- gcache：**破坏性变更**——删除 `Serializer`/`JSONSerializer`（包内无消费者），改用 `GetJSON[T]`/`SetJSON[T]`；删除 `ErrNotSupported`。
 
 ## [0.1.0] - 待发布
 

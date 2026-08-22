@@ -14,7 +14,7 @@ A collection of Go libraries for building robust applications; packages are inde
 
 ## Modules
 
-- [gcache](gcache/README.en.md) - Caching (Memory, Redis, Valkey)
+- [gcache](gcache/README.en.md) - Caching (in-process implementation + injected backend contracts, dependency-free)
 - [gcompress](gcompress/README.en.md) - Compression
 - [gconfig](gconfig/README.en.md) - Configuration
 - [gcrypt](gcrypt/README.en.md) - Cryptography

@@ -5,44 +5,54 @@ import (
 	"sync"
 )
 
-type lruEntry struct {
-	key   string
-	value interface{}
+type lruEntry[K comparable, V any] struct {
+	key   K
+	value V
 }
 
-// LRUCache 是非线程安全的 LRU（最近最少使用）缓存，Get/Set 均为 O(1)。
-// LRUCache is a non-thread-safe LRU cache with O(1) Get/Set.
-type LRUCache struct {
+// LRUCache 是线程安全的 LRU（最近最少使用）缓存，Get/Set 均为 O(1)。
+// 因为 Get 也会调整访问顺序（写共享状态），所有方法统一使用 sync.Mutex。
+// LRUCache is a thread-safe LRU cache with O(1) Get/Set. Since Get also reorders entries
+// (mutating shared state), every method takes a single sync.Mutex.
+type LRUCache[K comparable, V any] struct {
+	mu       sync.Mutex
 	capacity int
 	ll       *list.List
-	cache    map[string]*list.Element
+	cache    map[K]*list.Element
 }
 
-// NewLRUCache 创建指定容量的 LRUCache；容量必须大于 0。
-// NewLRUCache creates an LRU cache; capacity must be positive.
-func NewLRUCache(capacity int) *LRUCache {
+// NewLRUCache 创建指定容量的 LRUCache；容量小于等于 0 时按 1 处理。
+// NewLRUCache creates an LRU cache; a capacity <= 0 is treated as 1.
+func NewLRUCache[K comparable, V any](capacity int) *LRUCache[K, V] {
 	if capacity <= 0 {
 		capacity = 1
 	}
-	return &LRUCache{
+	return &LRUCache[K, V]{
 		capacity: capacity,
 		ll:       list.New(),
-		cache:    make(map[string]*list.Element),
+		cache:    make(map[K]*list.Element),
 	}
 }
 
-func (l *LRUCache) Get(key string) (interface{}, bool) {
+func (l *LRUCache[K, V]) Get(key K) (V, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	if elem, ok := l.cache[key]; ok {
 		l.ll.MoveToFront(elem)
-		return elem.Value.(*lruEntry).value, true
+		return elem.Value.(*lruEntry[K, V]).value, true
 	}
-	return nil, false
+	var zero V
+	return zero, false
 }
 
-func (l *LRUCache) Set(key string, value interface{}) {
+func (l *LRUCache[K, V]) Set(key K, value V) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	if elem, ok := l.cache[key]; ok {
 		l.ll.MoveToFront(elem)
-		elem.Value.(*lruEntry).value = value
+		elem.Value.(*lruEntry[K, V]).value = value
 		return
 	}
 
@@ -50,47 +60,16 @@ func (l *LRUCache) Set(key string, value interface{}) {
 		back := l.ll.Back()
 		if back != nil {
 			l.ll.Remove(back)
-			delete(l.cache, back.Value.(*lruEntry).key)
+			delete(l.cache, back.Value.(*lruEntry[K, V]).key)
 		}
 	}
 
-	newElem := l.ll.PushFront(&lruEntry{key: key, value: value})
+	newElem := l.ll.PushFront(&lruEntry[K, V]{key: key, value: value})
 	l.cache[key] = newElem
 }
 
-func (l *LRUCache) Len() int {
+func (l *LRUCache[K, V]) Len() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	return l.ll.Len()
-}
-
-// ThreadSafeLRUCache 是 LRUCache 的线程安全包装。
-// ThreadSafeLRUCache is a thread-safe wrapper around LRUCache.
-type ThreadSafeLRUCache struct {
-	lru  *LRUCache
-	lock sync.RWMutex
-}
-
-// NewThreadSafeLRUCache 创建指定容量的线程安全 LRUCache；容量必须大于 0。
-// NewThreadSafeLRUCache creates a thread-safe LRU cache; capacity must be positive.
-func NewThreadSafeLRUCache(capacity int) *ThreadSafeLRUCache {
-	return &ThreadSafeLRUCache{
-		lru: NewLRUCache(capacity),
-	}
-}
-
-func (c *ThreadSafeLRUCache) Get(key string) (interface{}, bool) {
-	c.lock.RLock()
-	defer c.lock.RUnlock()
-	return c.lru.Get(key)
-}
-
-func (c *ThreadSafeLRUCache) Set(key string, value interface{}) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	c.lru.Set(key, value)
-}
-
-func (c *ThreadSafeLRUCache) Len() int {
-	c.lock.RLock()
-	defer c.lock.RUnlock()
-	return c.lru.Len()
 }
