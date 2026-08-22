@@ -11,3 +11,4 @@ experiments
 benchmarks/bench_*.txt
 temp/ghttp.test
 *.test
+examples/minimal/minimal
