@@ -67,6 +67,13 @@ var (
 	// returns 503 based on it.
 	ErrNotReady = errors.New("ghttp: not ready")
 
+	// ErrShuttingDown 是 RunGraceful 收到停止信号后置就绪门闸的不就绪原因,使 Ready
+	// 探针返回 503,让负载均衡器摘流。
+	// ErrShuttingDown is the not-ready cause RunGraceful sets on the readiness gate
+	// after a stop signal, so the Ready probe returns 503 and the load balancer
+	// drains traffic.
+	ErrShuttingDown = errors.New("ghttp: shutting down")
+
 	// ErrServerClosed 是 Serve 系方法在正常关闭后返回的哨兵,等价于
 	// http.ErrServerClosed。导出以供调用方 errors.Is 判断"正常关闭"而非异常。
 	// ErrServerClosed is the sentinel returned by the Serve family after a clean
@@ -102,4 +109,24 @@ var (
 	// the unified error chain). Callers can errors.Is it to distinguish a panic from
 	// an ordinary error.
 	ErrHandlerPanic = errors.New("ghttp: handler panicked")
+
+	// ErrUnsupportedMediaType 表示请求的 Content-Type 与端点声明的
+	// RequestDecoder.ContentType() 不符,对应 415。由统一错误链据此映射状态码。
+	// ErrUnsupportedMediaType indicates the request Content-Type does not match
+	// the endpoint's declared RequestDecoder.ContentType(), mapping to 415. The
+	// unified error chain maps the status from it.
+	ErrUnsupportedMediaType = errors.New("ghttp: unsupported media type")
+
+	// ErrRequestEntityTooLarge 表示请求体超过 LimitBody 配置的上限,对应 413。
+	// ErrRequestEntityTooLarge indicates the body exceeds the LimitBody cap,
+	// mapping to 413.
+	ErrRequestEntityTooLarge = errors.New("ghttp: request entity too large")
+
+	// ErrValidation 表示参数/请求体校验失败(required/范围/枚举等),对应 400。
+	// 与 ErrInvalidInput 分开,便于用户侧与错误链区分"校验失败"与"解析/类型不符"。
+	// ErrValidation indicates parameter/body validation failure (required/range/
+	// enum, etc.), mapping to 400. Kept separate from ErrInvalidInput so callers
+	// and the error chain can distinguish "validation failed" from "parse/type
+	// mismatch".
+	ErrValidation = errors.New("ghttp: validation failed")
 )

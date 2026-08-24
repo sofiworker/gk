@@ -55,6 +55,14 @@ type router interface {
 	// register registers terminal (possibly partially folded by the caller) at
 	// method + path.
 	register(method, path string, terminal Handler) error
+
+	// owner 返回承载路由的 mux,供注册期读取 server 级配置(如严格 Content-Type),
+	// 把配置在注册期固化进执行器,避免请求期查配置的开销。包内密封,不对用户暴露。
+	// owner returns the mux backing the routes, so registration can read
+	// server-level config (e.g. strict Content-Type) and bake it into the
+	// executor at registration time, avoiding request-time config lookups.
+	// Package-sealed; not exposed to users.
+	owner() *mux
 }
 
 // LimitBody 是请求体大小限制中间件：超过 maxBytes 即返回 413 PayloadTooLarge,

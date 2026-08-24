@@ -64,36 +64,69 @@ func newRequestID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// Logger 是后处理型中间件:调用 next 后读取 Response 的最终状态码与耗时并记录。它演示
-// "后处理 + 读 status"——依赖本轮为 Response 增加的 status/written 追踪。log 目标可注入。
-// Logger is a post-processing middleware: after calling next it reads the
-// Response's final status code and elapsed time and logs them. It demonstrates
-// "post-processing + reading status" — relying on this stage's status/written
-// tracking added to Response. The log sink is injectable.
+// AccessLog 是一次请求的可观测快照,传给日志 sink。相比原始四元组,它补充了命中路由
+// 模板(低基数,适合聚合)、客户端 IP、响应体字节数与下游返回的 error。
+// AccessLog is an observability snapshot of one request handed to the log sink.
+// Beyond the original tuple it adds the matched route template (low-cardinality,
+// aggregation-friendly), the client IP, the response byte count, and the error
+// returned downstream.
+type AccessLog struct {
+	Method   string        // 请求方法 / request method
+	Path     string        // 原始请求 path(高基数)/ raw request path (high cardinality)
+	Route    string        // 命中的路由模板(低基数,可能为空)/ matched route template (low cardinality, may be empty)
+	Status   int           // 最终状态码 / final status code
+	Elapsed  time.Duration // 处理耗时 / handling duration
+	ClientIP string        // 客户端 IP(依可信代理策略解析)/ client IP (per trusted-proxy policy)
+	BytesOut int           // 写出的响应体字节数 / response body bytes written
+	Err      error         // 下游返回的 error(可能为 nil)/ error returned downstream (may be nil)
+}
+
+// Logger 是后处理型中间件:调用 next 后把请求的结构化快照 AccessLog 交给 sink 记录。
+// 默认实现打印到标准 log。要自定义结构化字段/后端,用 LoggerWith。
+// Logger is a post-processing middleware: after calling next it hands a
+// structured AccessLog snapshot to a sink. The default prints to the standard
+// log. Use LoggerWith to customize the structured fields/backend.
 func Logger() Middleware {
-	return LoggerWith(func(method, path string, status int, elapsed time.Duration) {
-		log.Printf("ghttp %s %s -> %d (%s)", method, path, status, elapsed)
+	return LoggerWith(func(a AccessLog) {
+		route := a.Route
+		if route == "" {
+			route = a.Path
+		}
+		log.Printf("ghttp %s %s -> %d (%s) %dB ip=%s", a.Method, route, a.Status, a.Elapsed, a.BytesOut, a.ClientIP)
 	})
 }
 
-// LoggerWith 用自定义记录函数构造 Logger 中间件,便于测试与替换日志后端。
+// LoggerWith 用自定义记录函数构造 Logger 中间件,便于测试与替换日志后端。record 收到
+// 一个完整的 AccessLog 值(按值传递,sink 不得持有其内部引用做异步复用)。
 // LoggerWith builds a Logger middleware with a custom record function, easing
-// testing and log-backend replacement.
-func LoggerWith(record func(method, path string, status int, elapsed time.Duration)) Middleware {
+// testing and log-backend replacement. record receives a full AccessLog value
+// (passed by value; the sink must not retain internal references for async use).
+func LoggerWith(record func(AccessLog)) Middleware {
 	return func(next Handler) Handler {
 		return func(ctx context.Context, req *Request, resp *Response) error {
 			start := time.Now()
 			err := next(ctx, req, resp)
 			status := resp.Status()
 			if status == 0 {
-				// 下游既未写状态码也未写 body(如仅返回 error 待错误链处理):按 200
-				// 记录占位,真实码由阶段 4 错误链落定。
-				// Downstream wrote neither status nor body (e.g. returned an
-				// error for the error chain): record a 200 placeholder; the real
-				// code is settled by stage 4's error chain.
+				// 下游既未写状态码也未写 body(如仅返回 error 交错误链处理):此处按
+				// 200 占位。装了 Logger 的场景下若需真实错误码,应把 Logger 放在错误
+				// 链之后或用 WithErrorHook 观测。
+				// Downstream wrote neither status nor body (e.g. returned an error
+				// for the error chain): record a 200 placeholder here. For the real
+				// error code, place Logger after the error chain or observe via
+				// WithErrorHook.
 				status = 200
 			}
-			record(req.Method, req.URL.Path, status, time.Since(start))
+			record(AccessLog{
+				Method:   req.Method,
+				Path:     req.URL.Path,
+				Route:    req.MatchedRoute(),
+				Status:   status,
+				Elapsed:  time.Since(start),
+				ClientIP: req.ClientIP(),
+				BytesOut: resp.BytesOut(),
+				Err:      err,
+			})
 			return err
 		}
 	}

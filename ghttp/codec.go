@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // RequestDecoder 是请求体解码器:请求期把请求体解码进 v(v 为 *T)。仅需实现一侧时
@@ -100,3 +101,28 @@ func (xmlCodec) Encode(resp *Response, v any) error {
 // XMLCodec returns an XML codec implementing both RequestDecoder and
 // ResponseEncoder.
 func XMLCodec() Codec { return xmlCodec{} }
+
+// mediaType 取 Content-Type 头的 media-type 部分(到第一个 ';' 为止,去空白并转小写)。
+// 不做完整 RFC 解析——415 判定只需比对主类型,参数(charset/boundary)无关。
+// mediaType extracts the media-type part of a Content-Type header (up to the
+// first ';', trimmed and lowercased). It does no full RFC parse — a 415 decision
+// only needs the base type; parameters (charset/boundary) are irrelevant.
+func mediaType(contentType string) string {
+	if i := strings.IndexByte(contentType, ';'); i >= 0 {
+		contentType = contentType[:i]
+	}
+	return strings.ToLower(strings.TrimSpace(contentType))
+}
+
+// contentTypeMatches 报告请求 Content-Type 是否与端点期望的 want 一致(按 media-type
+// 比对)。请求无 Content-Type 时放行(交给解码器处理空体/宽松场景),避免对无体请求误判。
+// contentTypeMatches reports whether the request Content-Type matches the
+// endpoint's expected want (compared by media-type). A missing request
+// Content-Type passes (deferring empty-body/lenient cases to the decoder),
+// avoiding false rejections of body-less requests.
+func contentTypeMatches(got, want string) bool {
+	if got == "" || want == "" {
+		return true
+	}
+	return mediaType(got) == mediaType(want)
+}

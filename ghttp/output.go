@@ -45,6 +45,16 @@ func (o jsonOutput[T]) encode(resp *Response, v T) error {
 		status = http.StatusOK
 	}
 	if o.enc != nil {
+		// 自定义 encoder:用其声明的 Content-Type(若尚未被设置),避免输出丢失
+		// 正确的 Content-Type(此前该分支从不设置,XML 等自定义输出被误当默认类型)。
+		// Custom encoder: set its declared Content-Type (unless already set) so
+		// the output does not lose the correct Content-Type (this branch never
+		// set it before, mislabeling XML and other custom outputs).
+		if resp.Header().Get("Content-Type") == "" {
+			if ct := o.enc.ContentType(); ct != "" {
+				resp.Header().Set("Content-Type", ct)
+			}
+		}
 		resp.WriteHeader(status)
 		return o.enc.Encode(resp, v)
 	}

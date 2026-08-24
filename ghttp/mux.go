@@ -3,6 +3,7 @@ package ghttp
 import (
 	"context"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 )
@@ -52,6 +53,44 @@ type mux struct {
 	// Set true (strict mode): full validation of dot and empty segments, any
 	// illegal one yields 400.
 	strictPath bool
+
+	// --- 错误链配置(经 Option 写入,请求期只读) / error-chain config (Option-set, read-only at request time) ---
+
+	// exposeErrorDetails 为 true 时错误响应体回传 err.Error();默认 false(脱敏)。
+	// exposeErrorDetails, when true, leaks err.Error() into the error body;
+	// default false (sanitized).
+	exposeErrorDetails bool
+	// errorRenderer 自定义错误体渲染;nil 时用 defaultErrorRenderer(JSON)。
+	// errorRenderer customizes error-body rendering; nil uses defaultErrorRenderer.
+	errorRenderer ErrorRenderer
+	// onError 错误观测钩子(分类后调用,不写响应);nil 时不观测。
+	// onError is the error observation hook (post-classification, no write); nil skips.
+	onError func(r *http.Request, status int, err error)
+	// notFoundHandler / methodNotAllowedHandler 自定义 404/405;nil 时走默认错误体。
+	// custom 404/405 handlers; nil falls back to the default error body.
+	notFoundHandler         RawHandlerFunc
+	methodNotAllowedHandler RawHandlerFunc
+
+	// strictContentType 为 true 时,body 入口在解码前校验请求 Content-Type 与
+	// 端点声明的 RequestDecoder.ContentType() 一致,不符则 415。默认 true(严格)。
+	// strictContentType, when true, makes body entries verify the request
+	// Content-Type against the endpoint's declared RequestDecoder.ContentType()
+	// before decoding, yielding 415 on mismatch. Default true (strict).
+	strictContentType bool
+
+	// --- 可信代理 / 客户端 IP 配置(经 Option 写入,请求期只读) ---
+	// --- trusted-proxy / client-IP config (Option-set, read-only at request time) ---
+
+	// trustedProxies 是可信代理网段;仅当直连对端 IP 落入其一,才采信转发头解析真实
+	// 客户端 IP。为空(默认)则完全不信任转发头,ClientIP() 退回 RemoteIP()。
+	// trustedProxies are trusted proxy networks; forwarded headers are honored
+	// only when the direct peer IP falls within one. Empty (default) trusts no
+	// forwarded header and ClientIP() falls back to RemoteIP().
+	trustedProxies []netip.Prefix
+	// forwardedHeaders 是回溯真实 IP 时按序检查的头名。默认 X-Forwarded-For、X-Real-IP。
+	// forwardedHeaders are the header names checked in order when resolving the
+	// real IP. Default: X-Forwarded-For, X-Real-IP.
+	forwardedHeaders []string
 }
 
 // treeFor 返回 method 对应的路由树,不存在则创建。
@@ -91,6 +130,10 @@ func (m *mux) use(mws ...Middleware) {
 func (m *mux) register(method, path string, terminal Handler) error {
 	return m.handle(method, path, terminal)
 }
+
+// owner 实现 router:mux 就是自身的 owner。
+// owner implements router: a mux owns itself.
+func (m *mux) owner() *mux { return m }
 
 // handle 将一个已编译的 handler 注册到 method + path。path 先由模板语法翻译为 gin
 // 形式(:name / *name)再插入。
@@ -152,17 +195,17 @@ func (m *mux) dispatchChained(w http.ResponseWriter, r *http.Request) {
 	req.resp.ResponseWriter = w
 
 	serr := m.safeChain(r.Context(), req, &req.resp)
-	written := req.resp.Written()
+
+	// 统一错误链出口:writeError 内部判断是否已提交,已提交则只记录不改写。
+	// Unified error-chain exit: writeError checks Written() and only records
+	// (no rewrite) when the response is already committed.
+	if serr != nil {
+		m.writeError(&req.resp, r, serr)
+	}
 
 	req.resp.reset()
 	req.Request = nil
 	m.pool.Put(req)
-
-	if serr != nil && !written {
-		// TODO(stage-4): 接入统一错误链(415 / 业务错误 / panic)。
-		// TODO(stage-4): route into the unified error chain.
-		http.Error(w, serr.Error(), http.StatusInternalServerError)
-	}
 }
 
 // safeChain 以最外层兜底 recover 执行全局链:未被任何 Recovery 中间件拦截的 panic
@@ -175,8 +218,11 @@ func (m *mux) dispatchChained(w http.ResponseWriter, r *http.Request) {
 func (m *mux) safeChain(ctx context.Context, req *Request, resp *Response) (err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
-			// TODO(stage-4): 结构化 panic → 500,记录堆栈。
-			// TODO(stage-4): structured panic → 500 with stack.
+			// panic 收敛为 ErrHandlerPanic,交统一错误链映射为 500(脱敏响应体);
+			// 堆栈由用户装的 Recovery 中间件负责记录,此兜底仅防崩溃。
+			// Collapse the panic into ErrHandlerPanic for the unified error chain
+			// to map to 500 (sanitized body); stack logging belongs to a user's
+			// Recovery middleware — this safety net only prevents a crash.
 			err = ErrHandlerPanic
 			_ = rec
 		}
@@ -196,8 +242,9 @@ func (m *mux) dispatchTerminal(ctx context.Context, req *Request, resp *Response
 	r := req.Request
 	path := r.URL.Path
 	if err := validateRequestPath(path, m.strictPath); err != nil {
-		resp.WriteHeader(http.StatusBadRequest)
-		return nil
+		// 非法请求路径 → 交统一错误链(400 + 规范错误体)。
+		// Illegal request path → unified error chain (400 + canonical body).
+		return err
 	}
 
 	t := m.findTree(r.Method)
@@ -210,6 +257,9 @@ func (m *mux) dispatchTerminal(ctx context.Context, req *Request, resp *Response
 	if v.handler == nil {
 		m.writeMiss(resp, r, path, v.tsr)
 		return nil
+	}
+	if v.fullPath != nil {
+		req.matchedRoute = *v.fullPath
 	}
 
 	// 命中:直接调用裸终端。此处【不】做 recover——panic 应自然冒泡穿过全局中间件链,
@@ -231,7 +281,7 @@ func (m *mux) dispatchTerminal(ctx context.Context, req *Request, resp *Response
 func (m *mux) dispatchRaw(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	if err := validateRequestPath(path, m.strictPath); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		m.writeErrorRaw(w, r, err)
 		return
 	}
 
@@ -255,23 +305,33 @@ func (m *mux) dispatchRaw(w http.ResponseWriter, r *http.Request) {
 		m.writeMissRaw(w, r, path, tsr)
 		return
 	}
+	if v.fullPath != nil {
+		req.matchedRoute = *v.fullPath
+	}
 
 	req.resp.reset()
 	req.resp.ResponseWriter = w
 	serr := m.serve(v.handler, r.Context(), req, &req.resp)
 
+	// 统一错误链出口:必须在 reset 之前调用,writeError 依据 resp.Written() 判断
+	// 是否已提交——已提交则只记录不改写,修复此前无条件 http.Error 的双写。
+	// Unified error-chain exit: call BEFORE reset so writeError can read
+	// resp.Written(); a committed response is only recorded, not rewritten —
+	// fixing the previous unconditional http.Error double write.
+	if serr != nil {
+		m.writeError(&req.resp, r, serr)
+	}
+
 	req.resp.reset()
 	req.Request = nil
 	m.pool.Put(req)
-
-	if serr != nil {
-		http.Error(w, serr.Error(), http.StatusInternalServerError)
-	}
 }
 
 // writeMiss 在池化 Response 上处理未命中:TSR(301/308)优先,其次 405+Allow,否则 404。
+// 404/405 走统一错误体(可经 WithNotFoundHandler/WithMethodNotAllowedHandler 定制)。
 // writeMiss handles a miss on the pooled Response: TSR (301/308) first, then
-// 405 + Allow, otherwise 404.
+// 405 + Allow, otherwise 404. Both 404 and 405 emit the unified error body
+// (customizable via WithNotFoundHandler/WithMethodNotAllowedHandler).
 func (m *mux) writeMiss(resp *Response, r *http.Request, path string, tsr bool) {
 	if tsr && path != "/" {
 		redirectTrailingSlash(resp, r, path)
@@ -279,10 +339,18 @@ func (m *mux) writeMiss(resp *Response, r *http.Request, path string, tsr bool) 
 	}
 	if allow := m.allowedMethods(path); allow != "" {
 		resp.Header().Set("Allow", allow)
-		resp.WriteHeader(http.StatusMethodNotAllowed)
+		if m.methodNotAllowedHandler != nil {
+			_ = m.methodNotAllowedHandler(r.Context(), &Request{Request: r}, resp)
+			return
+		}
+		m.renderMiss(resp, r, http.StatusMethodNotAllowed)
 		return
 	}
-	resp.WriteHeader(http.StatusNotFound)
+	if m.notFoundHandler != nil {
+		_ = m.notFoundHandler(r.Context(), &Request{Request: r}, resp)
+		return
+	}
+	m.renderMiss(resp, r, http.StatusNotFound)
 }
 
 // writeMissRaw 是 writeMiss 的裸 ResponseWriter 版本,用于无全局中间件的零开销路径。
@@ -293,12 +361,45 @@ func (m *mux) writeMissRaw(w http.ResponseWriter, r *http.Request, path string, 
 		redirectTrailingSlash(w, r, path)
 		return
 	}
+	resp := &Response{ResponseWriter: w}
 	if allow := m.allowedMethods(path); allow != "" {
-		w.Header().Set("Allow", allow)
-		w.WriteHeader(http.StatusMethodNotAllowed)
+		resp.Header().Set("Allow", allow)
+		if m.methodNotAllowedHandler != nil {
+			_ = m.methodNotAllowedHandler(r.Context(), &Request{Request: r}, resp)
+			return
+		}
+		m.renderMiss(resp, r, http.StatusMethodNotAllowed)
 		return
 	}
-	w.WriteHeader(http.StatusNotFound)
+	if m.notFoundHandler != nil {
+		_ = m.notFoundHandler(r.Context(), &Request{Request: r}, resp)
+		return
+	}
+	m.renderMiss(resp, r, http.StatusNotFound)
+}
+
+// renderMiss 用配置的 ErrorRenderer(默认 JSON 错误体)渲染 404/405,使 miss 响应与
+// 业务错误体格式一致。仅在 miss 冷路径调用。
+// renderMiss renders a 404/405 via the configured ErrorRenderer (default JSON
+// error body) so miss responses match the business error body. Miss cold path only.
+func (m *mux) renderMiss(resp *Response, r *http.Request, status int) {
+	if m.onError != nil {
+		m.onError(r, status, statusError(status))
+	}
+	renderer := m.errorRenderer
+	if renderer == nil {
+		renderer = defaultErrorRenderer
+	}
+	renderer.RenderError(resp, status, codeForStatus(status), genericMessage(status))
+}
+
+// writeErrorRaw 在无池化 Response 的冷路径(裸 w)上走统一错误链渲染一个 error。
+// 仅用于非法请求路径等匹配前的错误。
+// writeErrorRaw renders an error through the unified chain on a bare-w cold path
+// without a pooled Response, used for pre-match errors like an illegal path.
+func (m *mux) writeErrorRaw(w http.ResponseWriter, r *http.Request, err error) {
+	resp := &Response{ResponseWriter: w}
+	m.writeError(resp, r, err)
 }
 
 // redirectTrailingSlash 对存在等价路由的路径发 301:有尾斜杠则去掉,无则补上
@@ -345,8 +446,8 @@ func (m *mux) allowedMethods(path string) string {
 func (m *mux) serve(h compiledHandler, ctx context.Context, req *Request, resp *Response) (err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
-			// TODO(stage-4): 结构化 panic → 500,记录堆栈。
-			// TODO(stage-4): structured panic → 500 with stack.
+			// panic 收敛为 ErrHandlerPanic → 统一错误链 → 500(脱敏)。
+			// Collapse the panic into ErrHandlerPanic → unified error chain → 500 (sanitized).
 			err = ErrHandlerPanic
 			_ = rec
 		}

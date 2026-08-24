@@ -63,7 +63,28 @@ type Request struct {
 	queryCache url.Values // filled on first Query() call; cleared at reset.
 	resp       Response
 	skipped    []skippedNode
+	// matchedRoute 命中的完整路由模板(gin 形式,如 /users/:id),命中后由分发器写入。
+	// 未命中或 raw 快路径的 miss 时为空。经 MatchedRoute() 只读暴露。
+	// matchedRoute is the matched full route template (gin form, e.g.
+	// /users/:id), written by the dispatcher after a hit. Empty on a miss or a
+	// raw fast-path miss. Exposed read-only via MatchedRoute().
+	matchedRoute string
+	// owner 指向借出本 Request 的 mux,在池的 New 闭包中一次性设置、reset 不清空,
+	// 使 ClientIP() 等访问器无需每请求写入即可读取 server 级配置。可能为 nil
+	// (miss 冷路径构造的临时 Request),访问器需容忍。
+	// owner points to the mux that lends this Request, set once in the pool's New
+	// closure and never cleared on reset, so accessors like ClientIP() can read
+	// server-level config with no per-request write. May be nil (transient
+	// Requests built on the miss cold path); accessors must tolerate it.
+	owner *mux
 }
+
+// MatchedRoute 返回命中的完整路由模板(gin 形式,如 "/users/:id");未命中时返回空串。
+// 它是低基数标签,适合作为 metrics/tracing/日志的路由维度,避免用高基数的原始 path。
+// MatchedRoute returns the matched full route template (gin form, e.g.
+// "/users/:id"); empty on a miss. It is a low-cardinality label suited for the
+// route dimension in metrics/tracing/logging, avoiding the high-cardinality path.
+func (r *Request) MatchedRoute() string { return r.matchedRoute }
 
 // Query 返回解析后的 URL 查询参数;首次调用时解析并缓存，后续复用该 url.Values 指针避免重新解析。
 // Query returns the parsed URL query values; parses and caches on first call,
@@ -81,6 +102,7 @@ func (r *Request) reset() {
 	r.queryCache = nil // 清空 cache 供下一请求重新解析。
 	r.Params.reset()
 	r.skipped = r.skipped[:0]
+	r.matchedRoute = ""
 	r.Request = nil
 }
 
@@ -92,8 +114,9 @@ func (r *Request) reset() {
 // a 500 can still be written) depend on it.
 type Response struct {
 	http.ResponseWriter
-	status  int
-	written bool
+	status   int
+	written  bool
+	bytesOut int
 }
 
 // WriteHeader 记录状态码并标记已提交，然后委托底层 writer。
@@ -116,7 +139,9 @@ func (r *Response) Write(b []byte) (int, error) {
 		r.status = http.StatusOK
 		r.written = true
 	}
-	return r.ResponseWriter.Write(b)
+	n, err := r.ResponseWriter.Write(b)
+	r.bytesOut += n
+	return n, err
 }
 
 // WriteString 在首次写入前隐式提交 200，然后委托底层 writer(若其支持 io.StringWriter,
@@ -129,15 +154,25 @@ func (r *Response) WriteString(s string) (int, error) {
 		r.status = http.StatusOK
 		r.written = true
 	}
+	var n int
+	var err error
 	if sw, ok := r.ResponseWriter.(io.StringWriter); ok {
-		return sw.WriteString(s)
+		n, err = sw.WriteString(s)
+	} else {
+		n, err = r.ResponseWriter.Write([]byte(s))
 	}
-	return r.ResponseWriter.Write([]byte(s))
+	r.bytesOut += n
+	return n, err
 }
 
 // Status 返回已写入的状态码;未写时返回 0。
 // Status returns the written status code, or 0 if nothing was written.
 func (r *Response) Status() int { return r.status }
+
+// BytesOut 返回经本 Response 写出的响应体字节数(累计),供访问日志记录响应大小。
+// BytesOut returns the cumulative response-body bytes written through this
+// Response, for access logging of the response size.
+func (r *Response) BytesOut() int { return r.bytesOut }
 
 // Written 报告响应是否已提交 (状态码或响应体已写)。
 // Written reports whether the response has been committed (status or body).
@@ -149,4 +184,5 @@ func (r *Response) reset() {
 	r.ResponseWriter = nil
 	r.status = 0
 	r.written = false
+	r.bytesOut = 0
 }

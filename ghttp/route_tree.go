@@ -52,6 +52,12 @@ type routeNode struct {
 	priority  uint32          // 子树命中权重(热路径重排)/ subtree hit weight
 	children  []*routeNode    // 子节点(通配恒在末位)/ children (wildcard last)
 	handler   compiledHandler // 路由终点处理器 / handler terminating a route
+	// fullPath 是终端节点对应的完整路由模板(gin 形式,如 /users/:id),注册期一次性
+	// 写入,供命中后作为低基数标签用于 metrics/tracing/日志。非终端节点为空。
+	// fullPath is the complete route template for a terminal node (gin form, e.g.
+	// /users/:id), written once at registration to serve as a low-cardinality
+	// label for metrics/tracing/logging after a hit. Empty on non-terminal nodes.
+	fullPath string
 }
 
 // methodTree 是一个 HTTP method 对应的路由根。
@@ -178,12 +184,14 @@ walk:
 				indices:   n.indices,
 				children:  n.children,
 				handler:   n.handler,
+				fullPath:  n.fullPath,
 				priority:  n.priority - 1,
 			}
 			n.children = []*routeNode{&child}
 			n.indices = string(n.path[i])
 			n.path = path[:i]
 			n.handler = nil
+			n.fullPath = ""
 			n.wildChild = false
 		}
 
@@ -240,6 +248,7 @@ walk:
 			return ErrDuplicateRoute
 		}
 		n.handler = h
+		n.fullPath = fullPath
 		return nil
 	}
 }
@@ -281,6 +290,7 @@ func (n *routeNode) insertChild(path string, fullPath string, h compiledHandler)
 				continue
 			}
 			n.handler = h
+			n.fullPath = fullPath
 			return nil
 		}
 
@@ -305,7 +315,7 @@ func (n *routeNode) insertChild(path string, fullPath string, h compiledHandler)
 		n.priority++
 
 		// 第二个节点:承载变量的节点 / second node: holds the variable.
-		child2 := &routeNode{path: path[i:], nType: ntCatchAll, handler: h, priority: 1}
+		child2 := &routeNode{path: path[i:], nType: ntCatchAll, handler: h, fullPath: fullPath, priority: 1}
 		n.children = []*routeNode{child2}
 		return nil
 	}
@@ -314,6 +324,7 @@ func (n *routeNode) insertChild(path string, fullPath string, h compiledHandler)
 	// no wildcard: set path and handler directly.
 	n.path = path
 	n.handler = h
+	n.fullPath = fullPath
 	return nil
 }
 
@@ -335,7 +346,15 @@ type skippedNode struct {
 // (trailing-slash redirect) is recommended.
 type nodeValue struct {
 	handler compiledHandler
-	tsr     bool
+	// fullPath 指向命中终端节点的完整路由模板(gin 形式)。用指针而非内嵌 string,
+	// 使 nodeValue 保持紧凑(避免 16→32 字节翻倍拖慢 getValue 的按值返回),命中后
+	// 由分发器解引用一次写入 Request。未命中为 nil。
+	// fullPath points to the matched terminal node's full route template (gin
+	// form). A pointer (not an embedded string) keeps nodeValue compact (avoiding
+	// a 16→32 byte doubling that slows getValue's by-value return); the dispatcher
+	// dereferences it once after a hit to write into Request. Nil on a miss.
+	fullPath *string
+	tsr      bool
 }
 
 // getValue 在树中查找 path 对应的 handler,把通配值写入 params;未命中时可能给出
@@ -380,6 +399,7 @@ walk:
 									priority:  n.priority,
 									children:  n.children,
 									handler:   n.handler,
+									fullPath:  n.fullPath,
 								},
 								paramsCount: globalParamsCount,
 							})
@@ -442,6 +462,7 @@ walk:
 					}
 
 					if value.handler = n.handler; value.handler != nil {
+						value.fullPath = &n.fullPath
 						return value
 					}
 					if len(n.children) == 1 {
@@ -460,6 +481,7 @@ walk:
 					params.add(n.path[2:], path)
 
 					value.handler = n.handler
+					value.fullPath = &n.fullPath
 					return value
 
 				default:
@@ -489,6 +511,7 @@ walk:
 			// 应已到达含 handler 的节点。
 			// We should have reached the node containing the handler.
 			if value.handler = n.handler; value.handler != nil {
+				value.fullPath = &n.fullPath
 				return value
 			}
 

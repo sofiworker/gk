@@ -84,7 +84,17 @@ type Option func(*Server)
 // keep-alive reaping), standard-library default MaxHeaderBytes.
 func New(opts ...Option) *Server {
 	s := &Server{}
-	s.pool.New = func() any { return &Request{} }
+	// 池化 Request 一次性绑定 owner=&s.mux(reset 不清空),使 ClientIP() 等访问器
+	// 无需每请求写入即可读取 server 级配置。
+	// Pooled Requests bind owner=&s.mux once (never cleared on reset), so
+	// accessors like ClientIP() read server-level config with no per-request write.
+	s.pool.New = func() any { return &Request{owner: &s.mux} }
+	// 默认严格 Content-Type 校验(body 入口不符声明的 CT 即 415);经
+	// WithStrictContentType(false) 关闭。零值 false 不是期望默认,故在此显式置真。
+	// Default strict Content-Type checking (body entries yield 415 on CT
+	// mismatch); disable via WithStrictContentType(false). The zero value false
+	// is not the desired default, so set it true here explicitly.
+	s.strictContentType = true
 	s.httpSrv = &http.Server{
 		// 直接指向内部 mux(零偏移嵌入),使请求路径不经 Server 的提升包装。
 		// Point straight at the inner mux (embedded at offset zero) so the request
@@ -120,6 +130,35 @@ func (s *Server) Use(mws ...Middleware) *Server {
 // high-performance tradeoff).
 func WithStrictPath(strict bool) Option {
 	return func(s *Server) { s.strictPath = strict }
+}
+
+// WithStrictContentType 控制 body 入口是否在解码前校验请求 Content-Type 与端点声明的
+// RequestDecoder.ContentType() 一致。默认 true(不符即 415);置 false 时跳过校验,
+// 直接把请求体交给解码器(旧宽松行为)。
+// WithStrictContentType controls whether body entries verify the request
+// Content-Type against the endpoint's declared RequestDecoder.ContentType()
+// before decoding. Default true (415 on mismatch); false skips the check and
+// hands the body straight to the decoder (the older lenient behavior).
+func WithStrictContentType(strict bool) Option {
+	return func(s *Server) { s.strictContentType = strict }
+}
+
+// WithNotFoundHandler 注册自定义 404 处理器,替代默认 JSON 错误体。处理器在全局中间件
+// 链内运行,可读取请求并完全接管响应。nil 时回退默认错误体。
+// WithNotFoundHandler registers a custom 404 handler replacing the default JSON
+// error body. It runs inside the global middleware chain, can read the request,
+// and fully owns the response. A nil handler falls back to the default body.
+func WithNotFoundHandler(h RawHandlerFunc) Option {
+	return func(s *Server) { s.notFoundHandler = h }
+}
+
+// WithMethodNotAllowedHandler 注册自定义 405 处理器。框架仍会先设置 Allow 头,再调用
+// 该处理器。nil 时回退默认错误体。
+// WithMethodNotAllowedHandler registers a custom 405 handler. The framework still
+// sets the Allow header first, then invokes the handler. Nil falls back to the
+// default body.
+func WithMethodNotAllowedHandler(h RawHandlerFunc) Option {
+	return func(s *Server) { s.methodNotAllowedHandler = h }
 }
 
 // ---------------------------------------------------------------------------

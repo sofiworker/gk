@@ -22,13 +22,22 @@ const (
 	bindSrcHeader
 )
 
-// bindStep 绑定计划的一步：把解析出的原始值写入目标字段。
-// bindStep is one step of the bind plan: writes parsed raw value into target field.
+// bindStep 绑定计划的一步：把解析出的原始值写入目标字段,并跑注册期编译好的校验规则。
+// bindStep is one step of the bind plan: writes the parsed raw value into the
+// target field, then runs validation rules compiled at registration.
 type bindStep struct {
 	fieldIndex int
 	source     bindSrc
 	name       string
 	kind       reflect.Kind
+	// rules 是注册期从 validate tag 编译的校验闭包(可空);请求期在字段赋值后依次跑。
+	// rules are validation closures compiled from the validate tag at
+	// registration (may be empty); run in order after the field is set.
+	rules []fieldRule
+	// required 表示该字段必填(validate 含 required);缺失即 ErrValidation。
+	// required marks the field as mandatory (validate has required); a miss
+	// yields ErrValidation.
+	required bool
 }
 
 // BindPlan 一个 params 结构体的绑定计划；uploadIdx>=0 表示含 multipart 上传字段（无 tag 字段静默跳过）。
@@ -71,8 +80,18 @@ func buildBindPlan(t reflect.Type) (*BindPlan, error) {
 			continue // 无绑定 tag,静默跳过
 		}
 		switch f.Type.Kind() {
-		case reflect.String, reflect.Int, reflect.Int64, reflect.Bool:
-			plan.steps = append(plan.steps, bindStep{fieldIndex: i, source: src, name: name, kind: f.Type.Kind()})
+		case reflect.String,
+			reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+			reflect.Float32, reflect.Float64,
+			reflect.Bool:
+			step := bindStep{fieldIndex: i, source: src, name: name, kind: f.Type.Kind()}
+			required, rules, err := compileFieldRules(f.Tag.Get("validate"), f.Type.Kind())
+			if err != nil {
+				return nil, fmt.Errorf("%w: field %q: %v", ErrInvalidParam, f.Name, err)
+			}
+			step.required, step.rules = required, rules
+			plan.steps = append(plan.steps, step)
 		default:
 			return nil, fmt.Errorf("%w: field %q unsupported bind kind %s", ErrInvalidParam, f.Name, f.Type.Kind())
 		}
@@ -103,30 +122,69 @@ func (p *BindPlan) apply(req *Request, query url.Values, paramsPtr any) error {
 			ok = raw != ""
 		}
 		if !ok {
+			// 缺失:required 则报校验错误,否则保留零值静默跳过。
+			// Missing: required yields a validation error, else keep the zero
+			// value and skip silently.
+			if s.required {
+				return fmt.Errorf("%w: %s %q is required", ErrValidation, bindSrcName(s.source), s.name)
+			}
 			continue
 		}
 		fv := v.Field(s.fieldIndex)
-		switch s.kind {
-		case reflect.String:
-			fv.SetString(raw)
-		case reflect.Int, reflect.Int64:
-			n, err := strconv.ParseInt(raw, 10, 64)
-			if err != nil {
-				return fmt.Errorf("%w: %s %q: %v", ErrInvalidInput, bindSrcName(s.source), s.name, err)
+		if err := setScalar(fv, s.kind, raw, s.source, s.name); err != nil {
+			return err
+		}
+		for _, rule := range s.rules {
+			if err := rule(fv); err != nil {
+				return fmt.Errorf("%w: %s %q: %v", ErrValidation, bindSrcName(s.source), s.name, err)
 			}
-			fv.SetInt(n)
-		case reflect.Bool:
-			b, err := strconv.ParseBool(raw)
-			if err != nil {
-				return fmt.Errorf("%w: %s %q: %v", ErrInvalidInput, bindSrcName(s.source), s.name, err)
-			}
-			fv.SetBool(b)
 		}
 	}
 	if p.uploadIdx >= 0 {
 		if err := p.applyUpload(req, v); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// setScalar 把原始字符串按 kind 解析并写入字段 fv。解析失败归 ErrInvalidInput(→400)。
+// setScalar parses raw per kind and writes it into field fv. A parse failure maps
+// to ErrInvalidInput (→400).
+func setScalar(fv reflect.Value, kind reflect.Kind, raw string, src bindSrc, name string) error {
+	switch kind {
+	case reflect.String:
+		fv.SetString(raw)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return fmt.Errorf("%w: %s %q: %v", ErrInvalidInput, bindSrcName(src), name, err)
+		}
+		if fv.OverflowInt(n) {
+			return fmt.Errorf("%w: %s %q: value out of range", ErrInvalidInput, bindSrcName(src), name)
+		}
+		fv.SetInt(n)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		n, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil {
+			return fmt.Errorf("%w: %s %q: %v", ErrInvalidInput, bindSrcName(src), name, err)
+		}
+		if fv.OverflowUint(n) {
+			return fmt.Errorf("%w: %s %q: value out of range", ErrInvalidInput, bindSrcName(src), name)
+		}
+		fv.SetUint(n)
+	case reflect.Float32, reflect.Float64:
+		f, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return fmt.Errorf("%w: %s %q: %v", ErrInvalidInput, bindSrcName(src), name, err)
+		}
+		fv.SetFloat(f)
+	case reflect.Bool:
+		b, err := strconv.ParseBool(raw)
+		if err != nil {
+			return fmt.Errorf("%w: %s %q: %v", ErrInvalidInput, bindSrcName(src), name, err)
+		}
+		fv.SetBool(b)
 	}
 	return nil
 }

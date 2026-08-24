@@ -66,6 +66,10 @@ func (g *Group) register(method, path string, terminal Handler) error {
 	return g.m.handle(method, g.prefix+path, chain(terminal, g.mws))
 }
 
+// owner 实现 router:分组的 owner 是其背后的 mux。
+// owner implements router: a group's owner is its backing mux.
+func (g *Group) owner() *mux { return g.m }
+
 // RawHandle 在本分组上注册一个原始处理器,经本组中间件链、挂在组前缀下。
 // RawHandle registers a raw handler on this group, wrapped by the group's
 // middleware chain and mounted under the group prefix.

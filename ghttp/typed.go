@@ -2,6 +2,7 @@ package ghttp
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"reflect"
 )
@@ -135,7 +136,10 @@ func registerParamsBody[P, B, O any](r router, method, path string, dec RequestD
 	if err != nil {
 		return err
 	}
-	c := &compiledParamsBody[P, B, O]{plan: plan, dec: dec, out: out, h: h}
+	c := &compiledParamsBody[P, B, O]{plan: plan, dec: dec, out: out, h: h, validate: bodyValidatorFor[B]()}
+	if r.owner().strictContentType {
+		c.wantCT = dec.ContentType()
+	}
 	return r.register(method, path, c.serve)
 }
 
@@ -147,6 +151,16 @@ type compiledParamsBody[P, B, O any] struct {
 	dec  RequestDecoder
 	out  OutputSpec[O]
 	h    func(ctx context.Context, p P, b B) (O, error)
+	// validate 非 nil 时(B 实现了 Validator)在解码后调用;nil 则跳过,零成本。
+	// validate, when non-nil (B implements Validator), is called after decoding;
+	// nil skips it at zero cost.
+	validate func(*B) error
+	// wantCT 非空时,请求期校验请求 Content-Type 与之一致,不符则 415。注册期由
+	// strictContentType 决定是否填充(空=不校验)。
+	// wantCT, when non-empty, makes the request verify its Content-Type matches
+	// it, yielding 415 on mismatch. Filled at registration per strictContentType
+	// (empty = no check).
+	wantCT string
 }
 
 func (e *compiledParamsBody[P, B, O]) serve(ctx context.Context, req *Request, resp *Response) error {
@@ -155,8 +169,16 @@ func (e *compiledParamsBody[P, B, O]) serve(ctx context.Context, req *Request, r
 	if err := e.plan.apply(req, req.Query(), &p); err != nil {
 		return err
 	}
+	if e.wantCT != "" && !contentTypeMatches(req.Header.Get("Content-Type"), e.wantCT) {
+		return fmt.Errorf("%w: got %q want %q", ErrUnsupportedMediaType, mediaType(req.Header.Get("Content-Type")), e.wantCT)
+	}
 	if err := e.dec.Decode(req, &b); err != nil {
 		return err
+	}
+	if e.validate != nil {
+		if err := e.validate(&b); err != nil {
+			return err
+		}
 	}
 	out, err := e.h(ctx, p, b)
 	if err != nil {
@@ -196,7 +218,10 @@ func registerBody[B, O any](r router, method, path string, dec RequestDecoder, o
 	if dec == nil {
 		return ErrMissingCodec
 	}
-	c := &compiledBody[B, O]{dec: dec, out: out, h: h}
+	c := &compiledBody[B, O]{dec: dec, out: out, h: h, validate: bodyValidatorFor[B]()}
+	if r.owner().strictContentType {
+		c.wantCT = dec.ContentType()
+	}
 	return r.register(method, path, c.serve)
 }
 
@@ -207,12 +232,26 @@ type compiledBody[B, O any] struct {
 	dec RequestDecoder
 	out OutputSpec[O]
 	h   func(context.Context, B) (O, error)
+	// validate 见 compiledParamsBody.validate。
+	// validate: see compiledParamsBody.validate.
+	validate func(*B) error
+	// wantCT 见 compiledParamsBody.wantCT。
+	// wantCT: see compiledParamsBody.wantCT.
+	wantCT string
 }
 
 func (e *compiledBody[B, O]) serve(ctx context.Context, req *Request, resp *Response) error {
 	var b B
+	if e.wantCT != "" && !contentTypeMatches(req.Header.Get("Content-Type"), e.wantCT) {
+		return fmt.Errorf("%w: got %q want %q", ErrUnsupportedMediaType, mediaType(req.Header.Get("Content-Type")), e.wantCT)
+	}
 	if err := e.dec.Decode(req, &b); err != nil {
 		return err
+	}
+	if e.validate != nil {
+		if err := e.validate(&b); err != nil {
+			return err
+		}
 	}
 	out, err := e.h(ctx, b)
 	if err != nil {
