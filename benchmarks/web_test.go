@@ -1,6 +1,19 @@
+//go:build webframework
+
+// web 位于 /root/test 之外时本文件不参与构建:该目录在本机已不存在,而 go.mod 的
+// replace 指向缺失目录会让整个模块 setup failed,连其它框架都测不了。恢复该目录、
+// 取消 go.mod 中 example.com/web 的 replace 注释后,以 -tags webframework 纳入横评。
+// This file is excluded unless the web framework is present: /root/test is gone
+// on this machine, and a go.mod replace pointing at a missing directory fails
+// module setup outright, taking every other framework down with it. Restore the
+// directory, un-comment the example.com/web replace, then build with
+// -tags webframework to bring it back into the comparison.
+
 package webbench
 
 import (
+	"net/http"
+
 	web "example.com/web"
 )
 
@@ -201,6 +214,15 @@ func newWebServer() *web.App {
 	return app
 }
 
+func buildWebMatch(routes []apiRoute) matchRunner {
+	app := web.New()
+	for _, rt := range routes {
+		app.Must(web.Raw(rt.method, curlyPath(rt.path), func(*web.Ctx) error { return nil }))
+	}
+	return httpMatchRunner{h: app}
+}
+
 func init() {
 	register(&httpTarget{n: "web", h: newWebServer()}, nil)
+	registerRoutingAdapter(routingAdapter{"web", buildWebMatch})
 }

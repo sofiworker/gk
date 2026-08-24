@@ -3,7 +3,6 @@ module github.com/sofiworker/gk/benchmarks
 go 1.26.2
 
 require (
-	example.com/web v0.0.0
 	github.com/cloudwego/hertz v0.10.5
 	github.com/danielgtaylor/huma/v2 v2.38.0
 	github.com/emicklei/go-restful/v3 v3.13.0
@@ -80,6 +79,10 @@ require (
 
 replace github.com/sofiworker/gk => ../
 
-// 被测框架：/root/test 的 web（端点即数据，零反射）。
-// web under test: the endpoint-as-data framework at /root/test.
-replace example.com/web => /root/test
+// web（/root/test，端点即数据）现已不在本机，故其适配移入 webframework build tag：
+// 恢复该目录后以 -tags webframework 重新纳入横评，无需改动其余框架。
+// web (the endpoint-as-data framework at /root/test) is no longer present on
+// this machine, so its adapter now sits behind the webframework build tag:
+// restore that directory and re-add it with -tags webframework, touching no
+// other framework.
+// replace example.com/web => /root/test

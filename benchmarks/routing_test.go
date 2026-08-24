@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -40,8 +41,6 @@ import (
 	"github.com/sofiworker/gk/ghttp"
 	"github.com/uptrace/bunrouter"
 	"github.com/valyala/fasthttp"
-
-	web "example.com/web"
 )
 
 // microAPI exercises the fundamental matching shapes in isolation.
@@ -246,14 +245,6 @@ func buildGhttpMatch(routes []apiRoute) matchRunner {
 	return httpMatchRunner{h: m}
 }
 
-func buildWebMatch(routes []apiRoute) matchRunner {
-	app := web.New()
-	for _, rt := range routes {
-		app.Must(web.Raw(rt.method, curlyPath(rt.path), func(*web.Ctx) error { return nil }))
-	}
-	return httpMatchRunner{h: app}
-}
-
 func buildStdMuxMatch(routes []apiRoute) matchRunner {
 	m := http.NewServeMux()
 	for _, rt := range routes {
@@ -411,7 +402,15 @@ var routingAdapters = []routingAdapter{
 	{"httprouter", buildHTTPRouterMatch},
 	{"huma", buildHumaMatch},
 	{"stdmux", buildStdMuxMatch},
-	{"web", buildWebMatch},
+}
+
+// registerRoutingAdapter 供 build tag 隔离的框架在 init 期追加自己的路由适配。
+// 包级变量初始化先于 init,故追加总能被 routingRunners 看到,后者建表前重排字母序。
+// registerRoutingAdapter lets a build-tag-gated framework append its routing
+// adapter during init. Package-level vars initialize before init, so the append
+// is always visible to routingRunners, which re-sorts by name before building.
+func registerRoutingAdapter(a routingAdapter) {
+	routingAdapters = append(routingAdapters, a)
 }
 
 // Routers are built once per (adapter, table) and reused by every benchmark.
@@ -423,6 +422,9 @@ var (
 
 func routingRunners() (map[string]matchRunner, map[string]matchRunner) {
 	routersOnce.Do(func() {
+		sort.Slice(routingAdapters, func(i, j int) bool {
+			return routingAdapters[i].name < routingAdapters[j].name
+		})
 		for _, a := range routingAdapters {
 			microRouters[a.name] = a.build(microAPI)
 			githubRouters[a.name] = a.build(githubAPI)

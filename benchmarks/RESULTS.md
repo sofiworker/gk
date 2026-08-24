@@ -61,3 +61,90 @@ PathParam1 是本次重写**唯一显著回归**的场景:
 - **竞态检测**: `go test -race ./ghttp/ -count=1` **FAIL** (3 处 DATA RACE)。根因为 Timeout 中间件 timer goroutine 向 `Ctx.committed` 写入(`markParentCommittedLocked`, middleware_chain.go:381) 与主请求 goroutine 读取(`responseErrorWriteBlocked`, writer.go:22) 之间无同步。详见下文「竞态分析」。
 - **静态检查**: `go vet ./...` 全绿(exit 0)。首次运行曾出现 `vet: open ghttp/zz_nil3_test.go: no such file or directory` 的陈旧缓存告警，重跑后自动消除。
 - **单元测试**: `go test ./...` 全绿(exit 0)，ghttp 36.881s，legacyrouter 通过，benchmarks 包编译通过。
+
+
+---
+
+# 功能丰富化回归分析（d095986）· 严格同机 A/B
+
+> 2026-08-24 提交 `16189d3`/`d095986` 为 ghttp 补齐生产能力（统一错误链、Content-Type
+> 严格校验、validate 校验、Metrics/Gzip/可观测性、RunGraceful 等，+5390 行）。以下用
+> **同一台机器（AMD Ryzen 9 9950X，Go 1.27.0）、同一命令**对上一轮提交 `2d478da` 与
+> 当前 `d095986` 做 worktree A/B，回答"功能丰富化是否导致性能下降"。
+
+## 1. ghttp 自带基准（`-benchtime=2000000x -count=5`，median）
+
+| 基准 | 2d478da | d095986 | Δ | 分配变化 |
+|---|---:|---:|---:|---|
+| ServeStatic | 23.2 | 23.7 | +2.2% | 0→0 |
+| ServeParam1 | 25.5 | 26.7 | +4.6% | 0→0 |
+| ServeParam5 | 40.7 | 41.3 | +1.5% | 0→0 |
+| **ServeMiss** | **25.8** | **146.3** | **+468%** | **0→3 allocs** |
+| ServeMW1Hit | 25.7 | 26.4 | +2.7% | 0→0 |
+| ServeMW5Hit | 30.4 | 29.4 | −3.4% | 0→0 |
+
+## 2. typed 端点（`-benchtime=300000x -count=6`，median）
+
+| 基准 | 2d478da | d095986 | Δ | B/op | allocs |
+|---|---:|---:|---:|---:|---:|
+| TypedGetParamsSmall | 715 | 752 | +5.2% | 529 | 8 |
+| TypedGetParamsLarge | 960 | 1024 | +6.7% | 673 | 11 |
+| TypedPostParamsBody | 1191 | 1185 | −0.5% | 683 | 12 |
+| TypedPostBody | 1067 | 1108 | +3.8% | 602 | 10 |
+| TypedGetNone | 212 | 249 | +17.7% | 64 | 3 |
+
+## 3. bindbench 端到端（`-benchtime=400ms -count=3`，median）
+
+| 场景 | 2d478da | d095986 | Δ | B/op 变化 | allocs 变化 |
+|---|---:|---:|---:|---|---|
+| Small | 722 | 723 | 持平 | 545 | 8 |
+| Large | 989 | 1016 | +2.7% | 673 | 11 |
+| PostBodySmall | 949 | 1026 | +8.1% | 602 | 10 |
+| PostBodyLarge | 1785 | 1861 | +4.3% | 923 | 14 |
+| PutMix | 1453 | 1512 | +4.1% | 1069 | 15 |
+
+## 4. routebench 纯路由（`-benchtime=300ms -count=3`，median）
+
+| 场景 | 2d478da | d095986 | Δ |
+|---|---:|---:|---:|
+| Static | 23.5 | 23.7 | +1.1% |
+| Param1 | 24.4 | 27.1 | +10.8% |
+| Param5 | 38.2 | 43.7 | +14.3% |
+| Wildcard | 31.1 | 32.1 | +3.2% |
+| **Miss** | **25.8** | **153.5** | **+496%** |
+| GithubStatic | 29.9 | 30.9 | +3.3% |
+| GithubParam | 44.8 | 49.9 | +11.4% |
+| GithubAll | 9283 | 9343 | +0.6% |
+
+## 5. 结论（诚实版）
+
+**性能确有下降，但可归因、且分配零增长**：
+
+1. **404/miss 冷路径是最大项**：ServeMiss/routebench Miss 从 ~26ns 涨到 ~146–153ns
+   （+468~496%），0→3 allocs。根因是 `16189d3` 的统一错误链——404/405 现在经
+   `renderMiss` 输出与业务错误一致的 **JSON 错误体**（可经 `WithNotFoundHandler`/
+   `WithMethodNotAllowedHandler`/`WithErrorRenderer` 定制），不再是裸 `WriteHeader`。
+   这是主动功能取舍，非实现回归。横向对比：gin 裸 404 31ns/0alloc，ghttp
+   125ns/144B/3allocs 仍快于 echo（594ns/8allocs）；不想要错误体可用
+   `WithNotFoundHandler` 恢复裸 404。
+
+2. **typed 热路径 +3.8~6.7%（TypedGetNone +17.7%）**：新增的每请求固定工作 =
+   Content-Type 严格校验（`wantCT`，默认开启，注册期固化）+ 统一错误链出口判断 +
+   `matchedRoute` 可观测性记录。B/op 与 allocs **完全不变**（529/8、673/11、602/10、
+   683/12、64/3），纯时间型小开销（几十 ns）。
+
+3. **纯路由命中路径 +1~14% 且零分配**：Static/Wildcard/GithubAll 基本持平；
+   Param1/Param5/GithubParam 上升 11~14% 主要来自 RawHandle 命中路径新增的
+   `matchedRoute` 赋值与错误链出口判断。count=3 下部分场景 CV 较高，方向一致但
+   幅度需以 count≥6 复测为准（本节 ghttp 自带基准 count=5 显示 Param1 仅 +4.6%）。
+
+4. **总体判断**：命中路径（≥99% 流量）上升为个位数百分比、分配零增长；404 路径
+   是统一错误体的主动代价。若需把 404 压回裸响应，一行 `WithNotFoundHandler`
+   即可，路由/绑定热路径无需改动。
+
+## 6. 本次横评新增/恢复
+
+- `ghttp_test.go`：恢复 ghttp 整链适配（此前整链套件缺 gk 本体），基于当前
+  `Server` + typed 入口（GetNone/GetParams/PostBody/PutParamsBody）。
+- `web`（/root/test 的实验框架）目录已不存在，其适配移入 `webframework` build tag，
+  `-tags webframework` 可重新纳入；`go.mod` 中的 replace 已注释。
