@@ -90,15 +90,22 @@ func (c *stateController) delete(generation uint64, namespace, id string) (bool,
 	return c.store.Delete(namespace, id), nil
 }
 
-// statePair 是 /state 路由的两个路径参数。
-// statePair holds the two path params of the /state routes.
-type statePair struct {
-	Namespace string
-	ID        string
+// stateHandlerFunc 接收路径参数 namespace/id 的原始处理器;collection 路由 id 为空。
+// stateHandlerFunc is a raw handler receiving path params namespace/id; id is
+// empty for the collection route.
+type stateHandlerFunc func(w http.ResponseWriter, r *http.Request, namespace, id string) error
+
+// stateEndpoint 把 stateHandlerFunc 接到 ghttp 路由,从 req.Params 提取 namespace/id。
+// stateEndpoint wires a stateHandlerFunc to a ghttp route, extracting
+// namespace/id from req.Params.
+func stateEndpoint(h stateHandlerFunc) ghttp.RawHandlerFunc {
+	return func(_ context.Context, req *ghttp.Request, resp *ghttp.Response) error {
+		return h(resp, req.Request, req.Params.Get("namespace"), req.Params.Get("id"))
+	}
 }
 
 func registerState(server *ghttp.Server, controller *stateController) {
-	server.MustMount(ghttp.HandleHTTP(ghttp.Post("/state/{namespace}/items"), ghttp.PathString("namespace"), func(w http.ResponseWriter, r *http.Request, namespace string) error {
+	mustRaw(server.RawHandle(http.MethodPost, "/state/{namespace}/items", stateEndpoint(func(w http.ResponseWriter, r *http.Request, namespace, _ string) error {
 		generation := controller.snapshotGeneration()
 		pauseStateMutation(r)
 		var input struct {
@@ -120,85 +127,73 @@ func registerState(server *ghttp.Server, controller *stateController) {
 		w.WriteHeader(http.StatusCreated)
 		writeJSONBody(w, item)
 		return nil
-	}))
+	})))
 
-	server.MustMount(ghttp.HandleHTTP(ghttp.Get("/state/{namespace}/items/{id}"),
-		ghttp.MapInputs(ghttp.PathString("namespace"), ghttp.PathString("id"), func(namespace, id string) statePair {
-			return statePair{Namespace: namespace, ID: id}
-		}),
-		func(w http.ResponseWriter, _ *http.Request, in statePair) error {
-			item, ok := controller.store.Get(in.Namespace, in.ID)
-			if !ok {
-				writePublicError(w, http.StatusNotFound)
-				return nil
-			}
-			w.Header().Set("ETag", stateETag(item.Version))
-			writeJSON(w, item)
+	mustRaw(server.RawHandle(http.MethodGet, "/state/{namespace}/items/{id}", stateEndpoint(func(w http.ResponseWriter, _ *http.Request, namespace, id string) error {
+		item, ok := controller.store.Get(namespace, id)
+		if !ok {
+			writePublicError(w, http.StatusNotFound)
 			return nil
-		}))
+		}
+		w.Header().Set("ETag", stateETag(item.Version))
+		writeJSON(w, item)
+		return nil
+	})))
 
-	server.MustMount(ghttp.HandleHTTP(ghttp.Get("/state/{namespace}/items"), ghttp.PathString("namespace"), func(w http.ResponseWriter, _ *http.Request, namespace string) error {
+	mustRaw(server.RawHandle(http.MethodGet, "/state/{namespace}/items", stateEndpoint(func(w http.ResponseWriter, _ *http.Request, namespace, _ string) error {
 		writeJSON(w, controller.store.List(namespace))
 		return nil
-	}))
+	})))
 
-	server.MustMount(ghttp.HandleHTTP(ghttp.Put("/state/{namespace}/items/{id}"),
-		ghttp.MapInputs(ghttp.PathString("namespace"), ghttp.PathString("id"), func(namespace, id string) statePair {
-			return statePair{Namespace: namespace, ID: id}
-		}),
-		func(w http.ResponseWriter, r *http.Request, in statePair) error {
-			generation := controller.snapshotGeneration()
-			pauseStateMutation(r)
-			ifMatch := r.Header.Get("If-Match")
-			if ifMatch == "" {
-				writePublicError(w, http.StatusPreconditionRequired)
-				return nil
-			}
-			version, ok := parseStateETag(ifMatch)
-			if !ok {
-				writePublicError(w, http.StatusPreconditionFailed)
-				return nil
-			}
-			var input struct {
-				Name string `json:"name"`
-			}
-			if !decodeStateJSON(r, &input) || input.Name == "" {
-				writePublicError(w, http.StatusBadRequest)
-				return nil
-			}
-			item, err := controller.update(generation, in.Namespace, in.ID, input.Name, version)
-			if err != nil {
-				if errors.Is(err, errItemNotFound) {
-					writePublicError(w, http.StatusNotFound)
-				} else {
-					writePublicError(w, http.StatusPreconditionFailed)
-				}
-				return nil
-			}
-			w.Header().Set("ETag", stateETag(item.Version))
-			writeJSON(w, item)
+	mustRaw(server.RawHandle(http.MethodPut, "/state/{namespace}/items/{id}", stateEndpoint(func(w http.ResponseWriter, r *http.Request, namespace, id string) error {
+		generation := controller.snapshotGeneration()
+		pauseStateMutation(r)
+		ifMatch := r.Header.Get("If-Match")
+		if ifMatch == "" {
+			writePublicError(w, http.StatusPreconditionRequired)
 			return nil
-		}))
-
-	server.MustMount(ghttp.HandleHTTP(ghttp.Delete("/state/{namespace}/items/{id}"),
-		ghttp.MapInputs(ghttp.PathString("namespace"), ghttp.PathString("id"), func(namespace, id string) statePair {
-			return statePair{Namespace: namespace, ID: id}
-		}),
-		func(w http.ResponseWriter, r *http.Request, in statePair) error {
-			generation := controller.snapshotGeneration()
-			pauseStateMutation(r)
-			deleted, err := controller.delete(generation, in.Namespace, in.ID)
-			if err != nil {
-				writePublicError(w, http.StatusConflict)
-				return nil
-			}
-			if !deleted {
+		}
+		version, ok := parseStateETag(ifMatch)
+		if !ok {
+			writePublicError(w, http.StatusPreconditionFailed)
+			return nil
+		}
+		var input struct {
+			Name string `json:"name"`
+		}
+		if !decodeStateJSON(r, &input) || input.Name == "" {
+			writePublicError(w, http.StatusBadRequest)
+			return nil
+		}
+		item, err := controller.update(generation, namespace, id, input.Name, version)
+		if err != nil {
+			if errors.Is(err, errItemNotFound) {
 				writePublicError(w, http.StatusNotFound)
-				return nil
+			} else {
+				writePublicError(w, http.StatusPreconditionFailed)
 			}
-			w.WriteHeader(http.StatusNoContent)
 			return nil
-		}))
+		}
+		w.Header().Set("ETag", stateETag(item.Version))
+		writeJSON(w, item)
+		return nil
+	})))
+
+	mustRaw(server.RawHandle(http.MethodDelete, "/state/{namespace}/items/{id}", stateEndpoint(func(w http.ResponseWriter, r *http.Request, namespace, id string) error {
+		generation := controller.snapshotGeneration()
+		pauseStateMutation(r)
+		deleted, err := controller.delete(generation, namespace, id)
+		if err != nil {
+			writePublicError(w, http.StatusConflict)
+			return nil
+		}
+		if !deleted {
+			writePublicError(w, http.StatusNotFound)
+			return nil
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return nil
+	})))
 }
 
 func decodeStateJSON(request *http.Request, target any) bool {

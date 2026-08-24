@@ -65,7 +65,7 @@ func RecoveryWith(onPanic RecoveryHandler) Middleware {
 				// Write 500 only if the downstream hasn't committed, to avoid
 				// corrupting an already-written partial response.
 				if !resp.Written() {
-					http.Error(resp.ResponseWriter, "500 internal server error", http.StatusInternalServerError)
+					http.Error(resp, "500 internal server error", http.StatusInternalServerError)
 				}
 				// panic 已被处理，返回 nil，不再向上冒泡到核心错误路径重复写响应。
 				// The panic is handled; return nil so it does not bubble to the

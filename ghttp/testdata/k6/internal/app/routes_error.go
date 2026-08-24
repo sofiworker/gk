@@ -9,15 +9,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/sofiworker/gk/gerr"
 	"github.com/sofiworker/gk/ghttp"
-)
-
-var (
-	errConflictSentinel    = errors.New("conflict-sentinel")
-	errUnavailableSentinel = errors.New("unavailable-sentinel")
 )
 
 func registerErrors(server *ghttp.Server, cfg Config) {
@@ -26,56 +20,77 @@ func registerErrors(server *ghttp.Server, cfg Config) {
 		secret = testDefaultSecret
 	}
 
-	server.MustMount(ghttp.RawOperation(http.MethodGet, "/errors/ordinary", errorAdapterHandler(func() error {
+	mustRaw(server.RawHandle(http.MethodGet, "/errors/ordinary", errorAdapterHandler(func() error {
 		return fmt.Errorf("ordinary-internal: %s", secret)
 	})))
-	server.MustMount(ghttp.RawOperation(http.MethodGet, "/errors/wrapped", errorAdapterHandler(func() error {
+	mustRaw(server.RawHandle(http.MethodGet, "/errors/wrapped", errorAdapterHandler(func() error {
 		return fmt.Errorf("wrapped %s: %w", secret, errConflictSentinel)
 	})))
-	server.MustMount(ghttp.RawOperation(http.MethodGet, "/errors/joined", errorAdapterHandler(func() error {
+	mustRaw(server.RawHandle(http.MethodGet, "/errors/joined", errorAdapterHandler(func() error {
 		return errors.Join(
 			fmt.Errorf("joined %s: %w", secret, errConflictSentinel),
 			fmt.Errorf("joined %s: %w", secret, errUnavailableSentinel),
 		)
 	})))
-	server.MustMount(ghttp.RawOperation(http.MethodGet, "/errors/gerr", errorAdapterHandler(func() error {
+	mustRaw(server.RawHandle(http.MethodGet, "/errors/gerr", errorAdapterHandler(func() error {
 		return gerr.New("gerr "+secret, gerr.WithKind(gerr.KindUnavailable))
 	})))
-	server.MustMount(ghttp.RawOperation(http.MethodGet, "/errors/validation", errorAdapterHandler(func() error {
-		return ghttp.Err(http.StatusUnprocessableEntity, http.StatusText(http.StatusUnprocessableEntity), ghttp.WithCause(fmt.Errorf("validation %s", secret)))
+	mustRaw(server.RawHandle(http.MethodGet, "/errors/validation", errorAdapterHandler(func() error {
+		return appHTTPError{code: http.StatusUnprocessableEntity, message: http.StatusText(http.StatusUnprocessableEntity)}
 	})))
-	server.MustMount(ghttp.HandleHTTP(ghttp.Get("/errors/status/{code}"), ghttp.PathString("code"), func(w http.ResponseWriter, r *http.Request, code string) error {
-		status, err := strconv.Atoi(code)
+	mustRaw(server.RawHandle(http.MethodGet, "/errors/status/{code}", func(_ context.Context, req *ghttp.Request, resp *ghttp.Response) error {
+		status, err := strconv.Atoi(req.Params.Get("code"))
 		if err != nil || !allowedErrorStatus(status) {
-			applicationErrorAdapter(w, r, ghttp.NotFound(http.StatusText(http.StatusNotFound)))
+			writePublicError(resp, http.StatusNotFound)
 			return nil
 		}
-		applicationErrorAdapter(w, r, ghttp.Err(status, http.StatusText(status), ghttp.WithCause(fmt.Errorf("controlled %s", secret))))
+		writePublicError(resp, status)
 		return nil
 	}))
-	server.MustMount(ghttp.Handle(ghttp.Get("/problem/{kind}"), ghttp.PathString("kind"), ghttp.JSONOutput[ghttp.EmptyInput](), func(_ context.Context, kind string) (ghttp.EmptyInput, error) {
-		if kind != "not-found" {
-			return ghttp.EmptyInput{}, ghttp.BadRequest(http.StatusText(http.StatusBadRequest))
-		}
-		return ghttp.EmptyInput{}, ghttp.NotFound(http.StatusText(http.StatusNotFound))
-	}).WithProblemDetails())
 
-	authGroup := server.Group("/auth")
-	authGroup.MustMount(ghttp.RawOperation(http.MethodGet, "/user", authHandler("user")).WithMiddleware(authMiddleware(secret, false)))
-	authGroup.MustMount(ghttp.RawOperation(http.MethodGet, "/admin", authHandler("admin")).WithMiddleware(authMiddleware(secret, true)))
+	// /problem/{kind} 返回 RFC 7807 problem+json。
+	// /problem/{kind} returns an RFC 7807 problem+json body.
+	mustRaw(server.RawHandle(http.MethodGet, "/problem/{kind}", func(_ context.Context, req *ghttp.Request, resp *ghttp.Response) error {
+		kind := req.Params.Get("kind")
+		status := http.StatusBadRequest
+		if kind == "not-found" {
+			status = http.StatusNotFound
+		}
+		writeProblemJSON(resp, req.Request, status, kind)
+		return nil
+	}))
+
+	authGroup := server.Group("/auth/user", authMiddleware(secret, false))
+	mustRaw(authGroup.RawHandle(http.MethodGet, "", authHandler("user")))
+	adminGroup := server.Group("/auth/admin", authMiddleware(secret, true))
+	mustRaw(adminGroup.RawHandle(http.MethodGet, "", authHandler("admin")))
 
 	middlewareGroup := server.Group("/middleware", traceMiddleware("group", "X-Group"))
-	middlewareGroup.MustMount(ghttp.RawOperation(http.MethodGet, "/order", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	orderGroup := middlewareGroup.Group("/order", traceMiddleware("route", "X-Route"))
+	mustRaw(orderGroup.RawHandle(http.MethodGet, "", rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		traceFromRequest(r).Record("handler")
 		writeJSON(w, map[string]string{"status": "ok"})
-	})).WithMiddleware(traceMiddleware("route", "X-Route")))
-
+	}))))
 }
 
-func errorAdapterHandler(build func() error) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		applicationErrorAdapter(w, r, build())
+// writeProblemJSON 写 RFC 7807 problem+json 错误体。
+// writeProblemJSON writes an RFC 7807 problem+json error body.
+func writeProblemJSON(w http.ResponseWriter, r *http.Request, status int, kind string) {
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"type":     "about:blank",
+		"title":    http.StatusText(status),
+		"status":   status,
+		"detail":   "problem " + kind,
+		"instance": r.URL.Path,
 	})
+}
+
+func errorAdapterHandler(build func() error) ghttp.RawHandlerFunc {
+	return rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		applicationErrorAdapter(w, r, build())
+	}))
 }
 
 func applicationErrorAdapter(w http.ResponseWriter, r *http.Request, err error) {
@@ -83,22 +98,6 @@ func applicationErrorAdapter(w http.ResponseWriter, r *http.Request, err error) 
 		counter.Increment()
 	}
 	writePublicError(w, classifyError(err))
-}
-
-func classifyError(err error) int {
-	if errors.Is(err, errUnavailableSentinel) {
-		return http.StatusServiceUnavailable
-	}
-	if errors.Is(err, errConflictSentinel) {
-		return http.StatusConflict
-	}
-	if converted, ok := ghttp.FromGerr(err); ok {
-		return converted.Code
-	}
-	if explicit := ghttp.AsError(err); explicit != nil && explicit.Code != 0 {
-		return explicit.Code
-	}
-	return http.StatusInternalServerError
 }
 
 func allowedErrorStatus(status int) bool {
@@ -110,68 +109,64 @@ func allowedErrorStatus(status int) bool {
 	}
 }
 
+// authMiddleware 验证 Bearer 令牌,失败时返回 401/403 并经错误链写错误体。
+// authMiddleware validates the Bearer token, returning 401/403 via the error
+// chain on failure.
 func authMiddleware(secret string, adminOnly bool) ghttp.Middleware {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			value := strings.TrimSpace(r.Header.Get("Authorization"))
+	return func(next ghttp.Handler) ghttp.Handler {
+		return func(ctx context.Context, req *ghttp.Request, resp *ghttp.Response) error {
+			value := strings.TrimSpace(req.Header.Get("Authorization"))
 			if !strings.HasPrefix(value, "Bearer ") {
-				writePublicError(w, http.StatusUnauthorized)
-				return
+				writeProblemError(resp, http.StatusUnauthorized, "missing bearer token")
+				return nil
 			}
 			role := strings.TrimPrefix(value, "Bearer ")
 			if role != "user:"+secret && role != "admin:"+secret {
-				writePublicError(w, http.StatusUnauthorized)
-				return
+				writeProblemError(resp, http.StatusUnauthorized, "invalid token")
+				return nil
 			}
 			if adminOnly && role != "admin:"+secret {
-				writePublicError(w, http.StatusForbidden)
-				return
+				writeProblemError(resp, http.StatusForbidden, "forbidden role")
+				return nil
 			}
-			next.ServeHTTP(w, r)
-		})
+			return next(ctx, req, resp)
+		}
 	}
 }
 
-func authHandler(role string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+// authHandler 构造带角色的认证成功处理器。
+// authHandler builds the authenticated handler for a role.
+func authHandler(role string) ghttp.RawHandlerFunc {
+	return rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("X-Auth-Handler", "executed")
 		writeJSON(w, map[string]string{"role": role})
-	})
+	}))
 }
 
-func writePublicError(w http.ResponseWriter, status int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(ghttp.HTTPError{Code: status, Message: http.StatusText(status)})
-}
-
-func globalTraceMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/middleware/order" {
-			next.ServeHTTP(w, r)
-			return
+// globalTraceMiddleware 仅对 /middleware/order 施加全局 trace,验证全局-分组-路由三层顺序。
+// globalTraceMiddleware applies a global trace only to /middleware/order to
+// verify the global-group-route layering order.
+func globalTraceMiddleware(next ghttp.Handler) ghttp.Handler {
+	return func(ctx context.Context, req *ghttp.Request, resp *ghttp.Response) error {
+		if req.URL.Path != "/middleware/order" {
+			return next(ctx, req, resp)
 		}
-		traceMiddleware("global", "X-Global")(next).ServeHTTP(w, r)
-	})
+		return traceMiddleware("global", "X-Global")(next)(ctx, req, resp)
+	}
 }
 
 func traceMiddleware(name, vary string) ghttp.Middleware {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			traceFromRequest(r).Record(name + "-before")
-			w.Header().Add("Vary", vary)
-			w.Header().Set("X-Trace-Owner", name)
-			next.ServeHTTP(w, r)
-			traceFromRequest(r).Record(name + "-after")
-		})
+	return func(next ghttp.Handler) ghttp.Handler {
+		return func(ctx context.Context, req *ghttp.Request, resp *ghttp.Response) error {
+			traceFromRequest(req.Request).Record(name + "-before")
+			resp.Header().Add("Vary", vary)
+			resp.Header().Set("X-Trace-Owner", name)
+			err := next(ctx, req, resp)
+			traceFromRequest(req.Request).Record(name + "-after")
+			return err
+		}
 	}
 }
-
-type requestCounter struct{ value atomic.Uint64 }
-
-func newRequestCounter() *requestCounter { return &requestCounter{} }
-func (c *requestCounter) Increment()     { c.value.Add(1) }
-func (c *requestCounter) Value() uint64  { return c.value.Load() }
 
 type requestCounterContextKey struct{}
 
@@ -207,5 +202,3 @@ func traceFromRequest(request *http.Request) *traceSink {
 	sink, _ := request.Context().Value(traceSinkContextKey{}).(*traceSink)
 	return sink
 }
-
-const testDefaultSecret = "known-k6-secret"

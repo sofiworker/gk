@@ -56,7 +56,7 @@ func TimeoutWithMessage(d time.Duration, message string) Middleware {
 			// 未提交且 deadline 已过：判定为超时，补写 503。
 			// Not committed and the deadline has passed: treat as timeout, write 503.
 			if ctx.Err() == context.DeadlineExceeded {
-				http.Error(resp.ResponseWriter, message, http.StatusServiceUnavailable)
+				http.Error(resp, message, http.StatusServiceUnavailable)
 				return nil
 			}
 			return err

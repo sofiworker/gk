@@ -118,7 +118,7 @@ func serveStatic(resp *Response, req *Request, fsys fs.FS, cfg staticConfig) err
 		name = "." // 目录根 / directory root
 	}
 	if name != "." && !fs.ValidPath(name) {
-		http.Error(resp.ResponseWriter, "400 invalid path", http.StatusBadRequest)
+		http.Error(resp, "400 invalid path", http.StatusBadRequest)
 		return nil
 	}
 
@@ -143,7 +143,7 @@ func serveStatic(resp *Response, req *Request, fsys fs.FS, cfg staticConfig) err
 		return staticMiss(resp, req, fsys, cfg)
 
 	case err != nil:
-		http.Error(resp.ResponseWriter, "500 internal error", http.StatusInternalServerError)
+		http.Error(resp, "500 internal error", http.StatusInternalServerError)
 		return nil
 	}
 
@@ -162,7 +162,7 @@ func staticMiss(resp *Response, req *Request, fsys fs.FS, cfg staticConfig) erro
 			return nil
 		}
 	}
-	http.Error(resp.ResponseWriter, "404 not found", http.StatusNotFound)
+	http.Error(resp, "404 not found", http.StatusNotFound)
 	return nil
 }
 

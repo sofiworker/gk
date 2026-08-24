@@ -1,16 +1,6 @@
 package app
 
-import (
-	"encoding/xml"
-
-	"github.com/sofiworker/gk/ghttp"
-)
-
-// bindingPathRequest /binding/path/{id} 的显式输入。
-// explicit input for /binding/path/{id}.
-type bindingPathRequest struct {
-	ID int64
-}
+import "encoding/xml"
 
 // bindingQueryRequest /binding/query 的显式输入。
 // explicit input for /binding/query.
@@ -28,12 +18,6 @@ type bindingHeaderRequest struct {
 	Count   int64
 }
 
-// bindingCookieRequest /binding/cookie 的显式输入。
-// explicit input for /binding/cookie.
-type bindingCookieRequest struct {
-	Session string
-}
-
 // bindingMixedRequest /binding/mixed 的显式输入。
 // explicit input for /binding/mixed.
 type bindingMixedRequest struct {
@@ -42,18 +26,6 @@ type bindingMixedRequest struct {
 	TraceID string
 	Session string
 	Name    string
-}
-
-// bindingTimeRequest /binding/time 的显式输入。
-// explicit input for /binding/time.
-type bindingTimeRequest struct {
-	At string
-}
-
-// bindingEnumRequest /binding/enum 的显式输入。
-// explicit input for /binding/enum.
-type bindingEnumRequest struct {
-	Status string
 }
 
 // bindingNestedRequest /binding/nested 的显式输入。
@@ -67,26 +39,6 @@ type bindingNestedRequest struct {
 // explicit input for /codec/json.
 type codecJSONRequest struct {
 	Name string
-}
-
-// codecXMLRequest /codec/xml 的显式输入。
-// explicit input for /codec/xml.
-type codecXMLRequest struct {
-	Name string
-}
-
-// codecFormRequest /codec/form 的显式输入。
-// explicit input for /codec/form.
-type codecFormRequest struct {
-	Name string
-	Note string
-}
-
-// codecMultipartRequest /codec/multipart 的显式输入。
-// explicit input for /codec/multipart.
-type codecMultipartRequest struct {
-	Note  string
-	Files []*ghttp.FileHeader
 }
 
 // codecBodyRequest /codec/body/limited 的显式输入。

@@ -158,7 +158,10 @@ func TestTimeoutUsesFrameworkGatewayTimeout(t *testing.T) {
 	lateDone := make(chan struct{})
 	req := withFaultLateDone(newTestRequest(http.MethodGet, "/fault/timeout"), lateDone)
 	recorder := serveRequest(handler, req)
-	if recorder.Code != http.StatusGatewayTimeout || time.Since(started) > time.Second {
+	// ghttp.Timeout 是协作式超时,超时未提交响应时补写 503。
+	// ghttp.Timeout is cooperative and fills in 503 when the deadline passes
+	// without a committed response.
+	if recorder.Code != http.StatusServiceUnavailable || time.Since(started) > time.Second {
 		t.Fatalf("timeout response = %d elapsed=%s body=%s", recorder.Code, time.Since(started), recorder.Body.String())
 	}
 	assertNoInternalLeak(t, recorder.Body.String())
@@ -211,8 +214,11 @@ func assertOnlyMetricsRequestActive(t *testing.T, handler http.Handler) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.ActiveRequests != 1 {
-		t.Fatalf("active requests = %d, want only metrics request active", snapshot.ActiveRequests)
+	// 指标端点自排除:快照不包含本次指标请求自身。
+	// The metrics endpoint is self-excluded: the snapshot does not include the
+	// metrics request itself.
+	if snapshot.ActiveRequests != 0 {
+		t.Fatalf("active requests = %d, want metrics request self-excluded", snapshot.ActiveRequests)
 	}
 }
 

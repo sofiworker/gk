@@ -4,13 +4,13 @@
 
 > 本仓库仍处于 pre-v1.0.0 开发阶段。本测试工具仅用于开发期定向验证，禁止直接作为生产压测方案、容量结论或 SLO 依据。
 
-本目录提供独立测试服务、k6 场景、raw-socket 对抗探针与资源快照工具，覆盖功能契约、路由、binding/codec、错误与安全、状态并发、SSE/WebSocket、稳定性和恢复行为。它追求协议与边界覆盖，不模拟某个真实业务流量模型。
+本目录提供独立测试服务、k6 场景、raw-socket 对抗探针与资源快照工具，覆盖功能契约、路由、binding/codec、错误与安全、状态并发、稳定性和恢复行为。它追求协议与边界覆盖，不模拟某个真实业务流量模型。
 
 ## 场景
 
 | 场景 | 主要覆盖 |
 | --- | --- |
-| `contract_smoke` | health、binding、output、Problem Details、OpenAPI 基础契约 |
+| `contract_smoke` | health、binding、output、Problem Details 基础契约 |
 | `routing_matrix` | 静态、参数、通配、分组与优先级路由 |
 | `binding_codec` | query/body 混合绑定、内容协商、codec 错误 |
 | `error_security` | validation、认证失败、panic recovery 与恢复健康 |
@@ -18,13 +18,11 @@
 | `errors` | 404/Problem Details 基线 |
 | `security` | bearer 认证矩阵、secret 隔离、运行指标恢复 |
 | `state` | namespace 隔离、幂等、ETag、CRUD 生命周期 |
-| `sse` | event-stream wire、事件与取消时限 |
-| `websocket` | upgrade、echo、关闭与恢复 |
 | `stability` | health/error/state 的 ramping 与 arrival-rate 混合稳定性 |
 
 ## 指标和阈值
 
-共享指标包括 `route_duration`、`route_success`、`schema_success`、`secret_leaks`、`auth_success`、`negotiation_success`、`openapi_success`。SSE、WebSocket 等场景另有自身恢复/取消指标。场景只为实际产生的指标配置阈值，避免无样本阈值；默认功能/安全 Rate 要求为 100%，secret counter 必须为 0。`smoke` 的 HTTP p95 默认小于 1 秒，较长 profile 的默认 p95/p99 更严格，但这些只是开发门禁，不是生产性能承诺。
+共享指标包括 `route_duration`、`route_success`、`schema_success`、`secret_leaks`、`auth_success`、`negotiation_success`。场景只为实际产生的指标配置阈值，避免无样本阈值；默认功能/安全 Rate 要求为 100%，secret counter 必须为 0。`smoke` 的 HTTP p95 默认小于 1 秒，较长 profile 的默认 p95/p99 更严格，但这些只是开发门禁，不是生产性能承诺。
 
 ## 运行
 
@@ -48,10 +46,9 @@ runner 会构建临时 server/rawprobe/resources 可执行文件，启动服务�
 
 - Windows 的 system-wide CPU 百分比当前显式标记为 unsupported；资源采样不是进程 CPU profiler。
 - rawprobe 依赖操作系统 TCP 行为；部分异常报文可能在服务到达应用层前被内核或 HTTP server 拒绝。
-- k6 对 SSE/WS 和底层半关闭/截断语义的观测能力有限，底层边界由 Go fixture 与 rawprobe 补充。
 - 默认 runner 一次执行一个场景；完整矩阵需要外层编排逐场景运行。
 - 当前阈值面向开发回归，不代表生产容量、安全审计或长期可靠性认证。
 
 ## 最终验证记录
 
-使用 k6 v1.8.0 在 Windows 完成全部 11 个 scenario inspect，并通过可复现脚本统计出 162 个唯一 check 名称。smoke 通过；full stability 总时长约 9 分钟，共 58,173 个请求、290,868 个 checks，checks 通过率 100%，HTTP failures 为 0，HTTP duration p95 1.12ms、p99 6.11ms。rawprobe 15/15 通过，runner summary 显示 `cleanup.forced=false`。Windows 资源输出按设计将 system-wide CPU 标记为 unsupported，不能将其 0 值解释为实际 CPU 空闲。
+使用 k6 v1.8.0 在 Linux 完成全部 9 个 scenario 的 smoke（`stability` 冒烟 30s）与 300s full stability soak。soak 期间共 37,639 个请求、188,198 个 checks，checks 通过率 100%，HTTP failures 为 0，HTTP duration avg 0.41ms、p95 0.64ms、p99 1.05ms，goroutine/heap 增长均受界（≤50 / ≤64MB）。rawprobe 15/15 通过，runner summary 显示 `cleanup_failed=false`、`exit_code=0`。

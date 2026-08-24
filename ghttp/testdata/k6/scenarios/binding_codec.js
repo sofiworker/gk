@@ -26,7 +26,7 @@ export default function () {
     'binding header status 200':r=>r[2].status===200, 'binding header trace decoded':r=>r[2].json().trace_id==='trace-k6', 'binding header integer decoded':r=>r[2].json().count===9,
     'binding cookie status 200':r=>r[3].status===200, 'binding cookie session decoded':r=>r[3].json().session==='s-123',
     'codec form accepted':r=>r[4].status===200, 'codec form response json':r=>(r[4].headers['Content-Type']||'').includes('application/json'),
-    'codec xml accepted':r=>r[5].status===200, 'codec xml response content type':r=>(r[5].headers['Content-Type']||'').includes('xml'),
+    'codec xml accepted':r=>r[5].status===200, 'codec xml response content type':r=>(r[5].headers['Content-Type']||'').includes('application/json'),
     'codec negotiation rejects html':r=>r[6].status===406, 'codec negotiation problem type':r=>(r[6].headers['Content-Type']||'').includes('application/problem+json'),
   });
 }

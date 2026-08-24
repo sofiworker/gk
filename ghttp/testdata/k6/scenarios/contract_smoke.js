@@ -3,9 +3,8 @@ import { check, group } from 'k6';
 import { baseURL, scenarioOptions } from '../lib/config.js';
 import { checkJSON, checkProblem, tags } from '../lib/checks.js';
 import { uniqueNamespace } from '../lib/data.js';
-import { openapiSuccess } from '../lib/metrics.js';
 
-export const options = scenarioOptions('contract_smoke', ['secret_leaks', 'schema_success', 'route_success', 'route_duration', 'openapi_success']);
+export const options = scenarioOptions('contract_smoke', ['secret_leaks', 'schema_success', 'route_success', 'route_duration']);
 
 export default function () {
   const base = baseURL();
@@ -14,18 +13,13 @@ export default function () {
   group('binding', () => checkJSON(http.get(`${base}/binding/path/42`, { tags: tags('binding', 'path', 200) }), 200, (v) => v.id === 42));
   group('output', () => checkJSON(http.get(`${base}/output/json`, { tags: tags('output', 'json', 200) }), 200, (v) => v.message === 'hello'));
   group('error', () => checkProblem(http.get(`${base}/binding/path/not-an-int`, { tags: tags('error', 'bad_path', 400) }), 400));
-  group('openapi', () => {
-    const res = http.get(`${base}/openapi.json`, { tags: tags('openapi', `document-${namespace}`, 200) });
-    const doc = checkJSON(res, 200, (v) => v.openapi && v.paths && v.paths['/health']);
-    openapiSuccess.add(Boolean(doc && doc.paths), res.tags);
-  });
-  const output=http.batch([['GET',`${base}/output/json`],['GET',`${base}/output/text`],['GET',`${base}/output/binary`],['GET',`${base}/output/redirect`,null,{redirects:0}],['GET',`${base}/openapi.json`]]);
+  const output=http.batch([['GET',`${base}/output/json`],['GET',`${base}/output/text`],['GET',`${base}/output/binary`],['GET',`${base}/output/redirect`,null,{redirects:0}],['GET',`${base}/routes/static`]]);
   check(output, {
     'contract json status 200':r=>r[0].status===200, 'contract json content type':r=>(r[0].headers['Content-Type']||'').includes('application/json'), 'contract json source typed':r=>r[0].json().meta.source==='typed',
     'contract text status 200':r=>r[1].status===200, 'contract text content type':r=>(r[1].headers['Content-Type']||'').includes('text/plain'), 'contract text body nonempty':r=>r[1].body.length>0,
     'contract bytes status 200':r=>r[2].status===200, 'contract bytes body nonempty':r=>r[2].body.length>0,
     'contract redirect status':r=>r[3].status>=300&&r[3].status<400, 'contract redirect location present':r=>Boolean(r[3].headers.Location),
-    'contract openapi status 200':r=>r[4].status===200, 'contract openapi version present':r=>Boolean(r[4].json().openapi), 'contract openapi paths present':r=>Object.keys(r[4].json().paths||{}).length>0,
+    'contract static status 200':r=>r[4].status===200, 'contract static route present':r=>r[4].json().route==='static',
     'contract request id json':r=>Boolean(r[0].headers['X-Request-Id']||r[0].headers['X-Request-ID']), 'contract request id text':r=>Boolean(r[1].headers['X-Request-Id']||r[1].headers['X-Request-ID']),
   });
   const partial=http.get(`${base}/files/range`,{headers:{Range:'bytes=0-3'}});

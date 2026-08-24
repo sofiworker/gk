@@ -1,78 +1,92 @@
 package app
 
 import (
-	"encoding/json"
+	"context"
 	"net/http"
+	"strings"
 
 	"github.com/sofiworker/gk/ghttp"
 )
 
 func registerRouting(server *ghttp.Server, state *stateController, metrics *RuntimeMetrics, faults *FaultController) {
-	rawJSON := func(value any) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	rawJSON := func(value any) ghttp.RawHandlerFunc {
+		return rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			writeJSON(w, value)
-		})
+		}))
 	}
 
-	server.MustMount(ghttp.RawOperation(http.MethodGet, "/health", rawJSON(map[string]string{"status": "ok"})))
-	server.MustMount(ghttp.RawOperation(http.MethodGet, "/ready", rawJSON(map[string]string{"status": "ready"})))
-	server.MustMount(ghttp.RawOperation(http.MethodGet, "/routes/static", rawJSON(map[string]string{"route": "static"})))
-	server.MustMount(ghttp.RawOperation(http.MethodGet, "/routes/users/new", rawJSON(map[string]string{"id": "new", "route": "static"})))
+	// headOnlyJSON 是 HEAD 探针:只写 Content-Type 与状态,不写 body。
+	// headOnlyJSON is a HEAD probe: writes Content-Type and status only, no body.
+	headOnlyJSON := func() ghttp.RawHandlerFunc {
+		return rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+		}))
+	}
 
-	server.MustMount(ghttp.HandleHTTP(ghttp.Get("/routes/users/{id}"), ghttp.PathString("id"), jsonValue(func(_ *http.Request, id string) any {
-		return map[string]string{"id": id}
-	})))
-	server.MustMount(ghttp.HandleHTTP(ghttp.Get("/routes/pairs/{left}/{right}"),
-		ghttp.MapInputs(ghttp.PathString("left"), ghttp.PathString("right"), func(left, right string) struct{ Left, Right string } {
-			return struct{ Left, Right string }{Left: left, Right: right}
-		}),
-		jsonValue(func(_ *http.Request, in struct{ Left, Right string }) any {
-			return map[string]string{"left": in.Left, "right": in.Right}
-		})))
-	server.MustMount(ghttp.HandleHTTP(ghttp.Get("/routes/files/{path...}"), ghttp.PathString("path"), jsonValue(func(_ *http.Request, path string) any {
-		return map[string]string{"path": path}
-	})))
-	server.Group("/routes/groups/v1").MustMount(ghttp.HandleHTTP(ghttp.Get("/items/{id}"), ghttp.PathString("id"), jsonValue(func(_ *http.Request, id string) any {
-		return map[string]string{"id": id}
-	})))
-	server.MustMount(ghttp.HandleHTTP(ghttp.Get("/routes/unicode/{value}"), ghttp.PathString("value"), jsonValue(func(_ *http.Request, value string) any {
-		return map[string]string{"value": value}
-	})))
+	mustRaw(server.RawHandle(http.MethodGet, "/health", rawJSON(map[string]string{"status": "ok"})))
+	mustRaw(server.RawHandle(http.MethodHead, "/health", headOnlyJSON()))
+	mustRaw(server.RawHandle(http.MethodGet, "/health/", rawJSON(map[string]string{"status": "ok"})))
+	mustRaw(server.RawHandle(http.MethodGet, "/ready", rawJSON(map[string]string{"status": "ready"})))
+	mustRaw(server.RawHandle(http.MethodHead, "/ready", headOnlyJSON()))
+	mustRaw(server.RawHandle(http.MethodGet, "/ready/", rawJSON(map[string]string{"status": "ready"})))
+	mustRaw(server.RawHandle(http.MethodGet, "/routes/static", rawJSON(map[string]string{"route": "static"})))
+	// 静态段优先于参数段:/routes/users/new 必须在 /routes/users/{id} 之前注册。
+	// A static segment beats a param segment: /routes/users/new must be
+	// registered before /routes/users/{id}.
+	mustRaw(server.RawHandle(http.MethodGet, "/routes/users/new", rawJSON(map[string]string{"id": "new", "route": "static"})))
 
-	methodHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	server.MustMount(ghttp.RawOperation(http.MethodPost, "/routes/method", methodHandler))
-	server.MustMount(ghttp.RawOperation(http.MethodDelete, "/routes/method", methodHandler))
+	mustRaw(server.RawHandle(http.MethodGet, "/routes/users/{id}", func(_ context.Context, req *ghttp.Request, resp *ghttp.Response) error {
+		writeJSON(resp, map[string]string{"id": req.Params.Get("id")})
+		return nil
+	}))
+	mustRaw(server.RawHandle(http.MethodGet, "/routes/pairs/{left}/{right}", func(_ context.Context, req *ghttp.Request, resp *ghttp.Response) error {
+		writeJSON(resp, map[string]string{"left": req.Params.Get("left"), "right": req.Params.Get("right")})
+		return nil
+	}))
+	mustRaw(server.RawHandle(http.MethodGet, "/routes/files/{path...}", func(_ context.Context, req *ghttp.Request, resp *ghttp.Response) error {
+		writeJSON(resp, map[string]string{"path": strings.TrimPrefix(req.Params.Get("path"), "/")})
+		return nil
+	}))
+	group := server.Group("/routes/groups/v1")
+	mustRaw(group.RawHandle(http.MethodGet, "/items/{id}", func(_ context.Context, req *ghttp.Request, resp *ghttp.Response) error {
+		writeJSON(resp, map[string]string{"id": req.Params.Get("id")})
+		return nil
+	}))
+	mustRaw(server.RawHandle(http.MethodGet, "/routes/unicode/{value}", func(_ context.Context, req *ghttp.Request, resp *ghttp.Response) error {
+		writeJSON(resp, map[string]string{"value": req.Params.Get("value")})
+		return nil
+	}))
 
-	server.MustMount(ghttp.HandleHTTP(ghttp.Get("/routes/raw-path/{value}"), ghttp.PathString("value"), jsonValue(func(r *http.Request, value string) any {
-		return map[string]string{
-			"value":        value,
+	methodHandler := rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	mustRaw(server.RawHandle(http.MethodPost, "/routes/method", methodHandler))
+	mustRaw(server.RawHandle(http.MethodDelete, "/routes/method", methodHandler))
+
+	// catch-all 捕获 %2F 编码的斜杠段(ghttp 按解码后 URL.Path 匹配,编码斜杠跨段)。
+	// The catch-all captures %2F-encoded slash segments (ghttp matches on the
+	// decoded URL.Path, where an encoded slash spans segments).
+	mustRaw(server.RawHandle(http.MethodGet, "/routes/raw-path/{value...}", func(_ context.Context, req *ghttp.Request, resp *ghttp.Response) error {
+		r := req.Request
+		writeJSON(resp, map[string]string{
+			"value":        strings.TrimPrefix(req.Params.Get("value"), "/"),
 			"path_value":   r.PathValue("value"),
 			"path":         r.URL.Path,
 			"raw_path":     r.URL.RawPath,
 			"escaped_path": r.URL.EscapedPath(),
 			"raw_query":    r.URL.RawQuery,
-		}
-	})))
+		})
+		return nil
+	}))
 
-	server.MustMount(ghttp.RawOperation(http.MethodGet, "/__test/metrics", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	mustRaw(server.RawHandle(http.MethodGet, "/__test/metrics", rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, metrics.Snapshot())
-	})))
-	server.MustMount(ghttp.RawOperation(http.MethodPost, "/__test/reset", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	}))))
+	mustRaw(server.RawHandle(http.MethodPost, "/__test/reset", rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		state.reset()
 		metrics.Reset()
 		faults.Reset()
 		w.WriteHeader(http.StatusNoContent)
-	})))
-}
-
-func jsonValue[I any](value func(*http.Request, I) any) ghttp.HTTPHandlerFunc[I] {
-	return func(w http.ResponseWriter, r *http.Request, input I) error {
-		writeJSON(w, value(r, input))
-		return nil
-	}
-}
-
-func writeJSON(w http.ResponseWriter, value any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(value)
+	}))))
 }

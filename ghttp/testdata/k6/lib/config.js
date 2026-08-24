@@ -13,7 +13,7 @@ export function thresholds(profile = __ENV.PROFILE || 'smoke', metrics = []) {
     http_req_duration: duration,
     checks: ['rate==1'],
   };
-  const custom = { secret_leaks: ['count==0'], schema_success: ['rate==1'], route_success: ['rate==1'], route_duration: duration, auth_success: ['rate==1'], negotiation_success: ['rate==1'], openapi_success: ['rate==1'] };
+  const custom = { secret_leaks: ['count==0'], schema_success: ['rate==1'], route_success: ['rate==1'], route_duration: duration, auth_success: ['rate==1'], negotiation_success: ['rate==1'] };
   for (const metric of metrics) if (custom[metric]) result[metric] = custom[metric];
   return result;
 }

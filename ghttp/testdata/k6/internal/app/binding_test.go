@@ -290,7 +290,7 @@ func TestBindingDoesNotChangeFrameworkErrors(t *testing.T) {
 		if recorder.Code != tc.status {
 			t.Fatalf("%s %s status = %d, want %d", tc.method, tc.target, recorder.Code, tc.status)
 		}
-		assertContentType(t, recorder, "application/json")
+		assertContentType(t, recorder, "application/json; charset=utf-8")
 	}
 }
 

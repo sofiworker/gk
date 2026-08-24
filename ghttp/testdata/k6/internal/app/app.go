@@ -13,21 +13,17 @@ func New(cfg Config) (http.Handler, func()) {
 	state := newStateController(store)
 	metrics := NewRuntimeMetrics()
 	faults := NewFaultController()
-	server := ghttp.New(
-		ghttp.WithProduces(ghttp.MIMEJSON),
-		ghttp.WithOpenAPI("ghttp k6 target", "0.1.0"),
-		ghttp.WithOpenAPIPath("/openapi.json"),
-	)
+	server := ghttp.New()
 	server.Use(observeRequests(metrics))
 	server.Use(globalTraceMiddleware)
-	server.Use(ghttp.Recoverer())
+	server.Use(ghttp.Recovery())
 	registerRouting(server, state, metrics, faults)
 	registerState(server, state)
 	registerBinding(server, cfg)
 	registerOutput(server)
 	registerErrors(server, cfg)
 	registerFaults(server, cfg, faults)
-	registerStreams(server, metrics)
+	registerTyped(server)
 	return server, func() {
 		state.reset()
 		metrics.Reset()

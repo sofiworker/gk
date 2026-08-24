@@ -2,14 +2,16 @@
 // Package ghttp is a generics-oriented, typed HTTP routing framework built on
 // the standard net/http package.
 //
-// 入口按输入组合分函数（GetParams / PostBody / PostParamsBody 等），handler 收裸
-// 参数，类型全推断，无包裹容器。params 经 struct tag（path:/query:/header:）绑定，
-// 请求体经 RequestDecoder 解码，输出经 OutputSpec 编码；需完全接管响应时用 RawHandle。
-// Entries are split by input shape (GetParams / PostBody / PostParamsBody, etc.);
+// 入口按输入组合分函数（GetParams / PostParams / PostBody / PostParamsBody 等），handler 收裸
+// 参数，类型全推断，无包裹容器。params 经 struct tag（path:/query:/header:）绑定，Upload 字段
+// 自动绑定 multipart 文件；请求体经 RequestDecoder 解码（内置 JSONBody/XMLCodec/FormBody/
+// TextBody），输出经 OutputSpec 编码；需完全接管响应时用 RawHandle。
+// Entries are split by input shape (GetParams / PostParams / PostBody / PostParamsBody, etc.);
 // handlers take naked parameters with all type parameters inferred and no wrapper
-// container. Params bind via struct tags (path:/query:/header:), the body is
-// decoded by a RequestDecoder, and output is encoded by an OutputSpec; use
-// RawHandle to fully own the response.
+// container. Params bind via struct tags (path:/query:/header:), Upload fields
+// auto-bind multipart files; the body is decoded by a RequestDecoder (built-in
+// JSONBody/XMLCodec/FormBody/TextBody), and output is encoded by an OutputSpec;
+// use RawHandle to fully own the response.
 //
 // 核心取向:单一 typed 执行模型 + 显式 RawHandler 逃生;纯 net/http 地基,
 // 不引入 fasthttp 或自管 TCP;性能红利只来自池化上下文与零反射 codec。
@@ -57,7 +59,8 @@
 //
 //   - 中间件：RequestID、Logger、LimitBody 之外，另有 Recovery（panic→500 且不
 //     泄露细节）、CORS（含预检）、Timeout（协作式，尊重池化生命周期）、BasicAuth
-//     （恒定时间比较，认证用户经 BasicAuthUser 下传）。
+//     （恒定时间比较，认证用户经 BasicAuthUser 下传）、Gzip（按 Content-Type 白名单
+//     条件压缩，gzip.Writer 池化，未挂载零影响）。
 //
 //   - 静态资源：Static / StaticFS（支持 os.DirFS 与 embed.FS）、File；默认不列
 //     目录，支持目录索引、自定义索引名、SPA history 回退。
@@ -76,7 +79,8 @@
 //     适合作为 metrics/tracing/日志的路由维度；Request.ClientIP / RemoteIP 按可信代理
 //     模型（WithTrustedProxies / WithForwardedHeaders，默认不信任转发头以防伪造）解析
 //     真实客户端 IP；Logger / LoggerWith 输出结构化 AccessLog（含 Route、ClientIP、
-//     BytesOut、Err）。
+//     BytesOut、Err）；NewMetrics / MetricsRegistry 提供 Prometheus 文本格式的请求
+//     指标（计数/延迟/响应大小/在途请求数，按 MatchedRoute 聚合），零依赖可抓取。
 //
 //   - 参数校验：params 字段支持 int8/16/32、uint*、float* 等标量绑定（越界报 400），并可
 //     用 validate tag 声明 required/min/max/len/oneof/email 规则（注册期编译为闭包，
@@ -91,8 +95,10 @@
 //
 //   - Middleware: besides RequestID, Logger, LimitBody, there are Recovery
 //     (panic→500 without leaking details), CORS (with preflight), Timeout
-//     (cooperative, respecting the pooled lifecycle), and BasicAuth (constant-time
-//     comparison, authenticated user passed down via BasicAuthUser).
+//     (cooperative, respecting the pooled lifecycle), BasicAuth (constant-time
+//     comparison, authenticated user passed down via BasicAuthUser), and Gzip
+//     (conditional compression per a Content-Type whitelist, gzip.Writer pooled,
+//     zero impact when unmounted).
 //
 //   - Static assets: Static / StaticFS (os.DirFS and embed.FS) and File; no
 //     directory listing by default, with directory index, custom index name, and
@@ -116,7 +122,10 @@
 //     metrics/tracing/logging; Request.ClientIP / RemoteIP resolve the real client
 //     IP under a trusted-proxy model (WithTrustedProxies / WithForwardedHeaders,
 //     trusting no forwarded header by default to prevent spoofing); Logger /
-//     LoggerWith emit a structured AccessLog (with Route, ClientIP, BytesOut, Err).
+//     LoggerWith emit a structured AccessLog (with Route, ClientIP, BytesOut, Err);
+//     NewMetrics / MetricsRegistry provide Prometheus-text-format request metrics
+//     (count, duration, response size, in-flight, aggregated by MatchedRoute),
+//     zero-dep and scrapable.
 //
 //   - Parameter validation: params fields accept int8/16/32, uint*, float* scalar
 //     binding (out-of-range yields 400) and may declare required/min/max/len/oneof/

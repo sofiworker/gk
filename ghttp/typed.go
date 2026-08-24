@@ -35,6 +35,26 @@ func DeleteParams[P, O any](r router, path string, out OutputSpec[O], h func(con
 	return registerParams(r, http.MethodDelete, path, out, h)
 }
 
+// PostParams POST 入口（仅 params,无 body）。适用于 multipart 上传(params 含 Upload)
+// 或纯 params 的 POST 操作。
+// PostParams is the POST entry (params only, no body). Suitable for multipart
+// uploads (params with Upload) or pure-params POST operations.
+func PostParams[P, O any](r router, path string, out OutputSpec[O], h func(context.Context, P) (O, error)) error {
+	return registerParams(r, http.MethodPost, path, out, h)
+}
+
+// PutParams PUT 入口（仅 params,无 body）。
+// PutParams is the PUT entry (params only, no body).
+func PutParams[P, O any](r router, path string, out OutputSpec[O], h func(context.Context, P) (O, error)) error {
+	return registerParams(r, http.MethodPut, path, out, h)
+}
+
+// PatchParams PATCH 入口（仅 params,无 body）。
+// PatchParams is the PATCH entry (params only, no body).
+func PatchParams[P, O any](r router, path string, out OutputSpec[O], h func(context.Context, P) (O, error)) error {
+	return registerParams(r, http.MethodPatch, path, out, h)
+}
+
 // registerParams 是 params-only 入口的共享注册逻辑。
 // registerParams is the shared registration logic for params-only entries.
 func registerParams[P, O any](r router, method, path string, out OutputSpec[O], h func(context.Context, P) (O, error)) error {

@@ -2,7 +2,7 @@
 
 [English](README.en.md) | 中文
 
-基于标准库 `net/http` 的、面向 Go 泛型的 typed HTTP 路由框架。入口按输入组合分函数（`GetParams` / `PostBody` / `PostParamsBody` 等），handler 收裸参数、类型全推断、无包裹容器；params 经 struct tag（`path:` / `query:` / `header:`）绑定，请求体经 `RequestDecoder` 解码，输出经 `OutputSpec` 编码；需完全接管响应时用 `RawHandle`。
+基于标准库 `net/http` 的、面向 Go 泛型的 typed HTTP 路由框架。入口按输入组合分函数（`GetParams` / `PostParams` / `PostBody` / `PostParamsBody` 等），handler 收裸参数、类型全推断、无包裹容器；params 经 struct tag（`path:` / `query:` / `header:`）绑定，`Upload` 字段自动绑定 multipart 文件；请求体经 `RequestDecoder` 解码（内置 `JSONBody`/`XMLCodec`/`FormBody`/`TextBody`），输出经 `OutputSpec` 编码；需完全接管响应时用 `RawHandle`。
 
 性能取向：纯 `net/http` 地基，无 fasthttp、无自管 TCP；命中热路径零反射、零分配（`dispatchRaw` 命中 0 alloc），性能红利只来自池化上下文与零反射 codec。
 
@@ -11,7 +11,7 @@
 - 路由：radix 树（gin 同源）+ 路径参数 + catch-all + 尾斜杠重定向（TSR）
 - typed 入口：泛型自由函数，注册期建计划（反射一次）、请求期零反射
 - 中间件：全局 `Use` 对命中/未命中一视同仁；无全局中间件时走零开销直连
-- 内建中间件：RequestID、Logger、LimitBody、Recovery、CORS（含预检）、Timeout、BasicAuth
+- 内建中间件：RequestID、Logger、LimitBody、Recovery、CORS（含预检）、Timeout、BasicAuth、Metrics（零依赖 Prometheus 风格指标）、Gzip（条件压缩，可配级别）
 - 静态资源：`Static` / `StaticFS`（`os.DirFS` 与 `embed.FS`）、`File`、SPA history 回退
 - 健康检查：`Health`（liveness）、`Ready`（readiness）、`NewReadinessGate`（运行时开关）
 - 生命周期：`Run` / `RunTLS` / `Serve` / `ServeTLS` / `Shutdown` / `Close` / `RunGraceful`
@@ -58,6 +58,8 @@ s := ghttp.New(
 - `Request.MatchedRoute()`：命中的低基数路由模板（如 `/users/:id`），适合作 metrics/tracing/日志的路由维度。
 - `Request.ClientIP()` / `RemoteIP()`：按可信代理模型解析真实客户端 IP。**默认不信任任何转发头**（防伪造）；配置 `WithTrustedProxies(...)` 后，仅当直连对端可信才回溯 `X-Forwarded-For` / `X-Real-IP`（头名可用 `WithForwardedHeaders` 覆盖）。
 - `Logger` / `LoggerWith`：输出结构化 `AccessLog`（含 `Method`/`Path`/`Route`/`Status`/`Elapsed`/`ClientIP`/`BytesOut`/`Err`）。
+- `Metrics`：零依赖 Prometheus 风格指标中间件，按 `MatchedRoute` 低基数标签记录请求数/延迟/错误率/字节数。通过 `MetricsRegistry.Handler()` 挂载 `/metrics` 端点，导出 `go_goroutines`、`go_memstats_alloc_bytes` 等运行时指标。
+- `Gzip`：条件压缩中间件，可按 Content-Type 白名单与可配级别（`WithGzipLevel`）压缩响应体；自动检测 `Accept-Encoding` 并处理 q 值优先级。
 
 ## 参数校验
 

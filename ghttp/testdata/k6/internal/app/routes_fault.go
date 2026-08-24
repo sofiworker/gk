@@ -40,26 +40,37 @@ func registerFaults(server *ghttp.Server, cfg Config, controller *FaultControlle
 		secret = testDefaultSecret
 	}
 	faults := server.Group("/fault")
-	faults.MustMount(ghttp.RawOperation(http.MethodGet, "/delay", http.HandlerFunc(handleFaultDelay)))
-	faults.MustMount(ghttp.RawOperation(http.MethodGet, "/random", http.HandlerFunc(controller.handleRandom)))
-	faults.MustMount(ghttp.RawOperation(http.MethodGet, "/limited", http.HandlerFunc(controller.handleLimited)))
-	faults.MustMount(ghttp.RawOperation(http.MethodPost, "/reset", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	mustRaw(faults.RawHandle(http.MethodGet, "/delay", rawAdapter(http.HandlerFunc(handleFaultDelay))))
+	mustRaw(faults.RawHandle(http.MethodGet, "/random", rawAdapter(http.HandlerFunc(controller.handleRandom))))
+	mustRaw(faults.RawHandle(http.MethodGet, "/limited", rawAdapter(http.HandlerFunc(controller.handleLimited))))
+	mustRaw(faults.RawHandle(http.MethodPost, "/reset", rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		controller.Reset()
 		w.WriteHeader(http.StatusNoContent)
-	})))
-	faults.MustMount(ghttp.RawOperation(http.MethodGet, "/unavailable", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	}))))
+	mustRaw(faults.RawHandle(http.MethodGet, "/unavailable", rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		writePublicError(w, http.StatusServiceUnavailable)
-	})))
-	faults.MustMount(ghttp.RawOperation(http.MethodGet, "/panic", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	}))))
+	mustRaw(faults.RawHandle(http.MethodGet, "/panic", rawAdapter(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic("fault panic " + secret)
-	})))
-	faults.MustMount(ghttp.RawOperation(http.MethodGet, "/timeout", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(faultLateWrite)
-		writeJSON(w, map[string]string{"status": "late-success"})
+	}))))
+	// 仅 /fault/timeout 施加 Timeout 中间件,用嵌套分组承载。
+	// Only /fault/timeout gets the Timeout middleware, carried by a nested group.
+	mustRaw(faults.Group("/timeout", ghttp.Timeout(faultTimeout)).RawHandle(http.MethodGet, "", rawAdapterCtx(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+		// 协作式超时:监听 ctx.Done() 主动退出,让 Timeout 中间件检测 deadline。
+		// Cooperative timeout: watch ctx.Done() and exit early so the
+		// Timeout middleware can detect the deadline.
+		timer := time.NewTimer(faultLateWrite)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			writeJSON(w, map[string]string{"status": "late-success"})
+		case <-ctx.Done():
+			// 超时:不写响应,由 Timeout 中间件补写 503。
+			// Timed out: write nothing; the Timeout middleware fills in 503.
+		}
 		signalFaultLateDone(r)
-	})).WithMiddleware(ghttp.Timeout(faultTimeout)))
-
-	faults.MustMount(ghttp.RawOperation(http.MethodGet, "/cancel", http.HandlerFunc(handleFaultCancel)))
+	})))
+	mustRaw(faults.RawHandle(http.MethodGet, "/cancel", rawAdapter(http.HandlerFunc(handleFaultCancel))))
 }
 
 func handleFaultDelay(w http.ResponseWriter, r *http.Request) {

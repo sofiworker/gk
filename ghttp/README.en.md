@@ -2,7 +2,7 @@
 
 English | [中文](README.md)
 
-A generics-oriented, typed HTTP routing framework built on the standard `net/http`. Entries are split by input shape (`GetParams` / `PostBody` / `PostParamsBody`, etc.); handlers take naked parameters with all type parameters inferred and no wrapper container. Params bind via struct tags (`path:` / `query:` / `header:`), the body is decoded by a `RequestDecoder`, and output is encoded by an `OutputSpec`; use `RawHandle` to fully own the response.
+A generics-oriented, typed HTTP routing framework built on the standard `net/http`. Entries are split by input shape (`GetParams` / `PostParams` / `PostBody` / `PostParamsBody`, etc.); handlers take naked parameters with all type parameters inferred and no wrapper container. Params bind via struct tags (`path:` / `query:` / `header:`), `Upload` fields auto-bind multipart files; the body is decoded by a `RequestDecoder` (built-in `JSONBody`/`XMLCodec`/`FormBody`/`TextBody`), and output is encoded by an `OutputSpec`; use `RawHandle` to fully own the response.
 
 Performance stance: a pure `net/http` foundation with no fasthttp and no self-managed TCP; the hit hot path is zero-reflection and zero-allocation (`dispatchRaw` hits at 0 alloc), with gains coming only from pooled contexts and zero-reflection codecs.
 
@@ -11,7 +11,7 @@ Performance stance: a pure `net/http` foundation with no fasthttp and no self-ma
 - Routing: radix tree (gin lineage) + path params + catch-all + trailing-slash redirect (TSR)
 - Typed entries: generic free functions, plan built at registration (reflect once), zero reflection at request time
 - Middleware: global `Use` treats hits and misses alike; a zero-overhead direct path when no global middleware
-- Built-in middleware: RequestID, Logger, LimitBody, Recovery, CORS (with preflight), Timeout, BasicAuth
+- Built-in middleware: RequestID, Logger, LimitBody, Recovery, CORS (with preflight), Timeout, BasicAuth, Metrics (zero-dependency Prometheus-style metrics), Gzip (conditional compression with configurable level)
 - Static assets: `Static` / `StaticFS` (`os.DirFS` and `embed.FS`), `File`, SPA history fallback
 - Health checks: `Health` (liveness), `Ready` (readiness), `NewReadinessGate` (runtime toggle)
 - Lifecycle: `Run` / `RunTLS` / `Serve` / `ServeTLS` / `Shutdown` / `Close` / `RunGraceful`
@@ -58,6 +58,8 @@ s := ghttp.New(
 - `Request.MatchedRoute()`: the low-cardinality matched route template (e.g. `/users/:id`), suited for the route dimension in metrics/tracing/logging.
 - `Request.ClientIP()` / `RemoteIP()`: resolve the real client IP under a trusted-proxy model. **No forwarded header is trusted by default** (anti-spoofing); after `WithTrustedProxies(...)`, `X-Forwarded-For` / `X-Real-IP` are walked only when the direct peer is trusted (header names overridable via `WithForwardedHeaders`).
 - `Logger` / `LoggerWith`: emit a structured `AccessLog` (with `Method`/`Path`/`Route`/`Status`/`Elapsed`/`ClientIP`/`BytesOut`/`Err`).
+- `Metrics`: zero-dependency Prometheus-style metrics middleware, recording request count/latency/error rate/bytes labelled by low-cardinality `MatchedRoute`. Mount the `/metrics` endpoint via `MetricsRegistry.Handler()`, which exports runtime metrics like `go_goroutines` and `go_memstats_alloc_bytes`.
+- `Gzip`: conditional compression middleware that compresses response bodies by configurable Content-Type whitelist and level (`WithGzipLevel`); automatically detects `Accept-Encoding` with q-value priority.
 
 ## Parameter validation
 

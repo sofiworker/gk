@@ -2,12 +2,11 @@ package app
 
 import (
 	"bytes"
-	"context"
-	"encoding/xml"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/sofiworker/gk/ghttp"
@@ -17,71 +16,102 @@ const outputETag = `"ghttp-k6-sample-v1"`
 
 var outputModifiedTime = time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC)
 
-type outputJSON struct {
-	Message string         `json:"message" required:"true"`
-	Tags    []string       `json:"tags"`
-	Meta    outputJSONMeta `json:"meta"`
-}
-
-type outputJSONMeta struct {
-	Source string `json:"source"`
-}
-
-type outputXML struct {
-	XMLName xml.Name `json:"-" xml:"output"`
-	Message string   `xml:"message"`
-}
-
 func registerOutput(server *ghttp.Server) {
 	sample := loadOutputFixture()
 
-	server.MustMount(ghttp.Handle(ghttp.Get("/output/json"), ghttp.QueryBool("missing"), ghttp.JSONOutput[outputJSON](), func(_ context.Context, missing bool) (outputJSON, error) {
+	// JSON 输出,missing 查询参数控制是否返回 404。
+	// JSON output with a missing query param to control 404.
+	mustRaw(server.RawHandle(http.MethodGet, "/output/json", rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		missing, _ := strconv.ParseBool(r.URL.Query().Get("missing"))
 		if missing {
-			return outputJSON{}, ghttp.Err(http.StatusNotFound, http.StatusText(http.StatusNotFound))
+			writePublicError(w, http.StatusNotFound)
+			return
 		}
-		return outputJSON{Message: "hello", Tags: []string{"ghttp", "k6"}, Meta: outputJSONMeta{Source: "typed"}}, nil
-	}))
-	server.MustMount(ghttp.Handle(ghttp.Get("/output/xml"), ghttp.NoInput(), ghttp.XMLOutput[outputXML](), func(context.Context, ghttp.EmptyInput) (outputXML, error) {
-		return outputXML{Message: "hello"}, nil
-	}))
-	server.MustMount(ghttp.Handle(ghttp.Get("/output/text"), ghttp.NoInput(), ghttp.TextOutput(), func(context.Context, ghttp.EmptyInput) (string, error) {
-		return "hello text", nil
-	}))
-	server.MustMount(ghttp.RawOperation(http.MethodGet, "/output/binary", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, struct {
+			Message string            `json:"message"`
+			Tags    []string          `json:"tags"`
+			Meta    map[string]string `json:"meta"`
+		}{Message: "hello", Tags: []string{"ghttp", "k6"}, Meta: map[string]string{"source": "typed"}})
+	}))))
+	// HEAD 只回头部,不回 body(与 net/http 线级语义一致,httptest 才能观察到空 body)。
+	// HEAD returns headers only (matching net/http wire semantics so httptest can
+	// observe the empty body).
+	mustRaw(server.RawHandle(http.MethodHead, "/output/json", rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+	}))))
+
+	// XML 输出:手写 XML 字符串,不依赖 XML 编解码器。
+	// XML output: write a literal XML string, no XML codec dependency.
+	mustRaw(server.RawHandle(http.MethodGet, "/output/xml", rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<output><message>hello</message></output>`))
+	}))))
+
+	// 纯文本输出。
+	// Plain text output.
+	mustRaw(server.RawHandle(http.MethodGet, "/output/text", rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("hello text"))
+	}))))
+
+	// 二进制输出。
+	// Binary output.
+	mustRaw(server.RawHandle(http.MethodGet, "/output/binary", rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/octet-stream")
 		_, _ = w.Write([]byte{0, 1, 'g', 'h', 't', 't', 'p', 0xff})
-	})))
+	}))))
 
-	server.MustMount(ghttp.Handle(ghttp.Post("/output/created"), ghttp.NoInput(), ghttp.WithResponseHeader("Location", "/output/json", ghttp.WithStatus(http.StatusCreated, ghttp.NoContentOutput[ghttp.EmptyInput]())), func(context.Context, ghttp.EmptyInput) (ghttp.EmptyInput, error) {
-		return ghttp.EmptyInput{}, nil
-	}))
-	server.MustMount(ghttp.Handle(ghttp.Post("/output/accepted"), ghttp.NoInput(), ghttp.WithStatus(http.StatusAccepted, ghttp.NoContentOutput[ghttp.EmptyInput]()), func(context.Context, ghttp.EmptyInput) (ghttp.EmptyInput, error) {
-		return ghttp.EmptyInput{}, nil
-	}))
-	server.MustMount(ghttp.HandleNoOutput(ghttp.Delete("/output/empty"), ghttp.NoInput(), func(context.Context, ghttp.EmptyInput) error {
-		return nil
-	}))
-	server.MustMount(ghttp.RedirectOperation(http.MethodGet, "/output/redirect", http.StatusTemporaryRedirect, "/output/json"))
-	server.MustMount(ghttp.RawOperation(http.MethodGet, "/output/headers", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	// 201 Created + Location。
+	mustRaw(server.RawHandle(http.MethodPost, "/output/created", rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", "/output/json")
+		w.WriteHeader(http.StatusCreated)
+	}))))
+
+	// 202 Accepted。
+	mustRaw(server.RawHandle(http.MethodPost, "/output/accepted", rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))))
+
+	// 204 No Content。
+	mustRaw(server.RawHandle(http.MethodDelete, "/output/empty", rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))))
+	// HEAD /output/empty 期望 405 空体。
+	// HEAD /output/empty expects 405 with an empty body.
+	mustRaw(server.RawHandle(http.MethodHead, "/output/empty", rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}))))
+
+	// 307 重定向。
+	mustRaw(server.RawHandle(http.MethodGet, "/output/redirect", rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/output/json", http.StatusTemporaryRedirect)
+	}))))
+
+	// 多值响应头。
+	mustRaw(server.RawHandle(http.MethodGet, "/output/headers", rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Add("Vary", "Accept")
 		w.Header().Add("Vary", "Accept-Encoding")
 		w.Header().Add("X-Multi", "one")
 		w.Header().Add("X-Multi", "two")
 		w.Header().Set("Content-Length", "5")
 		_, _ = w.Write([]byte("hello"))
-	})))
+	}))))
 
-	server.MustMount(ghttp.RawOperation(http.MethodGet, "/files/sample", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// 文件服务(testdata 静态文件)。
+	mustRaw(server.RawHandle(http.MethodGet, "/files/sample", rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", `attachment; filename="sample.txt"`)
 		http.ServeContent(w, r, "sample.txt", outputModifiedTime, bytes.NewReader(sample))
-	})))
-	server.MustMount(ghttp.RawOperation(http.MethodGet, "/files/range", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	}))))
+	mustRaw(server.RawHandle(http.MethodGet, "/files/range", rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.ServeContent(w, r, "sample.txt", outputModifiedTime, bytes.NewReader(sample))
-	})))
-	server.MustMount(ghttp.RawOperation(http.MethodGet, "/files/etag", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	}))))
+	mustRaw(server.RawHandle(http.MethodGet, "/files/etag", rawAdapter(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("ETag", outputETag)
 		http.ServeContent(w, r, "sample.txt", outputModifiedTime, bytes.NewReader(sample))
-	})))
+	}))))
 }
 
 func loadOutputFixture() []byte {
