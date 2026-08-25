@@ -190,6 +190,32 @@ func appendJSONString(dst []byte, s string) []byte {
 // defaultErrorRenderer is the package-level default renderer (stateless, shared).
 var defaultErrorRenderer ErrorRenderer = jsonErrorRenderer{}
 
+// prebuiltMissBody 预构建高频 miss 状态码(404/405)在默认脱敏模式下的完整 JSON 错误体。
+// miss 洪水(如扫描器、错误链接)是真实生产热点,预构建后请求期直接写切片,零分配、零拼接。
+// 仅当使用默认渲染器时复用;自定义 ErrorRenderer 或业务错误仍走 jsonErrorRenderer 动态拼接。
+// prebuiltMissBody holds the full JSON error bodies for high-frequency miss
+// statuses (404/405) under the default sanitized renderer. Miss floods (scanners,
+// dead links) are a real production hot spot; prebuilding lets the request path
+// write the slice directly at zero alloc. Reused only with the default renderer.
+var prebuiltMissBody = map[int][]byte{
+	http.StatusNotFound:         buildMissBody(http.StatusNotFound),
+	http.StatusMethodNotAllowed: buildMissBody(http.StatusMethodNotAllowed),
+}
+
+// buildMissBody 用与 jsonErrorRenderer 完全一致的格式构建 status 的脱敏错误体。
+// buildMissBody builds the sanitized error body for status in the exact same
+// format as jsonErrorRenderer.
+func buildMissBody(status int) []byte {
+	code, message := codeForStatus(status), genericMessage(status)
+	buf := make([]byte, 0, 48+len(code)+len(message))
+	buf = append(buf, `{"error":{"code":`...)
+	buf = appendJSONString(buf, code)
+	buf = append(buf, `,"message":`...)
+	buf = appendJSONString(buf, message)
+	buf = append(buf, "}}"...)
+	return buf
+}
+
 // writeError 是错误链的唯一出口:分类 → 选状态码 → 按脱敏策略取文案 → 渲染。
 // 若响应已提交则只经 onError 记录、绝不改写,避免双写。err 为 nil 时空操作。
 // writeError is the error chain's single exit: classify → status → message per

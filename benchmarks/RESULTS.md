@@ -148,3 +148,24 @@ PathParam1 是本次重写**唯一显著回归**的场景:
   `Server` + typed 入口（GetNone/GetParams/PostBody/PutParamsBody）。
 - `web`（/root/test 的实验框架）目录已不存在，其适配移入 `webframework` build tag，
   `-tags webframework` 可重新纳入；`go.mod` 中的 replace 已注释。
+
+## 7. 404 miss 路径优化落地（预构建错误体）
+
+第 5 节指出的"404/miss 冷路径是最大项"已优化。做法：默认脱敏渲染器下,404/405 的错误体
+内容恒定,故在 `error_chain.go` 用 `prebuiltMissBody` 包级 map 预构建整块 JSON 字节切片
+(与 `jsonErrorRenderer` 格式逐字节一致);`renderMiss` 在 `errorRenderer == nil` 时直接
+`resp.Write(body)`,免去每请求的 `make([]byte,...)` 拼接。自定义 `WithErrorRenderer` /
+`WithNotFoundHandler` 仍走原动态路径,行为不变。
+
+**同机 9950X / Go 1.27 实测 A/B（median）:**
+
+| 基准 | 优化前 | 优化后 | Δ |
+|---|---:|---:|---:|
+| `ghttp` ServeMiss (自带, count=5) | 144.1 ns / 144B / 3 allocs | **82.2 ns / 64B / 2 allocs** | −43% 时间, −56% B |
+| `benchmarks` NotFound (整链, count=3) | ~125 ns / 144B / 3 | **79.1 ns / 64B / 2** | −37% 时间 |
+
+**优化后 NotFound 横向对比:** gin 30ns/0B(裸 404 无体) < **ghttp 79ns/64B(JSON 错误体)** <
+fiber 143ns/0B(裸) < echo 535ns/456B(JSON 体)。ghttp 成为**唯一既输出结构化 JSON 错误体
+又快过 fiber** 的框架,相比同样输出错误体的 echo 快 6.8×。剩余 64B/2allocs 来自裸路径
+`&Response{}` 逃逸 + header,属必要开销。命中路径(Static/Param/JSONBind/FullChain)实测
+与优化前逐项持平,无回归。

@@ -39,6 +39,7 @@
 
 ### Changed
 
+- ghttp：404/405 miss 路径性能优化——默认脱敏渲染器下预构建错误体（`prebuiltMissBody`），请求期直接写切片，免去每请求的 JSON 拼接分配；ServeMiss 从 144ns/144B/3allocs 降到 82ns/64B/2allocs（−43% 时间、−56% 内存），命中路径无回归。自定义 `WithErrorRenderer`/`WithNotFoundHandler` 行为不变。
 - ghttp：已配置 `Consumes` 时缺失 Content-Type 返回 415（原为按 JSON 解析）。
 - ghttp：CORS 只对真正的预检请求（OPTIONS + Origin + Access-Control-Request-Method）短路。
 - ghttp：Group 中间件在创建子组时快照（gin 语义），与 produces/consumes 快照一致。

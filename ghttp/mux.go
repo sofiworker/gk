@@ -379,12 +379,24 @@ func (m *mux) writeMissRaw(w http.ResponseWriter, r *http.Request, path string, 
 }
 
 // renderMiss 用配置的 ErrorRenderer(默认 JSON 错误体)渲染 404/405,使 miss 响应与
-// 业务错误体格式一致。仅在 miss 冷路径调用。
+// 业务错误体格式一致。仅在 miss 冷路径调用。默认渲染器下的 404/405 走预构建体,零分配。
 // renderMiss renders a 404/405 via the configured ErrorRenderer (default JSON
 // error body) so miss responses match the business error body. Miss cold path only.
+// Under the default renderer, 404/405 use a prebuilt body at zero alloc.
 func (m *mux) renderMiss(resp *Response, r *http.Request, status int) {
 	if m.onError != nil {
 		m.onError(r, status, statusError(status))
+	}
+	// 默认渲染器 + 已预构建的状态码(404/405) → 直接写预构建切片,免拼接免分配。
+	// Default renderer + a prebuilt status (404/405) → write the prebuilt slice
+	// directly, skipping assembly and allocation.
+	if m.errorRenderer == nil {
+		if body, ok := prebuiltMissBody[status]; ok {
+			resp.Header().Set("Content-Type", "application/json; charset=utf-8")
+			resp.WriteHeader(status)
+			_, _ = resp.Write(body)
+			return
+		}
 	}
 	renderer := m.errorRenderer
 	if renderer == nil {
