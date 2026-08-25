@@ -2,7 +2,7 @@
 
 English | [中文](README.md)
 
-A generics-oriented, typed HTTP routing framework built on the standard `net/http`. Entries are split by input shape (`GetParams` / `PostParams` / `PostBody` / `PostParamsBody`, etc.); handlers take naked parameters with all type parameters inferred and no wrapper container. Params bind via struct tags (`path:` / `query:` / `header:`), `Upload` fields auto-bind multipart files; the body is decoded by a `RequestDecoder` (built-in `JSONBody`/`XMLCodec`/`FormBody`/`TextBody`), and output is encoded by an `OutputSpec`; use `RawHandle` to fully own the response.
+A generics-oriented, typed HTTP routing framework built on the standard `net/http`. Entries are split by input shape (`GetParams` / `PostParams` / `PostBody` / `PostParamsBody`, etc.); handlers take naked parameters with all type parameters inferred and no wrapper container. Params bind via struct tags (`path:` / `query:` / `header:`) and carry only transport parameters; the body is decoded by a typed `InputSpec[B]` (built-in `JSONBody[B]`/`XMLBody[B]`/`FormBody[B]`/`TextBody[B]`, or `Body[B](codec)` for a custom decoder), with form text fields and uploaded files (`Upload` / `[]Upload`) both belonging to the body and decoded together by `FormBody[B]()`; output is encoded by an `OutputSpec[O]`; use `RawHandle` to fully own the response.
 
 Performance stance: a pure `net/http` foundation with no fasthttp and no self-managed TCP; the hit hot path is zero-reflection and zero-allocation (`dispatchRaw` hits at 0 alloc), with gains coming only from pooled contexts and zero-reflection codecs.
 

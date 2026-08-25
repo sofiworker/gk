@@ -3,19 +3,37 @@ package ghttp
 import (
 	"fmt"
 	"io"
+	"mime/multipart"
 	"reflect"
 	"strconv"
 	"strings"
 )
 
+// defaultMaxMultipartMemory 是解析 multipart 表单时驻留内存的上限,超出部分写入临时文件
+// (与 net/http 默认 32MiB 一致)。
+// defaultMaxMultipartMemory caps the in-memory portion when parsing a multipart
+// form; the rest spills to temp files (matches net/http's 32 MiB default).
+const defaultMaxMultipartMemory = 32 << 20
+
+// uploadType / sliceUploadType 是 Upload 与 []Upload 的反射类型,供 form 解码识别文件字段。
+// 包级缓存,避免每次解码重复 reflect.TypeOf。
+// uploadType / sliceUploadType are the reflect types of Upload and []Upload, used
+// by form decoding to recognize file fields. Package-level cache to avoid
+// repeating reflect.TypeOf on every decode.
+var (
+	uploadType      = reflect.TypeOf(Upload{})
+	sliceUploadType = reflect.TypeOf([]Upload(nil))
+)
+
 // ——— FormBody ——— //
 
-// formCodec 解码 application/x-www-form-urlencoded 与 multipart/form-data 的文本字段
-// 到 struct 中(form tag)。urlencoded 走 ParseForm+PostForm;multipart 走
-// ParseMultipartForm+MultipartForm.Value。
+// formCodec 解码 application/x-www-form-urlencoded 与 multipart/form-data 到 struct:
+// 文本字段(form tag)绑标量,Upload / []Upload 字段(form tag)绑上传文件。urlencoded 只有
+// 文本字段;multipart 同时含文本(MultipartForm.Value)与文件(MultipartForm.File)。
 // formCodec decodes application/x-www-form-urlencoded and multipart/form-data
-// text fields into a struct (form tag). urlencoded uses ParseForm+PostForm;
-// multipart uses ParseMultipartForm+MultipartForm.Value.
+// into a struct: text fields (form tag) bind scalars, and Upload / []Upload
+// fields (form tag) bind uploaded files. urlencoded carries text only; multipart
+// carries both text (MultipartForm.Value) and files (MultipartForm.File).
 type formCodec struct{}
 
 // ContentType 返回空串:formCodec 同时接受 urlencoded 与 multipart 两种 Content-Type,
@@ -33,26 +51,27 @@ func (formCodec) Decode(req *Request, v any) error {
 		if err := req.ParseMultipartForm(defaultMaxMultipartMemory); err != nil {
 			return fmt.Errorf("%w: %v", ErrInvalidInput, err)
 		}
-		return decodeFormStruct(req.MultipartForm.Value, v)
+		var files map[string][]*multipart.FileHeader
+		if req.MultipartForm != nil {
+			files = req.MultipartForm.File
+		}
+		return decodeFormStruct(req.MultipartForm.Value, files, v)
 	}
 	if err := req.ParseForm(); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
-	return decodeFormStruct(req.PostForm, v)
+	return decodeFormStruct(req.PostForm, nil, v)
 }
 
-// FormBody 返回一个表单请求体解码器，供 PostBody/PostParamsBody 等入口的 dec 参数使用。
-// FormBody returns a form request-body decoder for the dec parameter of entries
-// like PostBody/PostParamsBody. It calls req.ParseForm() at decode time, so it
-// works for both urlencoded and multipart text fields.
-func FormBody() RequestDecoder { return formCodec{} }
-
-// decodeFormStruct 把 url.Values 映射到 struct 的 form tag 字段上。
-// 支持 string/bool/int/uint/float 类型;不支持内嵌结构体与 slice。
-// decodeFormStruct maps url.Values to a struct's form-tagged fields.
-// It supports string/bool/int/uint/float and does not recurse into embedded
-// structs or slices.
-func decodeFormStruct(values map[string][]string, dst any) error {
+// decodeFormStruct 把表单文本值与上传文件映射到 struct 的 form tag 字段上:标量字段走
+// setScalarForm,Upload / []Upload 字段从 files 绑定。支持 string/bool/int/uint/float
+// 标量;不递归内嵌结构体。文件缺失时保留零值(必填与否由后续校验层决定)。
+// decodeFormStruct maps form text values and uploaded files onto a struct's
+// form-tagged fields: scalar fields go through setScalarForm, and Upload /
+// []Upload fields bind from files. Supports string/bool/int/uint/float scalars
+// and does not recurse into embedded structs. A missing file leaves the zero
+// value (whether it is required is decided by a later validation layer).
+func decodeFormStruct(values map[string][]string, files map[string][]*multipart.FileHeader, dst any) error {
 	rv := reflect.ValueOf(dst)
 	if rv.Kind() != reflect.Ptr || rv.Elem().Kind() != reflect.Struct {
 		return fmt.Errorf("%w: decodeFormStruct target must be a pointer to struct, got %T", ErrInvalidInput, dst)
@@ -69,11 +88,29 @@ func decodeFormStruct(values map[string][]string, dst any) error {
 		if name == "-" {
 			continue
 		}
+		fv := sv.Field(i)
+		// Upload / []Upload 字段从 files 绑定;其余按标量从 values 绑定。
+		// Upload / []Upload fields bind from files; others bind as scalars from values.
+		switch ft.Type {
+		case uploadType:
+			if hs := files[name]; len(hs) > 0 {
+				fv.Set(reflect.ValueOf(uploadFromHeader(hs[0])))
+			}
+			continue
+		case sliceUploadType:
+			if hs := files[name]; len(hs) > 0 {
+				ups := make([]Upload, len(hs))
+				for j, h := range hs {
+					ups[j] = uploadFromHeader(h)
+				}
+				fv.Set(reflect.ValueOf(ups))
+			}
+			continue
+		}
 		vv, ok := values[name]
 		if !ok || len(vv) == 0 {
 			continue
 		}
-		fv := sv.Field(i)
 		if err := setScalarForm(fv, ft.Type.Kind(), vv[0], name); err != nil {
 			return err
 		}
@@ -152,9 +189,3 @@ func (textCodec) Decode(req *Request, v any) error {
 		return fmt.Errorf("%w: TextBody target must be *string or *[]byte, got %T", ErrInvalidInput, v)
 	}
 }
-
-// TextBody 返回一个纯文本请求体解码器，供 PostBody/PostParamsBody 等入口的 dec 参数使用。
-// 目标类型为 string 或 []byte。
-// TextBody returns a plain-text request-body decoder for the dec parameter of
-// entries like PostBody/PostParamsBody. The target type must be string or []byte.
-func TextBody() RequestDecoder { return textCodec{} }

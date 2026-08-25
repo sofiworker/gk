@@ -10,27 +10,30 @@ import (
 	"testing"
 )
 
-// ——— form: 标量字段直接绑定到 params(免 body 解码器) ——— //
+// ——— form: 标量字段作为请求体,经 FormBody[T]() 解码 ——— //
+// 表单字段属于请求体(而非 path/query/header 参数),与文件上传走同一条 form 解码轴。
+// Form fields belong to the request body (not path/query/header params) and share
+// the same form-decode axis as file uploads.
 
-type formParamsReq struct {
+type formBodyReq struct {
 	Name  string  `form:"name"`
 	Age   int     `form:"age"`
 	Score float64 `form:"score"`
 	Admin bool    `form:"admin"`
 }
 
-type formParamsResult struct {
+type formBodyResult struct {
 	Name  string  `json:"name"`
 	Age   int     `json:"age"`
 	Score float64 `json:"score"`
 	Admin bool    `json:"admin"`
 }
 
-func TestFormParams_URLEncoded(t *testing.T) {
+func TestFormBody_URLEncoded(t *testing.T) {
 	m := New()
-	if err := PostParams(m, "/form", JSON[formParamsResult](),
-		func(_ context.Context, p formParamsReq) (formParamsResult, error) {
-			return formParamsResult{Name: p.Name, Age: p.Age, Score: p.Score, Admin: p.Admin}, nil
+	if err := PostBody(m, "/form", FormBody[formBodyReq](), JSON[formBodyResult](),
+		func(_ context.Context, b formBodyReq) (formBodyResult, error) {
+			return formBodyResult{Name: b.Name, Age: b.Age, Score: b.Score, Admin: b.Admin}, nil
 		}); err != nil {
 		t.Fatal(err)
 	}
@@ -49,11 +52,11 @@ func TestFormParams_URLEncoded(t *testing.T) {
 	}
 }
 
-func TestFormParams_Multipart(t *testing.T) {
+func TestFormBody_Multipart(t *testing.T) {
 	m := New()
-	if err := PostParams(m, "/form-mp", JSON[formParamsResult](),
-		func(_ context.Context, p formParamsReq) (formParamsResult, error) {
-			return formParamsResult{Name: p.Name, Age: p.Age}, nil
+	if err := PostBody(m, "/form-mp", FormBody[formBodyReq](), JSON[formBodyResult](),
+		func(_ context.Context, b formBodyReq) (formBodyResult, error) {
+			return formBodyResult{Name: b.Name, Age: b.Age}, nil
 		}); err != nil {
 		t.Fatal(err)
 	}
@@ -72,11 +75,14 @@ func TestFormParams_Multipart(t *testing.T) {
 	}
 }
 
-// ——— form 字段与 path/query/header + upload 混用 ——— //
+// ——— path/header 参数(params) + 含文件与文本的表单请求体(body) 混用 ——— //
 
-type formMixedReq struct {
-	ID     int64  `path:"id"`
-	Trace  string `header:"X-Trace"`
+type formMixedParams struct {
+	ID    int64  `path:"id"`
+	Trace string `header:"X-Trace"`
+}
+
+type formMixedBody struct {
 	Title  string `form:"title"`
 	Cover  Upload `form:"cover"`
 	Public bool   `form:"public"`
@@ -90,13 +96,13 @@ type formMixedResult struct {
 	Public bool   `json:"public"`
 }
 
-func TestFormParams_MixedWithPathHeaderUpload(t *testing.T) {
+func TestFormBody_MixedWithPathHeaderUpload(t *testing.T) {
 	m := New()
-	if err := PostParams(m, "/posts/{id}", JSON[formMixedResult](),
-		func(_ context.Context, p formMixedReq) (formMixedResult, error) {
+	if err := PostParamsBody(m, "/posts/{id}", FormBody[formMixedBody](), JSON[formMixedResult](),
+		func(_ context.Context, p formMixedParams, b formMixedBody) (formMixedResult, error) {
 			return formMixedResult{
-				ID: p.ID, Trace: p.Trace, Title: p.Title,
-				Cover: p.Cover.Filename, Public: p.Public,
+				ID: p.ID, Trace: p.Trace, Title: b.Title,
+				Cover: b.Cover.Filename, Public: b.Public,
 			}, nil
 		}); err != nil {
 		t.Fatal(err)
@@ -124,57 +130,13 @@ func TestFormParams_MixedWithPathHeaderUpload(t *testing.T) {
 	}
 }
 
-// ——— form 字段的 validate ——— //
-
-type formValidateReq struct {
-	Email string `form:"email" validate:"required,email"`
-	Qty   int    `form:"qty" validate:"min=1,max=10"`
-}
-
-func TestFormParams_ValidateRequired(t *testing.T) {
-	m := New()
-	if err := PostParams(m, "/fv", JSON[map[string]string](),
-		func(_ context.Context, p formValidateReq) (map[string]string, error) {
-			return map[string]string{"email": p.Email}, nil
-		}); err != nil {
-		t.Fatal(err)
-	}
-	// 缺 email → 400。Missing email → 400.
-	req := httptest.NewRequest(http.MethodPost, "/fv", strings.NewReader("qty=3"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec := httptest.NewRecorder()
-	m.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for missing required form field, got %d body=%s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestFormParams_ValidateRange(t *testing.T) {
-	m := New()
-	if err := PostParams(m, "/fv2", JSON[map[string]int](),
-		func(_ context.Context, p formValidateReq) (map[string]int, error) {
-			return map[string]int{"qty": p.Qty}, nil
-		}); err != nil {
-		t.Fatal(err)
-	}
-	// qty=99 越界 → 400。qty=99 out of range → 400.
-	req := httptest.NewRequest(http.MethodPost, "/fv2",
-		strings.NewReader("email=a@b.com&qty=99"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec := httptest.NewRecorder()
-	m.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for out-of-range form field, got %d body=%s", rec.Code, rec.Body.String())
-	}
-}
-
 // ——— form 字段缺失且非必填:保留零值 ——— //
 
-func TestFormParams_OptionalMissing(t *testing.T) {
+func TestFormBody_OptionalMissing(t *testing.T) {
 	m := New()
-	if err := PostParams(m, "/fo", JSON[formParamsResult](),
-		func(_ context.Context, p formParamsReq) (formParamsResult, error) {
-			return formParamsResult{Name: p.Name, Age: p.Age}, nil
+	if err := PostBody(m, "/fo", FormBody[formBodyReq](), JSON[formBodyResult](),
+		func(_ context.Context, b formBodyReq) (formBodyResult, error) {
+			return formBodyResult{Name: b.Name, Age: b.Age}, nil
 		}); err != nil {
 		t.Fatal(err)
 	}

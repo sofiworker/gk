@@ -3,18 +3,19 @@
 // the standard net/http package.
 //
 // 入口按输入组合分函数（GetParams / PostParams / PostBody / PostParamsBody 等），handler 收裸
-// 参数，类型全推断，无包裹容器。params 经 struct tag（path:/query:/header:/form:）绑定，form: 标量
-// 直接取自 urlencoded/multipart 表单；Upload / []Upload 字段自动绑定 multipart 单/多文件
-// （validate:"required" 标必填，否则可选）；请求体经 RequestDecoder 解码（内置 JSONBody/XMLCodec/
-// FormBody/TextBody），输出经 OutputSpec 编码；需完全接管响应时用 RawHandle。
+// 参数，类型全推断，无包裹容器。params 经 struct tag（path:/query:/header:）绑定,只承载传输层
+// 参数;请求体经 InputSpec[B] 解码(内置 JSONBody[B]/XMLBody[B]/FormBody[B]/TextBody[B],或
+// Body[B](codec) 传自定义解码器),表单文本字段(form: tag)与上传文件(Upload / []Upload 字段)
+// 都归请求体,由 FormBody[B]() 一并解码;输出经 OutputSpec[O] 编码;需完全接管响应时用 RawHandle。
 // Entries are split by input shape (GetParams / PostParams / PostBody / PostParamsBody, etc.);
 // handlers take naked parameters with all type parameters inferred and no wrapper
-// container. Params bind via struct tags (path:/query:/header:/form:), with form:
-// scalars taken from the urlencoded/multipart form; Upload / []Upload fields
-// auto-bind single/multiple multipart files (validate:"required" marks a file
-// mandatory, otherwise optional); the body is decoded by a RequestDecoder
-// (built-in JSONBody/XMLCodec/FormBody/TextBody), and output is encoded by an
-// OutputSpec; use RawHandle to fully own the response.
+// container. Params bind via struct tags (path:/query:/header:) and carry only
+// transport parameters; the body is decoded by an InputSpec[B] (built-in
+// JSONBody[B]/XMLBody[B]/FormBody[B]/TextBody[B], or Body[B](codec) for a custom
+// decoder), with form text fields (form: tag) and uploaded files (Upload /
+// []Upload fields) both belonging to the body and decoded together by
+// FormBody[B](); output is encoded by an OutputSpec[O]; use RawHandle to fully
+// own the response.
 //
 // 核心取向:单一 typed 执行模型 + 显式 RawHandler 逃生;纯 net/http 地基,
 // 不引入 fasthttp 或自管 TCP;性能红利只来自池化上下文与零反射 codec。

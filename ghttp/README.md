@@ -45,8 +45,8 @@ func main() {
     s := ghttp.New()
     s.Use(ghttp.Logger(), ghttp.Recovery())
 
-    // GET /hello/:name?lang=zh
-    _ = ghttp.GetParams[EchoIn, EchoOut](s, "/hello/:name",
+    // GET /hello/{name}?lang=zh
+    _ = ghttp.GetParams[EchoIn, EchoOut](s, "/hello/{name}",
         ghttp.JSON[EchoOut](),
         func(ctx context.Context, in EchoIn) (EchoOut, error) {
             return EchoOut{Msg: "hello " + in.Name + " (" + in.Lang + ")"}, nil
@@ -93,30 +93,58 @@ type GetUser struct {
 }
 ```
 
-- 支持 `path:` / `query:` / `header:` / `form:` 四类来源；未打 tag 的字段静默跳过。
+- 支持 `path:` / `query:` / `header:` 三类**传输层**来源；未打 tag 的字段静默跳过。
 - 标量字段支持 `int8/16/32/64`、`uint*`、`float*`、`bool`、`string`，越界报 400。
-- `validate:"..."` 支持 `required` / `min` / `max` / `len` / `oneof` / `email`，**注册期**编译为闭包，请求期零 tag 解析（`form:` 字段同样支持 validate）。
-- `form:` 标量字段直接从 urlencoded 或 multipart 表单绑定（免 body 解码器），可与 path/query/header、Upload 混用；仅当结构体确有 `form:`/Upload 字段时才解析请求体，纯 path/query/header 端点零解析开销。
-- `Upload`（单文件）/ `[]Upload`（多文件）字段自动绑定 multipart 文件，详见下节。
+- `validate:"..."` 支持 `required` / `min` / `max` / `len` / `oneof` / `email`，**注册期**编译为闭包，请求期零 tag 解析。
+- 表单文本字段（`form:` tag）与上传文件（`Upload` / `[]Upload`）都属于**请求体**，用 `FormBody[B]()` 解码，见下节；params 结构体不再承载 `form:`/文件字段。纯 path/query/header 端点不解析请求体，零解析开销。
+
+### 请求体：InputSpec[B] 解码
+
+请求体经类型化的输入契约 `InputSpec[B]` 解码，与输出侧的 `OutputSpec[O]` 对称。底层是 `Body[B](codec)`，常用格式各有快捷糖：
+
+| 构造器 | 解码为 | Content-Type |
+|--------|--------|--------------|
+| `JSONBody[B]()` | JSON → B | `application/json` |
+| `XMLBody[B]()` | XML → B | `application/xml` |
+| `FormBody[B]()` | urlencoded / multipart（含文件）→ B | 两者皆可 |
+| `TextBody[B]()` | 纯文本 → B（B 为 `string` 或 `[]byte`） | `text/plain` |
+| `Body[B](codec)` | 自定义 `RequestDecoder` → B | 由 codec 决定 |
+
+```go
+type CreatePost struct {
+    Title string `json:"title" validate:"required"`
+    Body  string `json:"body"`
+}
+
+// POST /users/{id}/posts —— path 参数(params) + JSON 请求体(body)
+ghttp.PostParamsBody(server, "/users/{id}/posts",
+    ghttp.JSONBody[CreatePost](),   // 请求体：JSON 解码为 CreatePost
+    ghttp.JSON[PostResp](),         // 输出契约
+    func(ctx context.Context, p PathID, b CreatePost) (PostResp, error) {
+        return PostResp{ID: 1, UserID: p.ID, Title: b.Title}, nil
+    })
+```
 
 ### 文件上传（multipart）
 
-在 params 结构体里放 `Upload` 或 `[]Upload` 字段，用 `form:` tag 指定表单字段名，multipart 文件即自动绑定：
+文件属于**请求体**：在 form 请求体结构体里放 `Upload`（单文件）或 `[]Upload`（多文件）字段，用 `form:` tag 指定表单字段名，交给 `FormBody[B]()` 解码——文本字段与文件在同一个结构体里一并解出：
 
 ```go
 type UploadReq struct {
-    Avatar ghttp.Upload   `form:"avatar"`                    // 单文件，可选
-    Docs   []ghttp.Upload `form:"docs" validate:"required"`  // 多文件，必填
-    Note   string         `form:"note" query:"note"`         // 与文本字段混用
+    Note   string         `form:"note"`     // 表单文本字段
+    Avatar ghttp.Upload   `form:"avatar"`   // 单文件
+    Docs   []ghttp.Upload `form:"docs"`     // 多文件（<input multiple>）
 }
 
-ghttp.PostParams(server, "/upload", ghttp.JSON[Resp](),
-    func(ctx context.Context, p UploadReq) (Resp, error) {
+ghttp.PostBody(server, "/upload", ghttp.FormBody[UploadReq](), ghttp.JSON[Resp](),
+    func(ctx context.Context, in UploadReq) (Resp, error) {
         // 便捷落盘（流式，不整体载入内存）；path 由你决定，务必净化 Filename 防目录穿越
-        if err := p.Avatar.Save("/data/" + sanitize(p.Avatar.Filename)); err != nil {
-            return Resp{}, err
+        if in.Avatar.Open != nil { // 可选字段：Open==nil 表示未上传
+            if err := in.Avatar.Save("/data/" + sanitize(in.Avatar.Filename)); err != nil {
+                return Resp{}, err
+            }
         }
-        for _, d := range p.Docs {
+        for _, d := range in.Docs {
             data, _ := d.Bytes()          // 或读入内存
             _ = data
         }
@@ -125,12 +153,10 @@ ghttp.PostParams(server, "/upload", ghttp.JSON[Resp](),
 ```
 
 - **单/多文件**：`Upload` 绑定同名首个文件；`[]Upload` 绑定同名全部文件（对应 `<input multiple>`）。
-- **可选 vs 必填**：默认可选——缺文件时 `Upload` 保留零值（`Open == nil` 可判空）、`[]Upload` 为 nil；标 `validate:"required"` 后缺文件返回 **400 `missing_required`**。
+- **可选**：缺文件时 `Upload` 保留零值（`Open == nil` 可判空）、`[]Upload` 为 nil。
 - **便捷方法**：`Upload.Save(path)` 流式落盘、`Upload.Bytes()` 读入内存、`Upload.Open()` 拿 `multipart.File` 自行流式处理；`Upload.Filename`/`Size`/`ContentType`/`Header` 提供元数据。
 - **安全**：`Filename` 是客户端声明的不可信值，`Save` 不据它拼路径，落盘路径与净化由调用方负责。
-- 单结构体可含多个不同名上传字段，且可与 params（path/query/header/form）、body 解码器（`PostParamsBody`）自由混用。
-
-表单**文本字段**有两种取法：直接在 params 结构体用 `form:` tag（推荐，可与 path/query/header/Upload 混用，见上面的 `Note`/`title` 字段），或用 `FormBody()` 解码器把它们绑到独立的 body 结构体（适合把文本字段整体建模为一个 body 类型时）。
+- 需要 path/query/header + 表单/文件混用时,用 `PostParamsBody`：params 拿传输层参数，`FormBody[B]()` 拿表单体（含文件）。
 
 ### OutputSpec：显式声明输出契约
 
@@ -224,7 +250,7 @@ typed handler / codec / 校验返回的 `error` 经统一出口分类为 HTTP �
 api := s.Group("/api/v1", authMiddleware)
 {
     users := api.Group("/users")
-    _ = ghttp.GetParams[...](users, "/:id", ...)   // 路径：/api/v1/users/:id
+    _ = ghttp.GetParams[...](users, "/{id}", ...)   // 路径：/api/v1/users/{id}
     _ = ghttp.PostBody[...](users, "", ...)        // 路径：/api/v1/users
 }
 ```
@@ -239,7 +265,7 @@ api := s.Group("/api/v1", authMiddleware)
 
 ### Content-Type 严格校验
 
-body 入口默认在解码前校验请求 `Content-Type` 与端点声明的 `RequestDecoder.ContentType()` 一致，不符即 **415**。
+body 入口默认在解码前校验请求 `Content-Type` 与端点 `InputSpec[B]` 声明的 Content-Type 一致，不符即 **415**（`FormBody` 同时接受 urlencoded 与 multipart，故不参与该校验）。
 
 ```go
 s := ghttp.New(ghttp.WithStrictContentType(false)) // 关闭，回退旧宽松行为
@@ -344,10 +370,10 @@ _ = ghttp.StaticFS(s, "/assets/", myEmbedFS,                 // embed.FS
 // 旧
 type In struct { ID int64 `path:"id"` }
 si := ghttp.StructInput[In]()
-ghttp.Handle(s, "GET", "/users/:id", si, func(ctx context.Context, in In) (Out, error) { ... })
+ghttp.Handle(s, "GET", "/users/{id}", si, func(ctx context.Context, in In) (Out, error) { ... })
 
 // 新
-ghttp.GetParams[In, Out](s, "/users/:id", ghttp.JSON[Out](),
+ghttp.GetParams[In, Out](s, "/users/{id}", ghttp.JSON[Out](),
     func(ctx context.Context, in In) (Out, error) { ... })
 ```
 

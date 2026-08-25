@@ -9,13 +9,14 @@ import (
 
 // ===========================================================================
 // Typed 入口：按输入组合分函数，handler 收裸参数，类型全推断，无包裹容器。
-// 参数（path/query/header）经 struct tag 绑定；请求体经 RequestDecoder 解码，
-// 用户可只实现解码一侧以替换解析库。输出走类型安全的 OutputSpec[O]。
+// 参数（path/query/header）经 struct tag 绑定；请求体经 InputSpec[B] 解码（JSONBody[B]/
+// FormBody[B]/XMLBody[B]/TextBody[B]/Body[B](codec)）,表单文本与上传文件均归请求体。
+// 输出走类型安全的 OutputSpec[O]。
 // Typed entries: split by input shape, handlers take naked parameters, all type
 // parameters inferred, no wrapper container. Params (path/query/header) bind via
-// struct tags; the body is decoded by a RequestDecoder, so users may implement
-// only the decode side to swap parsers. Output flows through the type-safe
-// OutputSpec[O].
+// struct tags; the body is decoded by an InputSpec[B] (JSONBody[B]/FormBody[B]/
+// XMLBody[B]/TextBody[B]/Body[B](codec)), with form text and uploaded files both
+// belonging to the body. Output flows through the type-safe OutputSpec[O].
 // ===========================================================================
 
 // ——— 仅 params 入口（无 body）：Get / Delete ——
@@ -35,10 +36,11 @@ func DeleteParams[P, O any](r router, path string, out OutputSpec[O], h func(con
 	return registerParams(r, http.MethodDelete, path, out, h)
 }
 
-// PostParams POST 入口（仅 params,无 body）。适用于 multipart 上传(params 含 Upload)
-// 或纯 params 的 POST 操作。
-// PostParams is the POST entry (params only, no body). Suitable for multipart
-// uploads (params with Upload) or pure-params POST operations.
+// PostParams POST 入口（仅 params,无 body）。适用于纯 path/query/header 的 POST 操作;
+// 需要表单或文件上传时用 PostBody + FormBody[B]()。
+// PostParams is the POST entry (params only, no body). Suitable for pure
+// path/query/header POST operations; for form or file uploads use PostBody +
+// FormBody[B]().
 func PostParams[P, O any](r router, path string, out OutputSpec[O], h func(context.Context, P) (O, error)) error {
 	return registerParams(r, http.MethodPost, path, out, h)
 }
@@ -121,44 +123,44 @@ func (e *compiledNone[O]) serve(ctx context.Context, req *Request, resp *Respons
 
 // ——— params+body 入口：Post / Put / Patch ——
 
-// PostParamsBody POST 入口：同时接收 params（path/query/header）与请求体（经 dec 解码）。
-// dec 可为任意 RequestDecoder（JSONBody()/XMLCodec()/自定义），只需实现解码一侧。
+// PostParamsBody POST 入口：同时接收 params（path/query/header）与请求体（经 in 解码）。
+// in 可为任意 InputSpec[B]（JSONBody[B]()/FormBody[B]()/XMLBody[B]()/Body[B](codec)）。
 // PostParamsBody is the POST entry receiving both params (path/query/header) and
-// a body (decoded by dec). dec may be any RequestDecoder (JSONBody()/XMLCodec()/
-// custom), needing only the decode side implemented.
-func PostParamsBody[P, B, O any](r router, path string, dec RequestDecoder, out OutputSpec[O], h func(context.Context, P, B) (O, error)) error {
-	return registerParamsBody(r, http.MethodPost, path, dec, out, h)
+// a body (decoded by in). in may be any InputSpec[B] (JSONBody[B]()/FormBody[B]()/
+// XMLBody[B]()/Body[B](codec)).
+func PostParamsBody[P, B, O any](r router, path string, in InputSpec[B], out OutputSpec[O], h func(context.Context, P, B) (O, error)) error {
+	return registerParamsBody(r, http.MethodPost, path, in, out, h)
 }
 
 // PutParamsBody PUT 入口（同 PostParamsBody）。
 // PutParamsBody is the PUT entry (same as PostParamsBody).
-func PutParamsBody[P, B, O any](r router, path string, dec RequestDecoder, out OutputSpec[O], h func(context.Context, P, B) (O, error)) error {
-	return registerParamsBody(r, http.MethodPut, path, dec, out, h)
+func PutParamsBody[P, B, O any](r router, path string, in InputSpec[B], out OutputSpec[O], h func(context.Context, P, B) (O, error)) error {
+	return registerParamsBody(r, http.MethodPut, path, in, out, h)
 }
 
 // PatchParamsBody PATCH 入口（同 PostParamsBody）。
 // PatchParamsBody is the PATCH entry (same as PostParamsBody).
-func PatchParamsBody[P, B, O any](r router, path string, dec RequestDecoder, out OutputSpec[O], h func(context.Context, P, B) (O, error)) error {
-	return registerParamsBody(r, http.MethodPatch, path, dec, out, h)
+func PatchParamsBody[P, B, O any](r router, path string, in InputSpec[B], out OutputSpec[O], h func(context.Context, P, B) (O, error)) error {
+	return registerParamsBody(r, http.MethodPatch, path, in, out, h)
 }
 
-// registerParamsBody 是 params+body 入口的共享注册逻辑；dec 为 nil 时报 ErrMissingCodec。
+// registerParamsBody 是 params+body 入口的共享注册逻辑；in 为 nil 时报 ErrMissingCodec。
 // registerParamsBody is the shared registration logic for params+body entries; a
-// nil dec returns ErrMissingCodec.
-func registerParamsBody[P, B, O any](r router, method, path string, dec RequestDecoder, out OutputSpec[O], h func(context.Context, P, B) (O, error)) error {
+// nil in returns ErrMissingCodec.
+func registerParamsBody[P, B, O any](r router, method, path string, in InputSpec[B], out OutputSpec[O], h func(context.Context, P, B) (O, error)) error {
 	if out == nil {
 		return ErrMissingOutput
 	}
-	if dec == nil {
+	if in == nil {
 		return ErrMissingCodec
 	}
 	plan, err := buildBindPlan(reflect.TypeOf((*P)(nil)).Elem())
 	if err != nil {
 		return err
 	}
-	c := &compiledParamsBody[P, B, O]{plan: plan, dec: dec, out: out, h: h, validate: bodyValidatorFor[B]()}
+	c := &compiledParamsBody[P, B, O]{plan: plan, in: in, out: out, h: h, validate: bodyValidatorFor[B]()}
 	if r.owner().strictContentType {
-		c.wantCT = dec.ContentType()
+		c.wantCT = in.contentType()
 	}
 	return r.register(method, path, c.serve)
 }
@@ -168,7 +170,7 @@ func registerParamsBody[P, B, O any](r router, method, path string, dec RequestD
 // parameters kept separate (transport params vs pure body).
 type compiledParamsBody[P, B, O any] struct {
 	plan *BindPlan
-	dec  RequestDecoder
+	in   InputSpec[B]
 	out  OutputSpec[O]
 	h    func(ctx context.Context, p P, b B) (O, error)
 	// validate 非 nil 时(B 实现了 Validator)在解码后调用;nil 则跳过,零成本。
@@ -192,7 +194,7 @@ func (e *compiledParamsBody[P, B, O]) serve(ctx context.Context, req *Request, r
 	if e.wantCT != "" && !contentTypeMatches(req.Header.Get("Content-Type"), e.wantCT) {
 		return fmt.Errorf("%w: got %q want %q", ErrUnsupportedMediaType, mediaType(req.Header.Get("Content-Type")), e.wantCT)
 	}
-	if err := e.dec.Decode(req, &b); err != nil {
+	if err := e.in.decode(req, &b); err != nil {
 		return err
 	}
 	if e.validate != nil {
@@ -212,35 +214,35 @@ func (e *compiledParamsBody[P, B, O]) serve(ctx context.Context, req *Request, r
 // PostBody POST 入口：无 params，只接收请求体并解码。适用于创建资源。
 // PostBody is the POST entry with no params, only receiving a decoded body.
 // Suitable for resource creation endpoints.
-func PostBody[B, O any](r router, path string, dec RequestDecoder, out OutputSpec[O], h func(context.Context, B) (O, error)) error {
-	return registerBody(r, http.MethodPost, path, dec, out, h)
+func PostBody[B, O any](r router, path string, in InputSpec[B], out OutputSpec[O], h func(context.Context, B) (O, error)) error {
+	return registerBody(r, http.MethodPost, path, in, out, h)
 }
 
 // PutBody PUT 入口（同 PostBody）。
 // PutBody is the PUT entry (same as PostBody).
-func PutBody[B, O any](r router, path string, dec RequestDecoder, out OutputSpec[O], h func(context.Context, B) (O, error)) error {
-	return registerBody(r, http.MethodPut, path, dec, out, h)
+func PutBody[B, O any](r router, path string, in InputSpec[B], out OutputSpec[O], h func(context.Context, B) (O, error)) error {
+	return registerBody(r, http.MethodPut, path, in, out, h)
 }
 
 // PatchBody PATCH 入口（同 PostBody）。
 // PatchBody is the PATCH entry (same as PostBody).
-func PatchBody[B, O any](r router, path string, dec RequestDecoder, out OutputSpec[O], h func(context.Context, B) (O, error)) error {
-	return registerBody(r, http.MethodPatch, path, dec, out, h)
+func PatchBody[B, O any](r router, path string, in InputSpec[B], out OutputSpec[O], h func(context.Context, B) (O, error)) error {
+	return registerBody(r, http.MethodPatch, path, in, out, h)
 }
 
-// registerBody 是仅 body 入口的共享注册逻辑；dec 为 nil 时报 ErrMissingCodec。
+// registerBody 是仅 body 入口的共享注册逻辑；in 为 nil 时报 ErrMissingCodec。
 // registerBody is the shared registration logic for body-only entries; returns
-// ErrMissingCodec if dec is nil.
-func registerBody[B, O any](r router, method, path string, dec RequestDecoder, out OutputSpec[O], h func(context.Context, B) (O, error)) error {
+// ErrMissingCodec if in is nil.
+func registerBody[B, O any](r router, method, path string, in InputSpec[B], out OutputSpec[O], h func(context.Context, B) (O, error)) error {
 	if out == nil {
 		return ErrMissingOutput
 	}
-	if dec == nil {
+	if in == nil {
 		return ErrMissingCodec
 	}
-	c := &compiledBody[B, O]{dec: dec, out: out, h: h, validate: bodyValidatorFor[B]()}
+	c := &compiledBody[B, O]{in: in, out: out, h: h, validate: bodyValidatorFor[B]()}
 	if r.owner().strictContentType {
-		c.wantCT = dec.ContentType()
+		c.wantCT = in.contentType()
 	}
 	return r.register(method, path, c.serve)
 }
@@ -249,7 +251,7 @@ func registerBody[B, O any](r router, method, path string, dec RequestDecoder, o
 // compiledBody is the executor for body-only scenarios: params empty, only
 // decoding body.
 type compiledBody[B, O any] struct {
-	dec RequestDecoder
+	in  InputSpec[B]
 	out OutputSpec[O]
 	h   func(context.Context, B) (O, error)
 	// validate 见 compiledParamsBody.validate。
@@ -265,7 +267,7 @@ func (e *compiledBody[B, O]) serve(ctx context.Context, req *Request, resp *Resp
 	if e.wantCT != "" && !contentTypeMatches(req.Header.Get("Content-Type"), e.wantCT) {
 		return fmt.Errorf("%w: got %q want %q", ErrUnsupportedMediaType, mediaType(req.Header.Get("Content-Type")), e.wantCT)
 	}
-	if err := e.dec.Decode(req, &b); err != nil {
+	if err := e.in.decode(req, &b); err != nil {
 		return err
 	}
 	if e.validate != nil {

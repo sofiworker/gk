@@ -19,7 +19,7 @@ type formTarget struct {
 }
 
 func TestFormBody_DecodesURLEncoded(t *testing.T) {
-	dec := FormBody()
+	dec := formCodec{}
 	if dec.ContentType() != "" {
 		t.Fatalf("ContentType = %q", dec.ContentType())
 	}
@@ -45,7 +45,7 @@ func TestFormBody_MultipartFormValues(t *testing.T) {
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	ghttpReq := &Request{Request: req}
 	var dst formTarget
-	if err := FormBody().Decode(ghttpReq, &dst); err != nil {
+	if err := (formCodec{}).Decode(ghttpReq, &dst); err != nil {
 		t.Fatal(err)
 	}
 	if dst.Name != "bob" || dst.Count != 7 {
@@ -57,7 +57,7 @@ func TestFormBody_ErrorOnMalformed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("name=%zz"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	ghttpReq := &Request{Request: req}
-	err := FormBody().Decode(ghttpReq, &formTarget{})
+	err := (formCodec{}).Decode(ghttpReq, &formTarget{})
 	if err == nil {
 		t.Fatal("expected error on malformed form")
 	}
@@ -68,7 +68,7 @@ func TestFormBody_EmptyBodySucceeds(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	ghttpReq := &Request{Request: req}
 	var dst formTarget
-	if err := FormBody().Decode(ghttpReq, &dst); err != nil {
+	if err := (formCodec{}).Decode(ghttpReq, &dst); err != nil {
 		t.Fatalf("empty body should succeed: %v", err)
 	}
 	if dst.Name != "" || dst.Count != 0 {
@@ -80,14 +80,14 @@ func TestFormBody_ErrorOnIntOverflow(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("count=99999999999999999999"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	ghttpReq := &Request{Request: req}
-	err := FormBody().Decode(ghttpReq, &formTarget{})
+	err := (formCodec{}).Decode(ghttpReq, &formTarget{})
 	if err == nil {
 		t.Fatal("expected overflow error")
 	}
 }
 
 func TestTextBody_DecodesToString(t *testing.T) {
-	dec := TextBody()
+	dec := textCodec{}
 	if dec.ContentType() != "text/plain" {
 		t.Fatalf("ContentType = %q", dec.ContentType())
 	}
@@ -106,7 +106,7 @@ func TestTextBody_DecodesToBytes(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("raw bytes"))
 	ghttpReq := &Request{Request: req}
 	var dst []byte
-	if err := TextBody().Decode(ghttpReq, &dst); err != nil {
+	if err := (textCodec{}).Decode(ghttpReq, &dst); err != nil {
 		t.Fatal(err)
 	}
 	if string(dst) != "raw bytes" {
@@ -118,7 +118,7 @@ func TestTextBody_BadTarget(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("x"))
 	ghttpReq := &Request{Request: req}
 	var dst int
-	if err := TextBody().Decode(ghttpReq, &dst); err == nil {
+	if err := (textCodec{}).Decode(ghttpReq, &dst); err == nil {
 		t.Fatal("expected error for int target")
 	}
 }
@@ -127,7 +127,7 @@ func TestTextBody_EmptyBodySucceeds(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	ghttpReq := &Request{Request: req}
 	var dst string
-	if err := TextBody().Decode(ghttpReq, &dst); err != nil {
+	if err := (textCodec{}).Decode(ghttpReq, &dst); err != nil {
 		t.Fatalf("empty body should succeed: %v", err)
 	}
 	if dst != "" {
@@ -137,7 +137,7 @@ func TestTextBody_EmptyBodySucceeds(t *testing.T) {
 
 func TestPostBody_FormDecoder(t *testing.T) {
 	m := New()
-	if err := PostBody(m, "/form", FormBody(), JSON[formTarget](),
+	if err := PostBody(m, "/form", FormBody[formTarget](), JSON[formTarget](),
 		func(_ context.Context, b formTarget) (formTarget, error) {
 			return b, nil
 		}); err != nil {
@@ -154,7 +154,7 @@ func TestPostBody_FormDecoder(t *testing.T) {
 
 func TestPostBody_TextDecoder_String(t *testing.T) {
 	m := New()
-	if err := PostBody(m, "/echo", TextBody(), JSON[string](),
+	if err := PostBody(m, "/echo", TextBody[string](), JSON[string](),
 		func(_ context.Context, b string) (string, error) {
 			return b, nil
 		}); err != nil {
@@ -171,7 +171,7 @@ func TestPostBody_TextDecoder_String(t *testing.T) {
 
 func TestPostBody_TextDecoder_Bytes(t *testing.T) {
 	m := New()
-	if err := PostBody(m, "/echo-bytes", TextBody(), JSON[[]byte](),
+	if err := PostBody(m, "/echo-bytes", TextBody[[]byte](), JSON[[]byte](),
 		func(_ context.Context, b []byte) ([]byte, error) {
 			return b, nil
 		}); err != nil {
@@ -186,21 +186,24 @@ func TestPostBody_TextDecoder_Bytes(t *testing.T) {
 	}
 }
 
-type uploadParams struct {
+// uploadBody 是一个含单文件上传字段的表单请求体:文件现在归请求体,由 FormBody[T] 解码。
+// uploadBody is a form body with a single file upload field: files now belong to
+// the request body, decoded by FormBody[T].
+type uploadBody struct {
 	File Upload `form:"file"`
 }
 
-func TestPostParams_Upload(t *testing.T) {
+func TestFormBody_Upload(t *testing.T) {
 	m := New()
-	if err := PostParams(m, "/upload", JSON[uploadResult](),
-		func(_ context.Context, p uploadParams) (uploadResult, error) {
-			f, err := p.File.Open()
+	if err := PostBody(m, "/upload", FormBody[uploadBody](), JSON[uploadResult](),
+		func(_ context.Context, b uploadBody) (uploadResult, error) {
+			f, err := b.File.Open()
 			if err != nil {
 				return uploadResult{}, err
 			}
 			defer f.Close()
 			data, _ := io.ReadAll(f)
-			return uploadResult{Filename: p.File.Filename, Size: len(data)}, nil
+			return uploadResult{Filename: b.File.Filename, Size: len(data)}, nil
 		}); err != nil {
 		t.Fatal(err)
 	}
@@ -223,22 +226,25 @@ type uploadResult struct {
 	Size     int    `json:"size"`
 }
 
-type mixedUploadParams struct {
+// mixedUploadBody 把表单文本字段与上传文件放在同一个请求体结构体里,由 FormBody[T] 一并解码。
+// mixedUploadBody puts a form text field and an uploaded file in one body struct,
+// decoded together by FormBody[T].
+type mixedUploadBody struct {
+	Note string `form:"note"`
 	File Upload `form:"file"`
 }
 
-type mixedUploadBody struct {
-	Note string `form:"note"`
-}
-
-func TestPostParamsBody_UploadWithForm(t *testing.T) {
+// TestPostParamsBody_FormBodyWithPathParam 验证 path 参数(params) + 表单请求体(含文件)。
+// TestPostParamsBody_FormBodyWithPathParam checks a path param (params) plus a
+// form request body (with a file).
+func TestPostParamsBody_FormBodyWithPathParam(t *testing.T) {
 	m := New()
-	if err := PostParamsBody(m, "/upload-mixed", FormBody(), JSON[mixedUploadResult](),
-		func(_ context.Context, p mixedUploadParams, b mixedUploadBody) (mixedUploadResult, error) {
-			f, _ := p.File.Open()
+	if err := PostParamsBody(m, "/users/{id}/upload", FormBody[mixedUploadBody](), JSON[mixedUploadResult](),
+		func(_ context.Context, p mixedUploadPathParams, b mixedUploadBody) (mixedUploadResult, error) {
+			f, _ := b.File.Open()
 			defer f.Close()
 			data, _ := io.ReadAll(f)
-			return mixedUploadResult{Note: b.Note, Filename: p.File.Filename, Size: len(data)}, nil
+			return mixedUploadResult{UserID: p.UserID, Note: b.Note, Filename: b.File.Filename, Size: len(data)}, nil
 		}); err != nil {
 		t.Fatal(err)
 	}
@@ -248,19 +254,25 @@ func TestPostParamsBody_UploadWithForm(t *testing.T) {
 	part, _ := w.CreateFormFile("file", "test.txt")
 	_, _ = part.Write([]byte("data"))
 	_ = w.Close()
-	req := httptest.NewRequest(http.MethodPost, "/upload-mixed", &buf)
+	req := httptest.NewRequest(http.MethodPost, "/users/7/upload", &buf)
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	rec := httptest.NewRecorder()
 	m.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"note":"greeting"`) || !strings.Contains(rec.Body.String(), `"filename":"test.txt"`) {
-		t.Fatalf("body=%s", rec.Body.String())
+	body := rec.Body.String()
+	if !strings.Contains(body, `"note":"greeting"`) || !strings.Contains(body, `"filename":"test.txt"`) || !strings.Contains(body, `"user_id":7`) {
+		t.Fatalf("body=%s", body)
 	}
 }
 
+type mixedUploadPathParams struct {
+	UserID int64 `path:"id"`
+}
+
 type mixedUploadResult struct {
+	UserID   int64  `json:"user_id"`
 	Note     string `json:"note"`
 	Filename string `json:"filename"`
 	Size     int    `json:"size"`

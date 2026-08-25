@@ -42,7 +42,7 @@ func newErrChainServer(t *testing.T, opts ...Option) *Server {
 	GetParams(s, "/sentinel/{id}", JSON[errChainOut](), func(_ context.Context, _ errChainPath) (errChainOut, error) {
 		return errChainOut{}, ErrInvalidInput
 	})
-	PostBody(s, "/create", JSONBody(), JSON[errChainOut](), func(_ context.Context, _ errChainBody) (errChainOut, error) {
+	PostBody(s, "/create", JSONBody[errChainBody](), JSON[errChainOut](), func(_ context.Context, _ errChainBody) (errChainOut, error) {
 		return errChainOut{OK: true}, nil
 	})
 	s.RawHandle(http.MethodGet, "/boom", func(_ context.Context, _ *Request, _ *Response) error {
@@ -165,7 +165,7 @@ func TestErrorChainStrictContentType(t *testing.T) {
 
 	// 宽松:错误 CT 也放行解码
 	lenient := New(WithStrictContentType(false))
-	PostBody(lenient, "/create", JSONBody(), JSON[errChainOut](), func(_ context.Context, _ errChainBody) (errChainOut, error) {
+	PostBody(lenient, "/create", JSONBody[errChainBody](), JSON[errChainOut](), func(_ context.Context, _ errChainBody) (errChainOut, error) {
 		return errChainOut{OK: true}, nil
 	})
 	if w := doReq(lenient, "POST", "/create", "text/plain", `{"name":"x"}`); w.Code != http.StatusOK {
@@ -232,7 +232,7 @@ func TestCustomNotFoundMethodNotAllowed(t *testing.T) {
 			return nil
 		}),
 	)
-	PostBody(s, "/create", JSONBody(), JSON[errChainOut](), func(_ context.Context, _ errChainBody) (errChainOut, error) {
+	PostBody(s, "/create", JSONBody[errChainBody](), JSON[errChainOut](), func(_ context.Context, _ errChainBody) (errChainOut, error) {
 		return errChainOut{OK: true}, nil
 	})
 	if w := doReq(s, "GET", "/nope", "", ""); w.Code != http.StatusNotFound || strings.TrimSpace(w.Body.String()) != "custom-404" {

@@ -66,12 +66,19 @@ type typedMixedParams struct {
 	ID int64 `path:"id" validate:"required,min=1"`
 }
 
-type typedUploadParams struct {
+// typedUploadBody 是 /typed/upload 的表单请求体:文件归请求体,经 FormBody[T]() 解码。
+// typedUploadBody is the form body for /typed/upload: the file belongs to the
+// request body, decoded via FormBody[T]().
+type typedUploadBody struct {
 	File ghttp.Upload `form:"file"`
 }
 
-type typedUploadBody struct {
-	Note string `form:"note"`
+// typedUploadMixedBody 是 /typed/upload-mixed 的表单请求体:文本字段与文件同处一个请求体。
+// typedUploadMixedBody is the form body for /typed/upload-mixed: a text field and
+// a file share one request body.
+type typedUploadMixedBody struct {
+	Note string       `form:"note"`
+	File ghttp.Upload `form:"file"`
 }
 
 type typedUploadOutput struct {
@@ -95,34 +102,34 @@ func registerTyped(server *ghttp.Server) {
 			return typedParamsOutput{ID: p.ID, Trace: p.Trace, Lang: p.Lang, Weight: p.Weight}, nil
 		}))
 
-	mustTyped(ghttp.PostBody(server, "/typed/json", ghttp.JSONBody(), ghttp.JSON[typedJSONBody](),
+	mustTyped(ghttp.PostBody(server, "/typed/json", ghttp.JSONBody[typedJSONBody](), ghttp.JSON[typedJSONBody](),
 		func(_ context.Context, b typedJSONBody) (typedJSONBody, error) {
 			return b, nil
 		}))
 
-	mustTyped(ghttp.PostBody(server, "/typed/xml", ghttp.XMLCodec(), ghttp.JSON[typedXMLBody](),
+	mustTyped(ghttp.PostBody(server, "/typed/xml", ghttp.XMLBody[typedXMLBody](), ghttp.JSON[typedXMLBody](),
 		func(_ context.Context, b typedXMLBody) (typedXMLBody, error) {
 			return b, nil
 		}))
 
-	mustTyped(ghttp.PostBody(server, "/typed/form", ghttp.FormBody(), ghttp.JSON[typedFormBody](),
+	mustTyped(ghttp.PostBody(server, "/typed/form", ghttp.FormBody[typedFormBody](), ghttp.JSON[typedFormBody](),
 		func(_ context.Context, b typedFormBody) (typedFormBody, error) {
 			return b, nil
 		}))
 
-	mustTyped(ghttp.PostBody(server, "/typed/text", ghttp.TextBody(), ghttp.JSON[typedEchoOutput](),
+	mustTyped(ghttp.PostBody(server, "/typed/text", ghttp.TextBody[string](), ghttp.JSON[typedEchoOutput](),
 		func(_ context.Context, body string) (typedEchoOutput, error) {
 			return typedEchoOutput{Value: body}, nil
 		}))
 
-	mustTyped(ghttp.PostParamsBody(server, "/typed/mixed/{id}", ghttp.JSONBody(), ghttp.JSON[typedJSONBody](),
+	mustTyped(ghttp.PostParamsBody(server, "/typed/mixed/{id}", ghttp.JSONBody[typedJSONBody](), ghttp.JSON[typedJSONBody](),
 		func(_ context.Context, p typedMixedParams, b typedJSONBody) (typedJSONBody, error) {
 			return b, nil
 		}))
 
-	mustTyped(ghttp.PostParams(server, "/typed/upload", ghttp.JSON[typedUploadOutput](),
-		func(_ context.Context, p typedUploadParams) (typedUploadOutput, error) {
-			f, err := p.File.Open()
+	mustTyped(ghttp.PostBody(server, "/typed/upload", ghttp.FormBody[typedUploadBody](), ghttp.JSON[typedUploadOutput](),
+		func(_ context.Context, b typedUploadBody) (typedUploadOutput, error) {
+			f, err := b.File.Open()
 			if err != nil {
 				return typedUploadOutput{}, err
 			}
@@ -133,15 +140,15 @@ func registerTyped(server *ghttp.Server) {
 			}
 			sum := sha256.Sum256(data)
 			return typedUploadOutput{
-				Filename: p.File.Filename,
+				Filename: b.File.Filename,
 				Size:     len(data),
 				Hash:     hex.EncodeToString(sum[:]),
 			}, nil
 		}))
 
-	mustTyped(ghttp.PostParamsBody(server, "/typed/upload-mixed", ghttp.FormBody(), ghttp.JSON[typedUploadOutput](),
-		func(_ context.Context, p typedUploadParams, b typedUploadBody) (typedUploadOutput, error) {
-			f, err := p.File.Open()
+	mustTyped(ghttp.PostBody(server, "/typed/upload-mixed", ghttp.FormBody[typedUploadMixedBody](), ghttp.JSON[typedUploadOutput](),
+		func(_ context.Context, b typedUploadMixedBody) (typedUploadOutput, error) {
+			f, err := b.File.Open()
 			if err != nil {
 				return typedUploadOutput{}, err
 			}
@@ -153,7 +160,7 @@ func registerTyped(server *ghttp.Server) {
 			sum := sha256.Sum256(data)
 			return typedUploadOutput{
 				Note:     b.Note,
-				Filename: p.File.Filename,
+				Filename: b.File.Filename,
 				Size:     len(data),
 				Hash:     hex.EncodeToString(sum[:]),
 			}, nil

@@ -82,7 +82,7 @@ func BenchmarkTypedGetParamsLarge(b *testing.B) {
 // 只测框架绑定/解码/编码开销。
 func BenchmarkTypedPostParamsBody(b *testing.B) {
 	m := New()
-	_ = PostParamsBody(m, "/users/{id}", JSONBody(), JSON[benchOut](), func(ctx context.Context, p benchParams, body benchBody) (benchOut, error) {
+	_ = PostParamsBody(m, "/users/{id}", JSONBody[benchBody](), JSON[benchOut](), func(ctx context.Context, p benchParams, body benchBody) (benchOut, error) {
 		return benchOut{ID: p.ID, Name: body.Name}, nil
 	})
 	w := newDiscardWriter()
@@ -99,7 +99,7 @@ func BenchmarkTypedPostParamsBody(b *testing.B) {
 // BenchmarkTypedPostBody 测量仅 body 解码 + 输出编码（无 params）。
 func BenchmarkTypedPostBody(b *testing.B) {
 	m := New()
-	_ = PostBody(m, "/register", JSONBody(), JSON[benchOut](), func(ctx context.Context, body benchBody) (benchOut, error) {
+	_ = PostBody(m, "/register", JSONBody[benchBody](), JSON[benchOut](), func(ctx context.Context, body benchBody) (benchOut, error) {
 		return benchOut{Name: body.Name}, nil
 	})
 	w := newDiscardWriter()

@@ -152,7 +152,7 @@ func (b bodyWithValidate) Validate() error {
 
 func TestBodyValidatorInterface(t *testing.T) {
 	s := New()
-	PostBody(s, "/order", JSONBody(), JSON[bodyWithValidate](), func(_ context.Context, b bodyWithValidate) (bodyWithValidate, error) {
+	PostBody(s, "/order", JSONBody[bodyWithValidate](), JSON[bodyWithValidate](), func(_ context.Context, b bodyWithValidate) (bodyWithValidate, error) {
 		return b, nil
 	})
 
@@ -189,7 +189,7 @@ func (b *bodyValidatePtr) Validate() error {
 
 func TestBodyValidatorPointerReceiver(t *testing.T) {
 	s := New()
-	PostBody(s, "/p", JSONBody(), JSON[bodyValidatePtr](), func(_ context.Context, b bodyValidatePtr) (bodyValidatePtr, error) {
+	PostBody(s, "/p", JSONBody[bodyValidatePtr](), JSON[bodyValidatePtr](), func(_ context.Context, b bodyValidatePtr) (bodyValidatePtr, error) {
 		return b, nil
 	})
 	r := httptest.NewRequest(http.MethodPost, "/p", strings.NewReader(`{"name":""}`))
@@ -215,7 +215,7 @@ func (b bodyValidateStatus) Validate() error {
 
 func TestBodyValidatorStatusCoderPassThrough(t *testing.T) {
 	s := New()
-	PostBody(s, "/sc", JSONBody(), JSON[bodyValidateStatus](), func(_ context.Context, b bodyValidateStatus) (bodyValidateStatus, error) {
+	PostBody(s, "/sc", JSONBody[bodyValidateStatus](), JSON[bodyValidateStatus](), func(_ context.Context, b bodyValidateStatus) (bodyValidateStatus, error) {
 		return b, nil
 	})
 	r := httptest.NewRequest(http.MethodPost, "/sc", bytes.NewReader([]byte(`{"v":0}`)))

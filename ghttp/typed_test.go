@@ -69,7 +69,7 @@ type typedBody struct {
 
 func TestPostParamsBody_MixedInput(t *testing.T) {
 	m := New()
-	if err := PostParamsBody(m, "/users/{id}", JSONBody(), JSON[typedOut]().Status(http.StatusCreated),
+	if err := PostParamsBody(m, "/users/{id}", JSONBody[typedBody](), JSON[typedOut]().Status(http.StatusCreated),
 		func(ctx context.Context, p typedParams, b typedBody) (typedOut, error) {
 			return typedOut{ID: p.ID, Name: b.Name}, nil
 		}); err != nil {
@@ -90,7 +90,7 @@ func TestPostParamsBody_MixedInput(t *testing.T) {
 
 func TestPutParamsBody_FullMix(t *testing.T) {
 	m := New()
-	if err := PutParamsBody(m, "/users/{id}", JSONBody(), JSON[typedOut](),
+	if err := PutParamsBody(m, "/users/{id}", JSONBody[typedBody](), JSON[typedOut](),
 		func(ctx context.Context, p typedParams, b typedBody) (typedOut, error) {
 			return typedOut{ID: p.ID, Name: b.Name}, nil
 		}); err != nil {
@@ -173,7 +173,7 @@ func TestGetNone_HealthCheck(t *testing.T) {
 
 func TestPostBody_NoParams(t *testing.T) {
 	m := New()
-	if err := PostBody(m, "/register", JSONBody(), JSON[typedOut]().Status(http.StatusCreated),
+	if err := PostBody(m, "/register", JSONBody[typedBody](), JSON[typedOut]().Status(http.StatusCreated),
 		func(ctx context.Context, b typedBody) (typedOut, error) {
 			return typedOut{ID: 0, Name: b.Name}, nil
 		}); err != nil {
@@ -192,7 +192,7 @@ func TestPostBody_NoParams(t *testing.T) {
 
 func TestPutBody_UsesPutMethod(t *testing.T) {
 	m := New()
-	if err := PutBody(m, "/replace", JSONBody(), JSON[typedOut](),
+	if err := PutBody(m, "/replace", JSONBody[typedBody](), JSON[typedOut](),
 		func(ctx context.Context, b typedBody) (typedOut, error) {
 			return typedOut{Name: b.Name}, nil
 		}); err != nil {
@@ -221,7 +221,7 @@ type typedXMLBody struct {
 
 func TestPostBody_XMLDecoder(t *testing.T) {
 	m := New()
-	if err := PostBody(m, "/xml", XMLCodec(), JSON[typedOut](),
+	if err := PostBody(m, "/xml", XMLBody[typedXMLBody](), JSON[typedOut](),
 		func(ctx context.Context, b typedXMLBody) (typedOut, error) {
 			return typedOut{Name: b.Name}, nil
 		}); err != nil {

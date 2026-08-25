@@ -6,8 +6,8 @@
 
 ### Added
 
-- ghttp：params 结构体新增 `form:` tag 来源——标量字段直接从 urlencoded 或 multipart 表单绑定（免 body 解码器），支持 `validate:"..."` 校验，可与 `path:`/`query:`/`header:`、`Upload`/`[]Upload` 在同一结构体自由混用；仅当结构体确有 `form:`/上传字段时才解析请求体，纯 path/query/header 端点零解析开销、性能不变。
-- ghttp：typed multipart 文件上传补齐——`[]Upload` 绑定同名多文件（`<input multiple>`）；`Upload`/`[]Upload` 默认可选（缺失保留零值/nil），标 `validate:"required"` 则缺文件返回 400；新增 `Upload.Save(path)`（流式落盘）、`Upload.Bytes()`（读入内存）与 `Upload.ContentType` 字段；单结构体可含多个不同名上传字段，与 params/body 混用。
+- ghttp：请求体输入契约 `InputSpec[B]`（输出侧 `OutputSpec[O]` 的对称物）——底层 `Body[B](codec)` 接受任意 `RequestDecoder`，常用格式提供泛型快捷糖 `JSONBody[B]()`/`XMLBody[B]()`/`FormBody[B]()`/`TextBody[B]()`；body 类入口（`PostBody`/`PutBody`/`PatchBody`/`PostParamsBody`/…）的 body 参数由 `RequestDecoder` 升级为类型安全的 `InputSpec[B]`。
+- ghttp：typed multipart 文件上传——`Upload`（单文件）/`[]Upload`（多文件，`<input multiple>`）作为 **form 请求体结构体**的字段（`form:` tag 指定字段名），由 `FormBody[B]()` 与表单文本字段一并解码；缺文件时保留零值/nil（`Open == nil` 判空）；提供 `Upload.Save(path)`（流式落盘）、`Upload.Bytes()`（读入内存）、`Upload.Open()` 与 `Filename`/`Size`/`ContentType`/`Header` 元数据。
 - ghttp：Go 1.27 泛型方法 API（Server/Group 根组动词链、`ToNoInput`/`ToNoOutput`、builder 级 `Group`、`Client.Get/Post/Put/Delete` 类型化方法）。
 - ghttp：WebSocket 生产化——Timeout 中间件支持 `Hijack`/`Flush`、raw 消息、context 感知读写、子协议协商、keepalive、路由级 Origin 覆盖、升级/处理错误日志。
 - ghttp：SSE `WriteJSONWithID`（Last-Event-ID 续传）。
@@ -41,6 +41,7 @@
 
 ### Changed
 
+- ghttp（**破坏性**）：请求体解码从 `RequestDecoder` 参数改为类型安全的 `InputSpec[B]`——`PostBody`/`PutBody`/`PatchBody`/`PostParamsBody`/`PutParamsBody`/`PatchParamsBody` 的 body 参数原传 `JSONBody()`/`XMLCodec()`/`FormBody()`/`TextBody()`（非泛型 `RequestDecoder`），现改传泛型 `JSONBody[B]()`/`XMLBody[B]()`/`FormBody[B]()`/`TextBody[B]()` 或 `Body[B](codec)`。表单文本字段（`form:` tag）与文件上传（`Upload`/`[]Upload`）由 params 结构体迁移到 **form 请求体结构体**，统一由 `FormBody[B]()` 解码；params 结构体（`path:`/`query:`/`header:`）不再识别 `form:` 与 `Upload` 字段。移除包级非泛型构造器 `JSONBody()`/`FormBody()`/`TextBody()`（`JSONCodec()`/`XMLCodec()` 仍在）。迁移：文件与表单文本字段移入独立 body 类型，注册处改用对应的 `FormBody[B]()`／`JSONBody[B]()`。命中与 typed 热路径性能不变。
 - ghttp：404/405 miss 路径性能优化——默认脱敏渲染器下预构建错误体（`prebuiltMissBody`），请求期直接写切片，免去每请求的 JSON 拼接分配；ServeMiss 从 144ns/144B/3allocs 降到 82ns/64B/2allocs（−43% 时间、−56% 内存），命中路径无回归。自定义 `WithErrorRenderer`/`WithNotFoundHandler` 行为不变。
 - ghttp：已配置 `Consumes` 时缺失 Content-Type 返回 415（原为按 JSON 解析）。
 - ghttp：CORS 只对真正的预检请求（OPTIONS + Origin + Access-Control-Request-Method）短路。

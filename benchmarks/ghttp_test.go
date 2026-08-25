@@ -119,7 +119,7 @@ func newGHttp() http.Handler {
 
 	// json bind: POST /users + body → 200 OK + userOut
 	ghttp.PostBody(
-		m, "/users", ghttp.JSONBody(), ghttp.JSON[userOut](),
+		m, "/users", ghttp.JSONBody[userIn](), ghttp.JSON[userOut](),
 		func(ctx context.Context, in userIn) (userOut, error) {
 			return makeUserOut(in), nil
 		},
@@ -151,7 +151,7 @@ func newGHttp() http.Handler {
 	// full chain: PUT /api/v1/users/{id}/orders + path + 2 query + header + body → 200 OK
 	ghttp.PutParamsBody(
 		m, "/api/v1/users/{id}/orders",
-		ghttp.JSONBody(), ghttp.JSON[orderOut](),
+		ghttp.JSONBody[orderIn](), ghttp.JSON[orderOut](),
 		func(ctx context.Context, p gHttpLarge, in orderIn) (orderOut, error) {
 			return makeOrderOut(strconv.FormatInt(p.ID, 10), p.Keyword, strconv.Itoa(p.Page), p.Trace, in), nil
 		},

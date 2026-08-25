@@ -100,9 +100,9 @@ func registerAPI(m *ghttp.Server) {
 			}, nil
 		}))
 
-	// POST /api/items — 请求体经 JSONBody 解码，输出 201。
+	// POST /api/items — 请求体经 JSONBody[createReq] 解码，输出 201。
 	must(ghttp.PostBody(m, "/api/items",
-		ghttp.JSONBody(),
+		ghttp.JSONBody[createReq](),
 		ghttp.JSON[map[string]any]().Status(http.StatusCreated),
 		func(ctx context.Context, in createReq) (map[string]any, error) {
 			if in.Name == "" {
