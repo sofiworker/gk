@@ -330,6 +330,48 @@ _ = ghttp.StaticFS(s, "/assets/", myEmbedFS,                 // embed.FS
 - 本框架**不内置校验**。params 只做类型绑定（解析失败/越界报 400 `ErrInvalidInput`），请求体只做解码。
 - required、范围、枚举、格式等业务规则由 handler 自行判断；返回的 error 实现 `StatusCoder` 即可精确映射状态码（如 422），否则兜底 500。校验体系将另行设计。
 
+### 实时能力：SSE 与 WebSocket
+
+`Response` 实现了 `http.Flusher` 与 `http.Hijacker`（`Flush` / `Hijack` 透传底层连接），实时能力都建在 `RawHandle` 之上。
+
+**Server-Sent Events**：`NewSSEWriter(resp)` 自动写好 `text/event-stream` 等响应头，之后每次 `Send` / `SendEvent` / `SendMessage` / `Comment` / `Ping` 都按 SSE 线格式编码并**立即 Flush**；写出错误（客户端断开常见）被记住，可据返回值或 `Err()` 退出循环。SSE 是纯 HTTP 长连接，不接管连接，仍受中间件与优雅关闭管理。
+
+```go
+m.RawHandle(http.MethodGet, "/sse/time", func(ctx context.Context, req *ghttp.Request, resp *ghttp.Response) error {
+    w := ghttp.NewSSEWriter(resp)
+    for {
+        select {
+        case <-ctx.Done():
+            return nil // 客户端断开 / 服务器关闭
+        case t := <-ticker.C:
+            if err := w.SendEvent("time", t.Format(time.RFC3339)); err != nil {
+                return nil // 写失败=客户端已走
+            }
+        }
+    }
+})
+```
+
+**WebSocket**：经 `github.com/gorilla/websocket` 升级——ghttp 只负责让 `Response` 可 `Hijack`，协议实现委托 gorilla。`ServeWS` 一行注册升级端点（升级成功后把 `*websocket.Conn` 交给业务处理器，返回后自动 `Close`）；需要自定义时用 `NewWSUpgrader(WithWS...)` 配 `Upgrade` 在 `RawHandle` 内手动升级。
+
+```go
+ghttp.ServeWS(m, "/ws/echo", nil, func(ctx context.Context, req *ghttp.Request, conn *websocket.Conn) error {
+    for {
+        mt, msg, err := conn.ReadMessage()
+        if err != nil {
+            return err // 客户端关闭 → 正常退出
+        }
+        if err := conn.WriteMessage(mt, msg); err != nil {
+            return err
+        }
+    }
+})
+```
+
+- `WSUpgrader` 选项：`WithWSCheckOrigin`（跨源校验，默认 gorilla 安全同源策略）、`WithWSReadBufferSize` / `WithWSWriteBufferSize`、`WithWSSubprotocols`、`WithWSHandshakeTimeout`、`WithWSCompression`。
+- 底层 `ResponseWriter` 不支持 `Hijack`（被不透传的中间件包裹等）时返回 `ErrNotHijackable`。
+- 完整示例见 [`examples/realtime`](../examples/realtime)。
+
 ## 已知差异与权衡
 
 ### 与 gin / httprouter 对比

@@ -14,6 +14,7 @@ Performance stance: a pure `net/http` foundation with no fasthttp and no self-ma
 - Built-in middleware: RequestID, Logger, LimitBody, Recovery, CORS (with preflight), Timeout, BasicAuth, Metrics (zero-dependency Prometheus-style metrics), Gzip (conditional compression with configurable level)
 - Static assets: `Static` / `StaticFS` (`os.DirFS` and `embed.FS`), `File`, SPA history fallback
 - Health checks: `Health` (liveness), `Ready` (readiness), `NewReadinessGate` (runtime toggle)
+- Real-time: SSE sugar (`NewSSEWriter`) and WebSocket (`ServeWS` / `WSUpgrader` via gorilla/websocket) over `RawHandle`
 - Lifecycle: `Run` / `RunTLS` / `Serve` / `ServeTLS` / `Shutdown` / `Close` / `RunGraceful`
 
 ## Quick start
@@ -75,6 +76,46 @@ func createOrder(ctx context.Context, o CreateOrder) (OrderResp, error) {
 	// ...
 }
 ```
+
+## Real-time: SSE and WebSocket
+
+`Response` implements `http.Flusher` and `http.Hijacker` (`Flush` / `Hijack` pass through to the underlying connection); real-time features build on `RawHandle`.
+
+**Server-Sent Events**: `NewSSEWriter(resp)` writes the `text/event-stream` headers, then each `Send` / `SendEvent` / `SendMessage` / `Comment` / `Ping` encodes one SSE wire record and **flushes immediately**; a write error (a client disconnect is common) is remembered so a loop can exit via the return value or `Err()`. SSE is a plain-HTTP long connection that does not hijack, staying under middleware and graceful shutdown.
+
+```go
+m.RawHandle(http.MethodGet, "/sse/time", func(ctx context.Context, req *ghttp.Request, resp *ghttp.Response) error {
+    w := ghttp.NewSSEWriter(resp)
+    for {
+        select {
+        case <-ctx.Done():
+            return nil
+        case t := <-ticker.C:
+            if err := w.SendEvent("time", t.Format(time.RFC3339)); err != nil {
+                return nil
+            }
+        }
+    }
+})
+```
+
+**WebSocket**: upgrades via `github.com/gorilla/websocket` — ghttp only makes `Response` hijackable, delegating the protocol to gorilla. `ServeWS` registers an upgrade endpoint in one call (handing the `*websocket.Conn` to the handler and `Close`ing it on return); for customization use `NewWSUpgrader(WithWS...)` with `Upgrade` inside a `RawHandle`.
+
+```go
+ghttp.ServeWS(m, "/ws/echo", nil, func(ctx context.Context, req *ghttp.Request, conn *websocket.Conn) error {
+    for {
+        mt, msg, err := conn.ReadMessage()
+        if err != nil {
+            return err
+        }
+        if err := conn.WriteMessage(mt, msg); err != nil {
+            return err
+        }
+    }
+})
+```
+
+`WSUpgrader` options: `WithWSCheckOrigin` (origin check, default gorilla same-origin), `WithWSReadBufferSize` / `WithWSWriteBufferSize`, `WithWSSubprotocols`, `WithWSHandshakeTimeout`, `WithWSCompression`. When the underlying `ResponseWriter` cannot `Hijack`, `Hijack` returns `ErrNotHijackable`. See [`examples/realtime`](../examples/realtime).
 
 ## Graceful shutdown and auth
 

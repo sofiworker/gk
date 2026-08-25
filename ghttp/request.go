@@ -1,7 +1,9 @@
 package ghttp
 
 import (
+	"bufio"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 )
@@ -177,6 +179,45 @@ func (r *Response) BytesOut() int { return r.bytesOut }
 // Written 报告响应是否已提交 (状态码或响应体已写)。
 // Written reports whether the response has been committed (status or body).
 func (r *Response) Written() bool { return r.written }
+
+// Flush 把已写入的缓冲响应体立即冲刷给客户端,底层 writer 支持 http.Flusher 才透传,
+// 否则为 no-op。SSE 等流式场景每写一段后调用它,让数据即时到达而非滞留缓冲。
+// Flush passes a flush through to the underlying writer when it implements
+// http.Flusher (no-op otherwise), pushing buffered body to the client
+// immediately. Streaming such as SSE calls it after each chunk so data arrives
+// promptly instead of sitting in a buffer.
+func (r *Response) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Hijack 夺取底层 TCP 连接的所有权(WebSocket 升级等),交由调用方直接读写。成功后
+// 标记 written,使统一错误链与池化归还都认定响应已提交、不再触碰这条已被接管的连接。
+// 底层 writer 不支持 http.Hijacker 时返回 ErrNotHijackable。
+// Hijack takes over ownership of the underlying TCP connection (e.g. a WebSocket
+// upgrade) so the caller reads/writes it directly. On success it marks written so
+// both the unified error chain and pool return treat the response as committed and
+// never touch the hijacked connection again. Returns ErrNotHijackable when the
+// underlying writer does not implement http.Hijacker.
+func (r *Response) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := r.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, ErrNotHijackable
+	}
+	conn, rw, err := hj.Hijack()
+	if err == nil {
+		r.written = true
+	}
+	return conn, rw, err
+}
+
+// Unwrap 返回底层 http.ResponseWriter,供 http.ResponseController 等标准库机制
+// (SetReadDeadline / SetWriteDeadline 等)取回原始能力。
+// Unwrap returns the underlying http.ResponseWriter so stdlib mechanisms such as
+// http.ResponseController (SetReadDeadline / SetWriteDeadline, etc.) can reach the
+// original capabilities.
+func (r *Response) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 
 // reset 清空追踪状态以便池化复用。
 // reset clears the tracking state for pooled reuse.

@@ -6,6 +6,7 @@
 
 ### Added
 
+- ghttp：实时能力(SSE + WebSocket)——`Response` 实现 `http.Flusher`/`http.Hijacker`(`Flush`/`Hijack` 透传底层连接,`Unwrap` 暴露底层 writer);新增 SSE 语法糖 `NewSSEWriter`/`SSEWriter`/`SSEMessage`(`Send`/`SendEvent`/`SendMessage`/`Comment`/`Ping`,自动设头并逐事件 Flush,写错误粘滞);WebSocket 经 `github.com/gorilla/websocket` 升级,新增 `ServeWS`(一行注册升级端点)、`WSUpgrader`/`NewWSUpgrader` 及选项(`WithWSCheckOrigin`/`WithWSReadBufferSize`/`WithWSWriteBufferSize`/`WithWSSubprotocols`/`WithWSHandshakeTimeout`/`WithWSCompression`)、`WSHandlerFunc`、`Upgrade`;底层不支持 hijack 时返回哨兵 `ErrNotHijackable`。ghttp 只提供 hijack/flush 能力,WS 协议委托 gorilla。示例见 `examples/realtime`。
 - ghttp：请求体输入契约 `InputSpec[B]`（输出侧 `OutputSpec[O]` 的对称物）——底层 `Body[B](codec)` 接受任意 `RequestDecoder`，常用格式提供泛型快捷糖 `JSONBody[B]()`/`XMLBody[B]()`/`FormBody[B]()`/`TextBody[B]()`；body 类入口（`PostBody`/`PutBody`/`PatchBody`/`PostParamsBody`/…）的 body 参数由 `RequestDecoder` 升级为类型安全的 `InputSpec[B]`。
 - ghttp：typed multipart 文件上传——`Upload`（单文件）/`[]Upload`（多文件，`<input multiple>`）作为 **form 请求体结构体**的字段（`form:` tag 指定字段名），由 `FormBody[B]()` 与表单文本字段一并解码；缺文件时保留零值/nil（`Open == nil` 判空）；提供 `Upload.Save(path)`（流式落盘）、`Upload.Bytes()`（读入内存）、`Upload.Open()` 与 `Filename`/`Size`/`ContentType`/`Header` 元数据。
 - ghttp：Go 1.27 泛型方法 API（Server/Group 根组动词链、`ToNoInput`/`ToNoOutput`、builder 级 `Group`、`Client.Get/Post/Put/Delete` 类型化方法）。

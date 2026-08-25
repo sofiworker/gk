@@ -113,4 +113,14 @@ var (
 	// ErrRequestEntityTooLarge indicates the body exceeds the LimitBody cap,
 	// mapping to 413.
 	ErrRequestEntityTooLarge = errors.New("ghttp: request entity too large")
+
+	// ErrNotHijackable 表示底层 http.ResponseWriter 不支持连接接管(不实现
+	// http.Hijacker),因此无法进行 WebSocket 升级等需要夺取原始连接的操作。
+	// 常见于被不透传 Hijack 的中间件包裹、或运行在不支持 hijack 的服务器上。
+	// ErrNotHijackable indicates the underlying http.ResponseWriter does not
+	// support connection takeover (it does not implement http.Hijacker), so
+	// operations needing the raw connection such as a WebSocket upgrade cannot
+	// proceed. Typically caused by a middleware that does not pass Hijack through,
+	// or a server that does not support hijacking.
+	ErrNotHijackable = errors.New("ghttp: response writer does not support hijacking")
 )

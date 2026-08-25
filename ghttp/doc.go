@@ -134,4 +134,19 @@
 //     string scalar binding, parsed per field type; out-of-range or type mismatch
 //     yields 400 (ErrInvalidInput). The framework has no built-in validation;
 //     business rules are checked by the handler itself.
+//
+//   - 实时能力 / Real-time: Response 实现 http.Flusher 与 http.Hijacker(经 Flush /
+//     Hijack 透传底层连接)。在 RawHandle 之上,NewSSEWriter 提供 Server-Sent Events
+//     语法糖(Send / SendEvent / SendMessage / Comment / Ping,自动设头并逐事件 Flush);
+//     WebSocket 经 github.com/gorilla/websocket 升级——WSUpgrader 包装 Upgrader、
+//     Upgrade 在 RawHandle 内握手、ServeWS 一行注册升级端点(升级失败或连接关闭时收尾)。
+//     ghttp 只负责让 Response 可 Hijack,协议实现委托给 gorilla。
+//     Response implements http.Flusher and http.Hijacker (Flush / Hijack pass
+//     through to the underlying connection). Over RawHandle, NewSSEWriter provides
+//     Server-Sent Events sugar (Send / SendEvent / SendMessage / Comment / Ping,
+//     setting headers and flushing per event); WebSocket upgrades via
+//     github.com/gorilla/websocket — WSUpgrader wraps Upgrader, Upgrade performs the
+//     handshake inside a RawHandle, and ServeWS registers an upgrade endpoint in one
+//     call (tearing down on a failed upgrade or a closed connection). ghttp only
+//     makes Response hijackable; the protocol is delegated to gorilla.
 package ghttp

@@ -15,3 +15,4 @@ temp/ghttp.test
 # Default `go build` artifacts of each example module (artifact name = dir name).
 examples/minimal/minimal
 examples/server/server-example
+examples/realtime/realtime-example
