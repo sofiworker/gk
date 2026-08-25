@@ -30,7 +30,7 @@ func (formCodec) Decode(req *Request, v any) error {
 		return fmt.Errorf("%w: empty body", ErrInvalidInput)
 	}
 	if mediaType(req.Header.Get("Content-Type")) == "multipart/form-data" {
-		if err := req.ParseMultipartForm(32 << 20); err != nil {
+		if err := req.ParseMultipartForm(defaultMaxMultipartMemory); err != nil {
 			return fmt.Errorf("%w: %v", ErrInvalidInput, err)
 		}
 		return decodeFormStruct(req.MultipartForm.Value, v)

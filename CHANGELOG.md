@@ -6,6 +6,7 @@
 
 ### Added
 
+- ghttp：typed multipart 文件上传补齐——`[]Upload` 绑定同名多文件（`<input multiple>`）；`Upload`/`[]Upload` 默认可选（缺失保留零值/nil），标 `validate:"required"` 则缺文件返回 400；新增 `Upload.Save(path)`（流式落盘）、`Upload.Bytes()`（读入内存）与 `Upload.ContentType` 字段；单结构体可含多个不同名上传字段，与 params/body 混用。
 - ghttp：Go 1.27 泛型方法 API（Server/Group 根组动词链、`ToNoInput`/`ToNoOutput`、builder 级 `Group`、`Client.Get/Post/Put/Delete` 类型化方法）。
 - ghttp：WebSocket 生产化——Timeout 中间件支持 `Hijack`/`Flush`、raw 消息、context 感知读写、子协议协商、keepalive、路由级 Origin 覆盖、升级/处理错误日志。
 - ghttp：SSE `WriteJSONWithID`（Last-Event-ID 续传）。

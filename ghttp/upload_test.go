@@ -1,0 +1,376 @@
+package ghttp
+
+import (
+	"bytes"
+	"context"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
+	"net/textproto"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// buildMultipart 构造一个 multipart 请求体,files 为 name→[]文件(内容),fields 为文本字段。
+// buildMultipart builds a multipart body; files maps name→[]file contents,
+// fields carries text fields.
+func buildMultipart(t *testing.T, files map[string][]fileContent, fields map[string]string) (*bytes.Buffer, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	for name, val := range fields {
+		if err := w.WriteField(name, val); err != nil {
+			t.Fatalf("write field: %v", err)
+		}
+	}
+	for name, fs := range files {
+		for _, fc := range fs {
+			part, err := w.CreateFormFile(name, fc.filename)
+			if err != nil {
+				t.Fatalf("create form file: %v", err)
+			}
+			if _, err := part.Write([]byte(fc.data)); err != nil {
+				t.Fatalf("write part: %v", err)
+			}
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+	return &buf, w.FormDataContentType()
+}
+
+type fileContent struct {
+	filename string
+	data     string
+}
+
+// ——— 多文件上传 []Upload ——— //
+
+type multiUploadParams struct {
+	Files []Upload `form:"files"`
+}
+
+type multiUploadResult struct {
+	Count int      `json:"count"`
+	Names []string `json:"names"`
+	Sizes []int64  `json:"sizes"`
+}
+
+func TestUpload_MultipleFiles(t *testing.T) {
+	m := New()
+	if err := PostParams(m, "/multi", JSON[multiUploadResult](),
+		func(_ context.Context, p multiUploadParams) (multiUploadResult, error) {
+			res := multiUploadResult{Count: len(p.Files)}
+			for _, f := range p.Files {
+				res.Names = append(res.Names, f.Filename)
+				res.Sizes = append(res.Sizes, f.Size)
+			}
+			return res, nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+	body, ct := buildMultipart(t, map[string][]fileContent{
+		"files": {{"a.txt", "aaa"}, {"b.txt", "bbbbb"}, {"c.txt", "c"}},
+	}, nil)
+	req := httptest.NewRequest(http.MethodPost, "/multi", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	m.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	got := rec.Body.String()
+	if !strings.Contains(got, `"count":3`) ||
+		!strings.Contains(got, `"a.txt"`) || !strings.Contains(got, `"b.txt"`) || !strings.Contains(got, `"c.txt"`) {
+		t.Fatalf("unexpected body: %s", got)
+	}
+	// 尺寸应为 3/5/1。Sizes should be 3/5/1.
+	if !strings.Contains(got, `"sizes":[3,5,1]`) {
+		t.Fatalf("sizes mismatch: %s", got)
+	}
+}
+
+// ——— 可选文件:缺失时保留零值,不报错 ——— //
+
+type optionalUploadParams struct {
+	Avatar Upload `form:"avatar"` // 无 validate:required → 可选。optional
+	Name   string `form:"name" query:"name"`
+}
+
+type optionalUploadResult struct {
+	HasFile  bool   `json:"has_file"`
+	Filename string `json:"filename"`
+	Name     string `json:"name"`
+}
+
+func TestUpload_OptionalMissing(t *testing.T) {
+	m := New()
+	if err := PostParams(m, "/opt", JSON[optionalUploadResult](),
+		func(_ context.Context, p optionalUploadParams) (optionalUploadResult, error) {
+			return optionalUploadResult{
+				HasFile:  p.Avatar.Open != nil,
+				Filename: p.Avatar.Filename,
+				Name:     p.Name,
+			}, nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+	// 只带文本字段,不带文件。Only a text field, no file.
+	body, ct := buildMultipart(t, nil, map[string]string{"name": "alice"})
+	req := httptest.NewRequest(http.MethodPost, "/opt", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	m.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"has_file":false`) {
+		t.Fatalf("expected has_file=false, body=%s", rec.Body.String())
+	}
+}
+
+func TestUpload_OptionalPresent(t *testing.T) {
+	m := New()
+	if err := PostParams(m, "/opt2", JSON[optionalUploadResult](),
+		func(_ context.Context, p optionalUploadParams) (optionalUploadResult, error) {
+			return optionalUploadResult{HasFile: p.Avatar.Open != nil, Filename: p.Avatar.Filename}, nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+	body, ct := buildMultipart(t, map[string][]fileContent{
+		"avatar": {{"pic.png", "imgdata"}},
+	}, nil)
+	req := httptest.NewRequest(http.MethodPost, "/opt2", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	m.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"filename":"pic.png"`) {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// ——— 必填文件:缺失时报 400 ErrMissingRequired ——— //
+
+type requiredUploadParams struct {
+	Doc Upload `form:"doc" validate:"required"`
+}
+
+func TestUpload_RequiredMissing(t *testing.T) {
+	m := New()
+	if err := PostParams(m, "/req", JSON[uploadResult](),
+		func(_ context.Context, p requiredUploadParams) (uploadResult, error) {
+			return uploadResult{Filename: p.Doc.Filename}, nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+	// 不带文件的 multipart。Multipart with no file.
+	body, ct := buildMultipart(t, nil, map[string]string{"x": "y"})
+	req := httptest.NewRequest(http.MethodPost, "/req", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	m.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "missing_required") {
+		t.Fatalf("expected missing_required, body=%s", rec.Body.String())
+	}
+}
+
+func TestUpload_RequiredMultiMissing(t *testing.T) {
+	type reqMulti struct {
+		Files []Upload `form:"files" validate:"required"`
+	}
+	m := New()
+	if err := PostParams(m, "/reqmulti", JSON[multiUploadResult](),
+		func(_ context.Context, p reqMulti) (multiUploadResult, error) {
+			return multiUploadResult{Count: len(p.Files)}, nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+	body, ct := buildMultipart(t, nil, map[string]string{"x": "y"})
+	req := httptest.NewRequest(http.MethodPost, "/reqmulti", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	m.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "missing_required") {
+		t.Fatalf("expected 400 missing_required, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// ——— Upload.Save 与 Upload.Bytes ——— //
+
+func TestUpload_SaveAndBytes(t *testing.T) {
+	dir := t.TempDir()
+	savePath := filepath.Join(dir, "saved.bin")
+	const payload = "the quick brown fox"
+
+	m := New()
+	if err := PostParams(m, "/save", JSON[uploadResult](),
+		func(_ context.Context, p uploadParams) (uploadResult, error) {
+			// Bytes 读取整体。Bytes reads the whole content.
+			data, err := p.File.Bytes()
+			if err != nil {
+				return uploadResult{}, err
+			}
+			// Save 落盘。Save writes to disk.
+			if err := p.File.Save(savePath); err != nil {
+				return uploadResult{}, err
+			}
+			return uploadResult{Filename: p.File.Filename, Size: len(data)}, nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+	body, ct := buildMultipart(t, map[string][]fileContent{
+		"file": {{"doc.txt", payload}},
+	}, nil)
+	req := httptest.NewRequest(http.MethodPost, "/save", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	m.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	saved, err := os.ReadFile(savePath)
+	if err != nil {
+		t.Fatalf("read saved: %v", err)
+	}
+	if string(saved) != payload {
+		t.Fatalf("saved content mismatch: got %q want %q", saved, payload)
+	}
+}
+
+// ——— ContentType 字段填充 ——— //
+
+func TestUpload_ContentTypeField(t *testing.T) {
+	m := New()
+	if err := PostParams(m, "/ct", JSON[map[string]string](),
+		func(_ context.Context, p uploadParams) (map[string]string, error) {
+			return map[string]string{"ct": p.File.ContentType}, nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	mh := make(textproto.MIMEHeader)
+	mh.Set("Content-Disposition", `form-data; name="file"; filename="a.json"`)
+	mh.Set("Content-Type", "application/json")
+	part, err := w.CreatePart(mh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = part.Write([]byte(`{"k":1}`))
+	_ = w.Close()
+	req := httptest.NewRequest(http.MethodPost, "/ct", &buf)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	rec := httptest.NewRecorder()
+	m.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "application/json") {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// ——— 非 multipart 请求命中可选 upload:不 panic,保留零值 ——— //
+
+func TestUpload_NonMultipartOptional(t *testing.T) {
+	m := New()
+	if err := PostParams(m, "/nm", JSON[optionalUploadResult](),
+		func(_ context.Context, p optionalUploadParams) (optionalUploadResult, error) {
+			return optionalUploadResult{HasFile: p.Avatar.Open != nil}, nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+	// 发送 urlencoded 而非 multipart。Send urlencoded, not multipart.
+	req := httptest.NewRequest(http.MethodPost, "/nm", strings.NewReader("name=bob"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	m.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"has_file":false`) {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// ——— Bytes/Save 在未绑定 Upload 上返回错误而非 panic ——— //
+
+func TestUpload_UnboundBytesSave(t *testing.T) {
+	var u Upload
+	if _, err := u.Bytes(); err == nil {
+		t.Fatal("expected error from Bytes on unbound upload")
+	}
+	if err := u.Save(filepath.Join(t.TempDir(), "x")); err == nil {
+		t.Fatal("expected error from Save on unbound upload")
+	}
+}
+
+// ——— 多个不同名 upload 字段 + 混合文本字段 ——— //
+
+type twoFieldUploadParams struct {
+	Avatar Upload   `form:"avatar"`
+	Docs   []Upload `form:"docs"`
+	Tag    string   `form:"tag" query:"tag"`
+}
+
+type twoFieldResult struct {
+	Avatar   string   `json:"avatar"`
+	DocCount int      `json:"doc_count"`
+	DocNames []string `json:"doc_names"`
+}
+
+func TestUpload_MultipleDistinctFields(t *testing.T) {
+	m := New()
+	if err := PostParams(m, "/two", JSON[twoFieldResult](),
+		func(_ context.Context, p twoFieldUploadParams) (twoFieldResult, error) {
+			res := twoFieldResult{Avatar: p.Avatar.Filename, DocCount: len(p.Docs)}
+			for _, d := range p.Docs {
+				res.DocNames = append(res.DocNames, d.Filename)
+			}
+			return res, nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+	body, ct := buildMultipart(t, map[string][]fileContent{
+		"avatar": {{"me.png", "x"}},
+		"docs":   {{"d1.pdf", "11"}, {"d2.pdf", "22"}},
+	}, nil)
+	req := httptest.NewRequest(http.MethodPost, "/two", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	m.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	got := rec.Body.String()
+	if !strings.Contains(got, `"avatar":"me.png"`) || !strings.Contains(got, `"doc_count":2`) ||
+		!strings.Contains(got, `"d1.pdf"`) || !strings.Contains(got, `"d2.pdf"`) {
+		t.Fatalf("unexpected body: %s", got)
+	}
+}
+
+// ——— []Upload 与 PutParamsBody 组合(upload 在 params,body 走解码器) ——— //
+
+type putUploadParams struct {
+	Files []Upload `form:"files"`
+}
+
+func TestUpload_PutParamsBodyWithFiles(t *testing.T) {
+	m := New()
+	if err := PutParamsBody(m, "/put-upload", FormBody(), JSON[multiUploadResult](),
+		func(_ context.Context, p putUploadParams, _ mixedUploadBody) (multiUploadResult, error) {
+			return multiUploadResult{Count: len(p.Files)}, nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+	body, ct := buildMultipart(t, map[string][]fileContent{
+		"files": {{"a", "1"}, {"b", "2"}},
+	}, map[string]string{"note": "hi"})
+	req := httptest.NewRequest(http.MethodPut, "/put-upload", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	m.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"count":2`) {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+}

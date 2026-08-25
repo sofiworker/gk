@@ -96,7 +96,40 @@ type GetUser struct {
 - 支持 `path:` / `query:` / `header:` 三类来源；未打 tag 的字段静默跳过。
 - 标量字段支持 `int8/16/32/64`、`uint*`、`float*`、`bool`、`string`，越界报 400。
 - `validate:"..."` 支持 `required` / `min` / `max` / `len` / `oneof` / `email`，**注册期**编译为闭包，请求期零 tag 解析。
-- `Upload *multipart.FileHeader` 字段自动绑定 multipart 文件。
+- `Upload`（单文件）/ `[]Upload`（多文件）字段自动绑定 multipart 文件，详见下节。
+
+### 文件上传（multipart）
+
+在 params 结构体里放 `Upload` 或 `[]Upload` 字段，用 `form:` tag 指定表单字段名，multipart 文件即自动绑定：
+
+```go
+type UploadReq struct {
+    Avatar ghttp.Upload   `form:"avatar"`                    // 单文件，可选
+    Docs   []ghttp.Upload `form:"docs" validate:"required"`  // 多文件，必填
+    Note   string         `form:"note" query:"note"`         // 与文本字段混用
+}
+
+ghttp.PostParams(server, "/upload", ghttp.JSON[Resp](),
+    func(ctx context.Context, p UploadReq) (Resp, error) {
+        // 便捷落盘（流式，不整体载入内存）；path 由你决定，务必净化 Filename 防目录穿越
+        if err := p.Avatar.Save("/data/" + sanitize(p.Avatar.Filename)); err != nil {
+            return Resp{}, err
+        }
+        for _, d := range p.Docs {
+            data, _ := d.Bytes()          // 或读入内存
+            _ = data
+        }
+        return Resp{}, nil
+    })
+```
+
+- **单/多文件**：`Upload` 绑定同名首个文件；`[]Upload` 绑定同名全部文件（对应 `<input multiple>`）。
+- **可选 vs 必填**：默认可选——缺文件时 `Upload` 保留零值（`Open == nil` 可判空）、`[]Upload` 为 nil；标 `validate:"required"` 后缺文件返回 **400 `missing_required`**。
+- **便捷方法**：`Upload.Save(path)` 流式落盘、`Upload.Bytes()` 读入内存、`Upload.Open()` 拿 `multipart.File` 自行流式处理；`Upload.Filename`/`Size`/`ContentType`/`Header` 提供元数据。
+- **安全**：`Filename` 是客户端声明的不可信值，`Save` 不据它拼路径，落盘路径与净化由调用方负责。
+- 单结构体可含多个不同名上传字段，且可与 params（path/query/header）、body 解码器（`PostParamsBody`）自由混用。
+
+若只需 multipart 的**文本字段**（不含文件），用 `FormBody()` 解码器把它们绑到 body 结构体的 `form:` tag 字段。
 
 ### OutputSpec：显式声明输出契约
 
