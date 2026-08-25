@@ -23,7 +23,7 @@ s := ghttp.New()
 s.Use(ghttp.RequestID(), ghttp.Logger(), ghttp.Recovery())
 
 type getUserParams struct {
-	ID int64 `path:"id" validate:"min=1"`
+	ID int64 `path:"id"`
 }
 ghttp.GetParams(s, "/users/{id}", ghttp.JSON[User](),
 	func(ctx context.Context, p getUserParams) (User, error) {
@@ -38,7 +38,7 @@ _ = s.RunGraceful(":8080") // graceful stop on SIGINT/SIGTERM
 An `error` returned by a typed handler / codec passes through a **single exit** that classifies it into an HTTP status code:
 
 - a business error implementing `StatusCoder` (`HTTPStatus() int`) carries its own status;
-- otherwise framework sentinels map it (`ErrInvalidInput`/`ErrValidation`→400, `ErrUnsupportedMediaType`→415, etc.);
+- otherwise framework sentinels map it (`ErrInvalidInput`→400, `ErrUnsupportedMediaType`→415, etc.);
 - with a 500 fallback.
 
 The error body is sanitized by default (generic text only; `err.Error()` details go to logs) and emitted as JSON `{"error":{"code","message"}}` by default.
@@ -61,29 +61,18 @@ s := ghttp.New(
 - `Metrics`: zero-dependency Prometheus-style metrics middleware, recording request count/latency/error rate/bytes labelled by low-cardinality `MatchedRoute`. Mount the `/metrics` endpoint via `MetricsRegistry.Handler()`, which exports runtime metrics like `go_goroutines` and `go_memstats_alloc_bytes`.
 - `Gzip`: conditional compression middleware that compresses response bodies by configurable Content-Type whitelist and level (`WithGzipLevel`); automatically detects `Accept-Encoding` with q-value priority.
 
-## Parameter validation
+## Parameter binding
 
-Params fields support scalar binding: `string`, `bool`, `int/8/16/32/64`, `uint/8/16/32/64`, `float32/64` (out-of-range yields 400). Declare rules via a `validate` tag (compiled to closures at registration, zero tag-parsing at request time):
+Params fields support scalar binding: `string`, `bool`, `int/8/16/32/64`, `uint/8/16/32/64`, `float32/64`. A missing field keeps its zero value; a parse failure or out-of-range value yields 400 (`ErrInvalidInput`).
 
-| Rule | Applies to | Notes |
-|---|---|---|
-| `required` | all | missing yields 400 |
-| `min=N` / `max=N` | numeric compares magnitude; string compares length | |
-| `len=N` | string length exactly N; numeric equals N | |
-| `oneof=a b c` | all | one of the space-separated candidates |
-| `email` | string | simplified email check |
-
-A request body implementing `Validator` (`Validate() error`) is checked automatically after decoding; failures normalize to `ErrValidation` (→400), or pass through the status when the returned value implements `StatusCoder`. Zero extra cost when validation is unused.
+The framework has **no built-in validation**. Business rules (required, ranges, enums, formats) are checked by the handler itself; return an error implementing `StatusCoder` to map any status (e.g. 422), otherwise it falls back to 500. A dedicated validation layer will be designed separately.
 
 ```go
-type CreateOrder struct {
-	Amount int `json:"amount"`
-}
-func (o CreateOrder) Validate() error {
+func createOrder(ctx context.Context, o CreateOrder) (OrderResp, error) {
 	if o.Amount <= 0 {
-		return errors.New("amount must be positive")
+		return OrderResp{}, badRequest("amount must be positive") // error implements StatusCoder
 	}
-	return nil
+	// ...
 }
 ```
 

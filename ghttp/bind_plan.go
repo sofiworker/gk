@@ -12,7 +12,6 @@ import (
 // Bind plan: registered during startup via reflection over user's params struct;
 // executed at request time. Params structs use tags path:/query:/header: to annotate sources.
 // ---------------------------------------------------------------------------
-
 type bindSrc uint8
 
 const (
@@ -21,22 +20,14 @@ const (
 	bindSrcHeader
 )
 
-// bindStep 绑定计划的一步：把解析出的原始值写入目标字段,并跑注册期编译好的校验规则。
+// bindStep 绑定计划的一步：把解析出的原始值写入目标字段。
 // bindStep is one step of the bind plan: writes the parsed raw value into the
-// target field, then runs validation rules compiled at registration.
+// target field.
 type bindStep struct {
 	fieldIndex int
 	source     bindSrc
 	name       string
 	kind       reflect.Kind
-	// rules 是注册期从 validate tag 编译的校验闭包(可空);请求期在字段赋值后依次跑。
-	// rules are validation closures compiled from the validate tag at
-	// registration (may be empty); run in order after the field is set.
-	rules []fieldRule
-	// required 表示该字段必填(validate 含 required);缺失即 ErrValidation。
-	// required marks the field as mandatory (validate has required); a miss
-	// yields ErrValidation.
-	required bool
 }
 
 // BindPlan 一个 params 结构体的绑定计划(只含 path/query/header 步)。表单与文件属于请求
@@ -79,13 +70,7 @@ func buildBindPlan(t reflect.Type) (*BindPlan, error) {
 			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
 			reflect.Float32, reflect.Float64,
 			reflect.Bool:
-			step := bindStep{fieldIndex: i, source: src, name: name, kind: f.Type.Kind()}
-			required, rules, err := compileFieldRules(f.Tag.Get("validate"), f.Type.Kind())
-			if err != nil {
-				return nil, fmt.Errorf("%w: field %q: %v", ErrInvalidParam, f.Name, err)
-			}
-			step.required, step.rules = required, rules
-			plan.steps = append(plan.steps, step)
+			plan.steps = append(plan.steps, bindStep{fieldIndex: i, source: src, name: name, kind: f.Type.Kind()})
 		default:
 			return nil, fmt.Errorf("%w: field %q unsupported bind kind %s", ErrInvalidParam, f.Name, f.Type.Kind())
 		}
@@ -116,22 +101,13 @@ func (p *BindPlan) apply(req *Request, query url.Values, paramsPtr any) error {
 			ok = raw != ""
 		}
 		if !ok {
-			// 缺失:required 则报校验错误,否则保留零值静默跳过。
-			// Missing: required yields a validation error, else keep the zero
-			// value and skip silently.
-			if s.required {
-				return fmt.Errorf("%w: %s %q is required", ErrValidation, bindSrcName(s.source), s.name)
-			}
+			// 缺失:保留零值,静默跳过。
+			// Missing: keep the zero value and skip silently.
 			continue
 		}
 		fv := v.Field(s.fieldIndex)
 		if err := setScalar(fv, s.kind, raw, s.source, s.name); err != nil {
 			return err
-		}
-		for _, rule := range s.rules {
-			if err := rule(fv); err != nil {
-				return fmt.Errorf("%w: %s %q: %v", ErrValidation, bindSrcName(s.source), s.name, err)
-			}
 		}
 	}
 	return nil

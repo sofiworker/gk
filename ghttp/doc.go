@@ -86,10 +86,9 @@
 //     BytesOut、Err）；NewMetrics / MetricsRegistry 提供 Prometheus 文本格式的请求
 //     指标（计数/延迟/响应大小/在途请求数，按 MatchedRoute 聚合），零依赖可抓取。
 //
-//   - 参数校验：params 字段支持 int8/16/32、uint*、float* 等标量绑定（越界报 400），并可
-//     用 validate tag 声明 required/min/max/len/oneof/email 规则（注册期编译为闭包，
-//     请求期零 tag 解析）；请求体实现 Validator 接口即在解码后自动校验。校验失败统一
-//     归 ErrValidation（→400），不实现校验时零额外开销。
+//   - 参数绑定：params 字段支持 int8/16/32/64、uint*、float*、bool、string 等标量绑定,
+//     按字段类型解析,越界或类型不符报 400（ErrInvalidInput）。本框架不内置校验,
+//     业务规则由 handler 自行判断。
 //
 //   - Startup/shutdown: Server.Run / RunTLS (listen on an address), Serve /
 //     ServeTLS (reuse an existing net.Listener), Shutdown (graceful), Close
@@ -131,10 +130,8 @@
 //     (count, duration, response size, in-flight, aggregated by MatchedRoute),
 //     zero-dep and scrapable.
 //
-//   - Parameter validation: params fields accept int8/16/32, uint*, float* scalar
-//     binding (out-of-range yields 400) and may declare required/min/max/len/oneof/
-//     email rules via a validate tag (compiled to closures at registration, zero
-//     tag-parsing at request time); a request body implementing Validator is
-//     checked automatically after decoding. Failures normalize to ErrValidation
-//     (→400), with zero extra cost when no validation is used.
+//   - Parameter binding: params fields accept int8/16/32/64, uint*, float*, bool,
+//     string scalar binding, parsed per field type; out-of-range or type mismatch
+//     yields 400 (ErrInvalidInput). The framework has no built-in validation;
+//     business rules are checked by the handler itself.
 package ghttp

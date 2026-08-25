@@ -68,15 +68,6 @@ func TestTyped_ParamsBinding(t *testing.T) {
 	}
 }
 
-func TestTyped_ParamsValidation(t *testing.T) {
-	h, cleanup := newTypedApp(t)
-	t.Cleanup(cleanup)
-	rec := typedGet(t, h, "/typed/params/0")
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for min=1 violation, got %d", rec.Code)
-	}
-}
-
 func TestTyped_ParamsMissingRequired(t *testing.T) {
 	h, cleanup := newTypedApp(t)
 	t.Cleanup(cleanup)
@@ -98,15 +89,6 @@ func TestTyped_JSONBodyDecode(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"name":"alice"`) || !strings.Contains(rec.Body.String(), `"count":3`) {
 		t.Fatalf("body=%s", rec.Body.String())
-	}
-}
-
-func TestTyped_JSONBodyValidation(t *testing.T) {
-	h, cleanup := newTypedApp(t)
-	t.Cleanup(cleanup)
-	rec := typedPost(t, h, "/typed/json", `{"name":"alice","count":0}`, "application/json")
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for count<=0, got %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -215,15 +197,6 @@ func TestTyped_MixedParamsBody(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"name":"alice"`) || !strings.Contains(rec.Body.String(), `"count":1`) {
 		t.Fatalf("body=%s", rec.Body.String())
-	}
-}
-
-func TestTyped_MixedParamsMissing(t *testing.T) {
-	h, cleanup := newTypedApp(t)
-	t.Cleanup(cleanup)
-	rec := typedPost(t, h, "/typed/mixed/0", `{"name":"x","count":1}`, "application/json")
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for id<=0, got %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

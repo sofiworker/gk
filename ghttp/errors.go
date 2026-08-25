@@ -49,14 +49,6 @@ var (
 	// body decode failure, etc.), mapping to 400. Stage 4's unified error chain
 	// maps the status from it.
 	ErrInvalidInput = errors.New("ghttp: invalid input")
-
-	// ErrMissingRequired 表示标记为必填的 query/header 字段在请求中缺失,对应 400。
-	// 与 ErrInvalidInput 分开,便于用户侧与阶段 4 错误链区分"缺失"与"类型不符"。
-	// ErrMissingRequired indicates a query/header field marked required was
-	// absent in the request, mapping to 400. Kept separate from ErrInvalidInput
-	// so the caller and stage 4's error chain can distinguish "missing" from
-	// "type mismatch".
-	ErrMissingRequired = errors.New("ghttp: missing required field")
 )
 
 // 运行期/服务错误。
@@ -121,12 +113,4 @@ var (
 	// ErrRequestEntityTooLarge indicates the body exceeds the LimitBody cap,
 	// mapping to 413.
 	ErrRequestEntityTooLarge = errors.New("ghttp: request entity too large")
-
-	// ErrValidation 表示参数/请求体校验失败(required/范围/枚举等),对应 400。
-	// 与 ErrInvalidInput 分开,便于用户侧与错误链区分"校验失败"与"解析/类型不符"。
-	// ErrValidation indicates parameter/body validation failure (required/range/
-	// enum, etc.), mapping to 400. Kept separate from ErrInvalidInput so callers
-	// and the error chain can distinguish "validation failed" from "parse/type
-	// mismatch".
-	ErrValidation = errors.New("ghttp: validation failed")
 )

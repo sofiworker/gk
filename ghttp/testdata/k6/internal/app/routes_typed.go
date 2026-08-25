@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"io"
 
 	"github.com/sofiworker/gk/ghttp"
@@ -21,7 +20,7 @@ import (
 // ——— typed 请求/响应类型 ———
 
 type typedParamsInput struct {
-	ID     int64  `path:"id" validate:"required,min=1"`
+	ID     int64  `path:"id"`
 	Trace  string `header:"X-Trace-ID"`
 	Lang   string `query:"lang"`
 	Weight int    `query:"weight"`
@@ -40,15 +39,6 @@ type typedJSONBody struct {
 	Count int      `json:"count"`
 }
 
-// Validate 让 typed JSON body 走自动校验:Count 必须为正。
-// Validate makes the typed JSON body auto-validated: Count must be positive.
-func (b typedJSONBody) Validate() error {
-	if b.Count <= 0 {
-		return errTypedCountPositive
-	}
-	return nil
-}
-
 type typedXMLBody struct {
 	XMLName struct{} `xml:"payload"`
 	Name    string   `xml:"name" json:"name"`
@@ -63,7 +53,7 @@ type typedFormBody struct {
 }
 
 type typedMixedParams struct {
-	ID int64 `path:"id" validate:"required,min=1"`
+	ID int64 `path:"id"`
 }
 
 // typedUploadBody 是 /typed/upload 的表单请求体:文件归请求体,经 FormBody[T]() 解码。
@@ -91,8 +81,6 @@ type typedUploadOutput struct {
 type typedEchoOutput struct {
 	Value string `json:"value"`
 }
-
-var errTypedCountPositive = fmt.Errorf("%w: count must be positive", ghttp.ErrValidation)
 
 // registerTyped 注册全部非 raw 路由。
 // registerTyped registers all non-raw routes.

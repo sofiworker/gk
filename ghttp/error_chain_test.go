@@ -258,8 +258,6 @@ func TestClassifyError(t *testing.T) {
 		wantCode   string
 	}{
 		{"statuscoder", bizStatusErr{status: 422, detail: "x"}, 422, "unprocessable_entity"},
-		{"validation", ErrValidation, 400, "validation_failed"},
-		{"missing required", ErrMissingRequired, 400, "missing_required"},
 		{"invalid input", ErrInvalidInput, 400, "invalid_input"},
 		{"invalid path", ErrInvalidRequestPath, 400, "invalid_input"},
 		{"unsupported media", ErrUnsupportedMediaType, 415, "unsupported_media_type"},

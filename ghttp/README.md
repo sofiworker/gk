@@ -89,13 +89,13 @@ type GetUser struct {
     ID    int64  `path:"id"`              // 路径参数，自动按字段类型解析
     Page  int     `query:"page"`          // query 参数，缺失时零值
     Trace string  `header:"X-Trace-Id"`   // 请求头
-    Token string  `query:"token" validate:"required"` // 必填校验
+    Token string  `query:"token"`         // query 参数
 }
 ```
 
 - 支持 `path:` / `query:` / `header:` 三类**传输层**来源；未打 tag 的字段静默跳过。
-- 标量字段支持 `int8/16/32/64`、`uint*`、`float*`、`bool`、`string`，越界报 400。
-- `validate:"..."` 支持 `required` / `min` / `max` / `len` / `oneof` / `email`，**注册期**编译为闭包，请求期零 tag 解析。
+- 标量字段支持 `int8/16/32/64`、`uint*`、`float*`、`bool`、`string`，缺失保留零值，越界或类型不符报 400。
+- 本框架**不内置校验**：required/范围/枚举等业务规则由 handler 自行判断（返回带 `StatusCoder` 的 error 即可映射任意状态码）。
 - 表单文本字段（`form:` tag）与上传文件（`Upload` / `[]Upload`）都属于**请求体**，用 `FormBody[B]()` 解码，见下节；params 结构体不再承载 `form:`/文件字段。纯 path/query/header 端点不解析请求体，零解析开销。
 
 ### 请求体：InputSpec[B] 解码
@@ -112,7 +112,7 @@ type GetUser struct {
 
 ```go
 type CreatePost struct {
-    Title string `json:"title" validate:"required"`
+    Title string `json:"title"`
     Body  string `json:"body"`
 }
 
@@ -224,10 +224,10 @@ ghttp.New(
 
 ### 统一错误链
 
-typed handler / codec / 校验返回的 `error` 经统一出口分类为 HTTP 状态码：
+typed handler / codec 返回的 `error` 经统一出口分类为 HTTP 状态码：
 
 1. **StatusCoder 优先**：业务错误实现 `HTTPStatus() int` 即自带状态码（可精确控制 404/409/422 等）。
-2. **框架哨兵映射**：`ErrInvalidInput` → 400、`ErrValidation` → 400、`ErrUnsupportedMediaType` → 415、`ErrRequestEntityTooLarge` → 413、`ErrHandlerPanic` → 500 等。
+2. **框架哨兵映射**：`ErrInvalidInput` → 400、`ErrUnsupportedMediaType` → 415、`ErrRequestEntityTooLarge` → 413、`ErrHandlerPanic` → 500 等。
 3. **兜底 500**：未识别的 error 一律 500。
 
 默认**脱敏**：响应体只回通用文案（如 `"Bad Request"`），内部细节仅进服务端日志。`WithExposeErrorDetails(true)` 开启后 `message` 字段回传 `err.Error()`（仅建议开发/内网调试用）。
@@ -327,9 +327,8 @@ _ = ghttp.StaticFS(s, "/assets/", myEmbedFS,                 // embed.FS
 
 ### 参数校验
 
-- params 字段 `validate:"required|min=1|max=100|oneof=a b c|email"` 注册期编译为闭包，请求期零 tag 解析。
-- 请求体类型实现 `Validator` 接口（`Validate() error`）即在解码后自动校验；不实现时零额外开销。
-- 校验失败统一归 `ErrValidation`（→400），除非 error 自带 `StatusCoder`。
+- 本框架**不内置校验**。params 只做类型绑定（解析失败/越界报 400 `ErrInvalidInput`），请求体只做解码。
+- required、范围、枚举、格式等业务规则由 handler 自行判断；返回的 error 实现 `StatusCoder` 即可精确映射状态码（如 422），否则兜底 500。校验体系将另行设计。
 
 ## 已知差异与权衡
 

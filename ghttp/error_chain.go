@@ -63,10 +63,6 @@ func classifyError(err error) (status int, code string) {
 		return s, codeForStatus(s)
 	}
 	switch {
-	case errors.Is(err, ErrValidation):
-		return http.StatusBadRequest, "validation_failed"
-	case errors.Is(err, ErrMissingRequired):
-		return http.StatusBadRequest, "missing_required"
 	case errors.Is(err, ErrInvalidInput), errors.Is(err, ErrInvalidRequestPath):
 		return http.StatusBadRequest, "invalid_input"
 	case errors.Is(err, ErrUnsupportedMediaType):

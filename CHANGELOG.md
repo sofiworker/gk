@@ -71,6 +71,7 @@
 
 ### Removed
 
+- ghttp（**破坏性**）：**全面移除内置校验**——删除 `validate` struct tag 全族规则（`required`/`min`/`max`/`len`/`oneof`/`email`）及其注册期闭包编译机器（`compileFieldRules`/`fieldRule`/各 rule 函数）、请求体 `Validator` 接口与 `Validate() error` 自动校验（`bodyValidatorFor`/`runValidate`）、以及哨兵错误 `ErrValidation` 与 `ErrMissingRequired`（错误链不再产出 `validation_failed`/`missing_required` code）。params 现只做类型绑定（解析失败/越界仍报 400 `ErrInvalidInput`），请求体只做解码；required/范围/枚举等业务规则改由 handler 自行判断，返回实现 `StatusCoder` 的 error 精确映射状态码。校验体系将另行设计。删除 `ghttp/validate.go` 与 `ghttp/validate_test.go`。
 - ghttp：**删除 StructInput 老 API 全族**（性能收敛）：`StructInput[T]`（结构体 tag 绑定）、`Body[T]` 惰性请求体视图、`ParseInput`、`WithBodyDecoder`、`ErrInvalidParamsUsage`、`ErrMultipleBodyFields`、`ErrBodyFieldMustBeValue` 及全部结构体 tag 解析机器（`structInfo`/`parseCompiledInput`/`bindDirectPathInput` 等）。结构体 tag 绑定路径是每请求开销的最大单笔来源；迁移方式：`MapInputs(PathInt64("id"), ...)` 显式描述器 + `InputFunc`/`JSONBody[T]`。中间件读取路径参数改用 `Server.MatchedParams(r)`。
 - ghttp：删除基于结构体类型的 OpenAPI 反推死代码（`compileRouteOpenAPIMetadata`/`extractParametersFromType`/`extractBodySchema` 及 `routeDefinition.reqType/respType`）；OpenAPI 现完全由显式输入/输出描述器元数据生成。
 - ghttp：旧 `openAPIBuilder` 死代码、未用的 util/form 辅助函数、client 未用字段。
