@@ -93,9 +93,10 @@ type GetUser struct {
 }
 ```
 
-- 支持 `path:` / `query:` / `header:` 三类来源；未打 tag 的字段静默跳过。
+- 支持 `path:` / `query:` / `header:` / `form:` 四类来源；未打 tag 的字段静默跳过。
 - 标量字段支持 `int8/16/32/64`、`uint*`、`float*`、`bool`、`string`，越界报 400。
-- `validate:"..."` 支持 `required` / `min` / `max` / `len` / `oneof` / `email`，**注册期**编译为闭包，请求期零 tag 解析。
+- `validate:"..."` 支持 `required` / `min` / `max` / `len` / `oneof` / `email`，**注册期**编译为闭包，请求期零 tag 解析（`form:` 字段同样支持 validate）。
+- `form:` 标量字段直接从 urlencoded 或 multipart 表单绑定（免 body 解码器），可与 path/query/header、Upload 混用；仅当结构体确有 `form:`/Upload 字段时才解析请求体，纯 path/query/header 端点零解析开销。
 - `Upload`（单文件）/ `[]Upload`（多文件）字段自动绑定 multipart 文件，详见下节。
 
 ### 文件上传（multipart）
@@ -127,9 +128,9 @@ ghttp.PostParams(server, "/upload", ghttp.JSON[Resp](),
 - **可选 vs 必填**：默认可选——缺文件时 `Upload` 保留零值（`Open == nil` 可判空）、`[]Upload` 为 nil；标 `validate:"required"` 后缺文件返回 **400 `missing_required`**。
 - **便捷方法**：`Upload.Save(path)` 流式落盘、`Upload.Bytes()` 读入内存、`Upload.Open()` 拿 `multipart.File` 自行流式处理；`Upload.Filename`/`Size`/`ContentType`/`Header` 提供元数据。
 - **安全**：`Filename` 是客户端声明的不可信值，`Save` 不据它拼路径，落盘路径与净化由调用方负责。
-- 单结构体可含多个不同名上传字段，且可与 params（path/query/header）、body 解码器（`PostParamsBody`）自由混用。
+- 单结构体可含多个不同名上传字段，且可与 params（path/query/header/form）、body 解码器（`PostParamsBody`）自由混用。
 
-若只需 multipart 的**文本字段**（不含文件），用 `FormBody()` 解码器把它们绑到 body 结构体的 `form:` tag 字段。
+表单**文本字段**有两种取法：直接在 params 结构体用 `form:` tag（推荐，可与 path/query/header/Upload 混用，见上面的 `Note`/`title` 字段），或用 `FormBody()` 解码器把它们绑到独立的 body 结构体（适合把文本字段整体建模为一个 body 类型时）。
 
 ### OutputSpec：显式声明输出契约
 

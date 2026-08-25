@@ -3,14 +3,16 @@
 // the standard net/http package.
 //
 // 入口按输入组合分函数（GetParams / PostParams / PostBody / PostParamsBody 等），handler 收裸
-// 参数，类型全推断，无包裹容器。params 经 struct tag（path:/query:/header:）绑定，Upload / []Upload
-// 字段自动绑定 multipart 单/多文件（validate:"required" 标必填，否则可选）；请求体经 RequestDecoder
-// 解码（内置 JSONBody/XMLCodec/FormBody/TextBody），输出经 OutputSpec 编码；需完全接管响应时用 RawHandle。
+// 参数，类型全推断，无包裹容器。params 经 struct tag（path:/query:/header:/form:）绑定，form: 标量
+// 直接取自 urlencoded/multipart 表单；Upload / []Upload 字段自动绑定 multipart 单/多文件
+// （validate:"required" 标必填，否则可选）；请求体经 RequestDecoder 解码（内置 JSONBody/XMLCodec/
+// FormBody/TextBody），输出经 OutputSpec 编码；需完全接管响应时用 RawHandle。
 // Entries are split by input shape (GetParams / PostParams / PostBody / PostParamsBody, etc.);
 // handlers take naked parameters with all type parameters inferred and no wrapper
-// container. Params bind via struct tags (path:/query:/header:); Upload / []Upload
-// fields auto-bind single/multiple multipart files (validate:"required" marks a
-// file mandatory, otherwise optional); the body is decoded by a RequestDecoder
+// container. Params bind via struct tags (path:/query:/header:/form:), with form:
+// scalars taken from the urlencoded/multipart form; Upload / []Upload fields
+// auto-bind single/multiple multipart files (validate:"required" marks a file
+// mandatory, otherwise optional); the body is decoded by a RequestDecoder
 // (built-in JSONBody/XMLCodec/FormBody/TextBody), and output is encoded by an
 // OutputSpec; use RawHandle to fully own the response.
 //

@@ -30,6 +30,7 @@ const (
 	bindSrcPath bindSrc = iota
 	bindSrcQuery
 	bindSrcHeader
+	bindSrcForm
 )
 
 // bindStep 绑定计划的一步：把解析出的原始值写入目标字段,并跑注册期编译好的校验规则。
@@ -72,6 +73,12 @@ type uploadStep struct {
 type BindPlan struct {
 	steps   []bindStep
 	uploads []uploadStep
+	// needsForm 为 true 表示计划含 form: 标量字段或 upload 字段,请求期需先解析 form
+	// (urlencoded 或 multipart)。无此类字段的纯 path/query/header 端点保持零解析开销。
+	// needsForm is true when the plan has form: scalar fields or upload fields,
+	// requiring the form (urlencoded or multipart) to be parsed at request time.
+	// Pure path/query/header endpoints without such fields keep zero parse cost.
+	needsForm bool
 }
 
 // buildBindPlan 注册期反射遍历 params 结构体建计划；无 tag 字段静默跳过。空结构体产出空计划。
@@ -98,6 +105,7 @@ func buildBindPlan(t reflect.Type) (*BindPlan, error) {
 			plan.uploads = append(plan.uploads, uploadStep{
 				fieldIndex: i, name: name, multi: f.Type == sliceUploadType, required: required,
 			})
+			plan.needsForm = true
 			continue
 		}
 		var src bindSrc
@@ -109,6 +117,8 @@ func buildBindPlan(t reflect.Type) (*BindPlan, error) {
 			src, name = bindSrcQuery, f.Tag.Get("query")
 		case f.Tag.Get("header") != "":
 			src, name = bindSrcHeader, f.Tag.Get("header")
+		case f.Tag.Get("form") != "":
+			src, name = bindSrcForm, f.Tag.Get("form")
 		default:
 			continue // 无绑定 tag,静默跳过
 		}
@@ -125,6 +135,9 @@ func buildBindPlan(t reflect.Type) (*BindPlan, error) {
 			}
 			step.required, step.rules = required, rules
 			plan.steps = append(plan.steps, step)
+			if src == bindSrcForm {
+				plan.needsForm = true
+			}
 		default:
 			return nil, fmt.Errorf("%w: field %q unsupported bind kind %s", ErrInvalidParam, f.Name, f.Type.Kind())
 		}
@@ -137,6 +150,17 @@ func buildBindPlan(t reflect.Type) (*BindPlan, error) {
 func (p *BindPlan) apply(req *Request, query url.Values, paramsPtr any) error {
 	if len(p.steps) == 0 && len(p.uploads) == 0 {
 		return nil
+	}
+	// form: 字段与 upload 需要 form 已解析。只在计划确有此类字段时解析一次,
+	// 兼容 urlencoded(PostForm)与 multipart(MultipartForm.Value);解析失败则
+	// form 取值为空,由各字段的 required 决定是否报错。
+	// form: fields and uploads need the form parsed. Parse once, only when the
+	// plan actually has such fields, covering urlencoded (PostForm) and
+	// multipart (MultipartForm.Value). On a parse failure form values stay
+	// empty, and each field's required flag decides whether to error.
+	var form url.Values
+	if p.needsForm {
+		form = formValues(req)
 	}
 	v := reflect.ValueOf(paramsPtr).Elem()
 	for _, s := range p.steps {
@@ -153,6 +177,10 @@ func (p *BindPlan) apply(req *Request, query url.Values, paramsPtr any) error {
 		case bindSrcHeader:
 			raw = req.Header.Get(s.name)
 			ok = raw != ""
+		case bindSrcForm:
+			if vs := form[s.name]; len(vs) > 0 {
+				raw, ok = vs[0], true
+			}
 		}
 		if !ok {
 			// 缺失:required 则报校验错误,否则保留零值静默跳过。
@@ -245,8 +273,35 @@ func bindSrcName(src bindSrc) string {
 		return "query"
 	case bindSrcHeader:
 		return "header"
+	case bindSrcForm:
+		return "form"
 	}
 	return "?"
+}
+
+// formValues 解析请求 form 并返回文本字段值(urlencoded 的 PostForm 或 multipart 的
+// MultipartForm.Value)。解析失败或无 body 时返回 nil,交由字段级 required 判定。
+// 只在计划含 form:/upload 字段时调用,不影响纯 path/query/header 端点。
+// formValues parses the request form and returns text field values (urlencoded
+// PostForm or multipart MultipartForm.Value). Returns nil on a parse failure or
+// missing body, deferring to per-field required checks. Called only when the
+// plan has form:/upload fields, so pure path/query/header endpoints are unaffected.
+func formValues(req *Request) url.Values {
+	if mediaType(req.Header.Get("Content-Type")) == "multipart/form-data" {
+		if req.MultipartForm == nil {
+			if err := req.ParseMultipartForm(defaultMaxMultipartMemory); err != nil {
+				return nil
+			}
+		}
+		if req.MultipartForm != nil {
+			return req.MultipartForm.Value
+		}
+		return nil
+	}
+	if err := req.ParseForm(); err != nil {
+		return nil
+	}
+	return req.PostForm
 }
 
 // Upload 承接一个 multipart 上传文件。params 结构体放此类型字段即自动绑定;

@@ -6,6 +6,7 @@
 
 ### Added
 
+- ghttp：params 结构体新增 `form:` tag 来源——标量字段直接从 urlencoded 或 multipart 表单绑定（免 body 解码器），支持 `validate:"..."` 校验，可与 `path:`/`query:`/`header:`、`Upload`/`[]Upload` 在同一结构体自由混用；仅当结构体确有 `form:`/上传字段时才解析请求体，纯 path/query/header 端点零解析开销、性能不变。
 - ghttp：typed multipart 文件上传补齐——`[]Upload` 绑定同名多文件（`<input multiple>`）；`Upload`/`[]Upload` 默认可选（缺失保留零值/nil），标 `validate:"required"` 则缺文件返回 400；新增 `Upload.Save(path)`（流式落盘）、`Upload.Bytes()`（读入内存）与 `Upload.ContentType` 字段；单结构体可含多个不同名上传字段，与 params/body 混用。
 - ghttp：Go 1.27 泛型方法 API（Server/Group 根组动词链、`ToNoInput`/`ToNoOutput`、builder 级 `Group`、`Client.Get/Post/Put/Delete` 类型化方法）。
 - ghttp：WebSocket 生产化——Timeout 中间件支持 `Hijack`/`Flush`、raw 消息、context 感知读写、子协议协商、keepalive、路由级 Origin 覆盖、升级/处理错误日志。
