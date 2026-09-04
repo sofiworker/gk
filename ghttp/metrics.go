@@ -321,19 +321,19 @@ func (m *MetricsRegistry) writeHTTPMetrics(w *Response, snaps []metricsRouteSnap
 	}
 }
 
-// escapePromLabel 转义 Prometheus 标签值中的 \、" 与换行。
+// escapePromLabel 转义 Prometheus 标签值中的 \、"、\n 与 \r。
 //
 // 标签值是带引号的字符串,未转义的引号或换行会破坏整行语法。route 来自注册的路由模板
 // (可控),但 method 来自请求;虽已归一为有界集合,仍在此转义作为纵深防御——一旦将来
 // 新增用户可控标签,这里不必再改。
-// escapePromLabel escapes \, " and newlines inside a Prometheus label value.
+// escapePromLabel escapes \, ", \n and \r inside a Prometheus label value.
 //
 // A label value is a quoted string, so an unescaped quote or newline breaks the line's
 // syntax. route comes from registered route templates (controlled), but method comes
 // from the request; although it is already normalized to a bounded set, escaping here
 // is defense in depth so a future user-controlled label needs no change.
 func escapePromLabel(v string) string {
-	if !strings.ContainsAny(v, "\\\"\n") {
+	if !strings.ContainsAny(v, "\\\"\n\r") {
 		return v
 	}
 	var b strings.Builder
@@ -346,6 +346,8 @@ func escapePromLabel(v string) string {
 			b.WriteString(`\"`)
 		case '\n':
 			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
 		default:
 			b.WriteByte(v[i])
 		}

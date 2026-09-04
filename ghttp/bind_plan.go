@@ -157,19 +157,41 @@ func (p *BindPlan) collect(t reflect.Type, prefix []int, depth int) error {
 	return nil
 }
 
-// bindTagOf 读取字段的 path/query/header tag,返回来源、名字与是否带 tag。
-// bindTagOf reads a field's path/query/header tag, returning the source, the
-// name, and whether a tag was present.
+// bindTagOf 读取字段的 path/query/header tag,返回来源、名字与是否带 tag。tag 值中若含逗号，
+// 以逗号为界取第一部分作为参数名（允许 "name,omitempty" 等 json-style 选项共存）。
+//
+// A field's query/path/header tag may include commas (e.g., "name,omitempty"); this function
+// takes the first comma-separated segment as the parameter name, allowing json-style options
+// to coexist with ghttp's own semantics.
 func bindTagOf(f reflect.StructField) (src bindSrc, name string, tagged bool) {
-	switch {
-	case f.Tag.Get("path") != "":
-		return bindSrcPath, f.Tag.Get("path"), true
-	case f.Tag.Get("query") != "":
-		return bindSrcQuery, f.Tag.Get("query"), true
-	case f.Tag.Get("header") != "":
-		return bindSrcHeader, f.Tag.Get("header"), true
+	var tagName, fieldTag string
+	if f.Tag.Get("query") != "" {
+		tagName = f.Tag.Get("query")
+		fieldTag = "query"
+	} else if f.Tag.Get("path") != "" {
+		tagName = f.Tag.Get("path")
+		fieldTag = "path"
+	} else if f.Tag.Get("header") != "" {
+		tagName = f.Tag.Get("header")
+		fieldTag = "header"
 	}
-	return 0, "", false
+	if tagName == "" {
+		return 0, "", false
+	}
+	name = tagName
+	if i := strings.IndexByte(tagName, ','); i >= 0 {
+		name = tagName[:i]
+	}
+	switch fieldTag {
+	case "query":
+		return bindSrcQuery, name, true
+	case "path":
+		return bindSrcPath, name, true
+	case "header":
+		return bindSrcHeader, name, true
+	default:
+		return 0, "", false
+	}
 }
 
 // structTypeOf 返回 t 本身或其指向的结构体类型,并报告是否为结构体。

@@ -40,9 +40,11 @@ func BasicAuth(realm string, accounts map[string]string) Middleware {
 	if realm == "" {
 		realm = "Restricted"
 	}
-	// realm 可能含 " 需转义,注册期算好 challenge 头,请求期直接用。
-	// realm may contain " needing escaping; precompute the challenge header once.
-	challenge := `Basic realm="` + strings.ReplaceAll(realm, `"`, `\"`) + `"`
+	// realm 可能含 \ 和 " 需转义,注册期算好 challenge 头,请求期直接用。反斜杠必须先转义，
+	// 否则会在替换引号时产生二次转义。
+	// realm may contain \ and " needing escaping; precompute the challenge header once.
+	// Backslash must be escaped first to avoid double-escaping the quote replacement.
+	challenge := `Basic realm="` + strings.ReplaceAll(strings.ReplaceAll(realm, `\`, `\\`), `"`, `\"`) + `"`
 
 	return func(next Handler) Handler {
 		return func(ctx context.Context, req *Request, resp *Response) error {
