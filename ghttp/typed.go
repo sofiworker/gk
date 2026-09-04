@@ -78,8 +78,11 @@ func OptionsParams[P, O any](r router, path string, out OutputSpec[O], h func(co
 }
 
 // registerParams 是 params-only 入口的共享注册逻辑。
+// mws 为路由级中间件(自由函数入口传空),在终端外层折叠,位于分组中间件【之内】。
 // registerParams is the shared registration logic for params-only entries.
-func registerParams[P, O any](r router, method, path string, out OutputSpec[O], h func(context.Context, P) (O, error)) error {
+// mws holds route-level middleware (empty from the free-function entries); it folds
+// around the terminal, INSIDE the group's middleware.
+func registerParams[P, O any](r router, method, path string, out OutputSpec[O], h func(context.Context, P) (O, error), mws ...Middleware) error {
 	if out == nil {
 		return ErrMissingOutput
 	}
@@ -89,7 +92,7 @@ func registerParams[P, O any](r router, method, path string, out OutputSpec[O], 
 		return err
 	}
 	c := &compiledParams[P, O]{plan: plan, out: out, h: h}
-	if err := r.register(method, path, c.serve); err != nil {
+	if err := r.register(method, path, chain(c.serve, mws)); err != nil {
 		return err
 	}
 	r.owner().noteRoute(r, method, path, routeDoc{params: pt, out: outputDocOf(out)})
@@ -173,14 +176,15 @@ func OptionsNone[O any](r router, path string, out OutputSpec[O], h func(context
 	return registerNone(r, http.MethodOptions, path, out, h)
 }
 
-// registerNone 是无 params 无 body 入口的共享注册逻辑。
-// registerNone is the shared registration logic for entries without params or body.
-func registerNone[O any](r router, method, path string, out OutputSpec[O], h func(context.Context) (O, error)) error {
+// registerNone 是无 params 无 body 入口的共享注册逻辑;mws 见 registerParams。
+// registerNone is the shared registration logic for entries without params or body;
+// for mws see registerParams.
+func registerNone[O any](r router, method, path string, out OutputSpec[O], h func(context.Context) (O, error), mws ...Middleware) error {
 	if out == nil {
 		return ErrMissingOutput
 	}
 	c := &compiledNone[O]{out: out, h: h}
-	if err := r.register(method, path, c.serve); err != nil {
+	if err := r.register(method, path, chain(c.serve, mws)); err != nil {
 		return err
 	}
 	r.owner().noteRoute(r, method, path, routeDoc{out: outputDocOf(out)})
@@ -235,10 +239,11 @@ func DeleteParamsBody[P, B, O any](r router, path string, in InputSpec[B], out O
 }
 
 // registerParamsBody 是 params+body 入口的共享注册逻辑；in 为 nil 或内部无解码器时报
-// ErrMissingCodec。
+// ErrMissingCodec。mws 见 registerParams。
 // registerParamsBody is the shared registration logic for params+body entries; a
-// nil in, or one holding no decoder, returns ErrMissingCodec.
-func registerParamsBody[P, B, O any](r router, method, path string, in InputSpec[B], out OutputSpec[O], h func(context.Context, P, B) (O, error)) error {
+// nil in, or one holding no decoder, returns ErrMissingCodec. For mws see
+// registerParams.
+func registerParamsBody[P, B, O any](r router, method, path string, in InputSpec[B], out OutputSpec[O], h func(context.Context, P, B) (O, error), mws ...Middleware) error {
 	if out == nil {
 		return ErrMissingOutput
 	}
@@ -259,7 +264,7 @@ func registerParamsBody[P, B, O any](r router, method, path string, in InputSpec
 	if r.owner().strictContentType {
 		c.wantCT = in.contentTypes()
 	}
-	if err := r.register(method, path, c.serve); err != nil {
+	if err := r.register(method, path, chain(c.serve, mws)); err != nil {
 		return err
 	}
 	r.owner().noteRoute(r, method, path, routeDoc{
@@ -345,9 +350,10 @@ func DeleteBody[B, O any](r router, path string, in InputSpec[B], out OutputSpec
 }
 
 // registerBody 是仅 body 入口的共享注册逻辑；in 为 nil 或内部无解码器时报 ErrMissingCodec。
+// mws 见 registerParams。
 // registerBody is the shared registration logic for body-only entries; returns
-// ErrMissingCodec if in is nil or holds no decoder.
-func registerBody[B, O any](r router, method, path string, in InputSpec[B], out OutputSpec[O], h func(context.Context, B) (O, error)) error {
+// ErrMissingCodec if in is nil or holds no decoder. For mws see registerParams.
+func registerBody[B, O any](r router, method, path string, in InputSpec[B], out OutputSpec[O], h func(context.Context, B) (O, error), mws ...Middleware) error {
 	if out == nil {
 		return ErrMissingOutput
 	}
@@ -361,7 +367,7 @@ func registerBody[B, O any](r router, method, path string, in InputSpec[B], out 
 	if r.owner().strictContentType {
 		c.wantCT = in.contentTypes()
 	}
-	if err := r.register(method, path, c.serve); err != nil {
+	if err := r.register(method, path, chain(c.serve, mws)); err != nil {
 		return err
 	}
 	r.owner().noteRoute(r, method, path, routeDoc{

@@ -12,7 +12,7 @@
 - ghttp 大文件：codec_manager/doc/websocket。
 - ghttp 大文件：server/middleware。
 - ghttp 大文件：builder_core/config/params。
-- ghttp 大文件：builder_go127/builder_pre127/client。
+- ghttp 大文件：builder_go127（Go ≥ 1.27）。
 - gnet：核对完成——大部分注释已是中文，少量英文已双语化（forward/addr/pcapng/rawcap/layers/link/pcap）。
 - README 双语化（第一批）：根 README 与 gotel/grx/gsd/gcrypt/gcompress/gresolver/gnet/gconfig/gsql/gerr/glog/gretry。
 - README 双语化（第二批）：gcache（正文与示例注释）。

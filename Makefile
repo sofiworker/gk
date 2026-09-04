@@ -13,7 +13,7 @@ GOFMT ?= gofmt
 help:
 	@echo "Available targets:"
 	@echo "  make fmt         Format Go code with go fmt"
-	@echo "  make fmt-check   Check formatting (requires Go 1.27+ gofmt for ghttp/1.27 files)"
+	@echo "  make fmt-check   Check formatting (requires Go 1.27+ gofmt for ghttp/*.go with //go:build go1.27)"
 	@echo "  make vet         Run go vet"
 	@echo "  make test        Run unit tests"
 	@echo "  make test-race   Run unit tests with the race detector"

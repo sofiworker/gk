@@ -131,6 +131,58 @@ type Search struct {
 - **不支持的形态在注册期报错**：切片的切片、映射的映射、非字符串键的映射等在传输层没有公认编码，注册期拒绝比运行期猜测更诚实。`path:` 不能绑定映射（path 段是单值语义）。
 - 递归展开有深度上限（8 层），自引用结构体在注册期即报错而非栈溢出。
 
+### 入口形态：自由函数与链式并存
+
+类型化端点有两套入口，注册期共用同一套实现（绑定计划、严格 Content-Type 校验、OpenAPI 登记完全一致），可自由混用：
+
+#### 自由函数入口（所有支持的 Go 版本）
+
+把 router 作为首参传入，类型参数由 handler 推断：
+
+```go
+ghttp.GetParams(s, "/items/{id}", ghttp.JSON[ItemResp](),
+    func(ctx context.Context, p ItemID) (ItemResp, error) { /* … */ })
+
+ghttp.PostBody(s, "/items", ghttp.JSONBody[CreateReq](), ghttp.JSON[ItemResp]().Status(201),
+    func(ctx context.Context, in CreateReq) (ItemResp, error) { /* … */ })
+```
+
+这是 Go < 1.27 下的**唯一**入口；Go ≥ 1.27 下同样继续可用。
+
+#### 链式入口（**仅 Go ≥ 1.27**）
+
+Go 1.27 允许方法声明类型参数（泛型方法），因此可以做到**链本身非泛型、类型只在终结方法处由 handler 推断**——这在 Go 1.27 之前无法表达（类型参数只能声明在链的起点，会迫使调用方手写 `Req`/`Resp`）：
+
+```go
+// params（path/query/header 经 struct tag 绑定）
+s.Get("/items/{id}").To(ghttp.JSON[ItemResp](),
+    func(ctx context.Context, p ItemID) (ItemResp, error) { /* … */ })
+
+// 仅 body
+s.Post("/items").ToBody(ghttp.JSONBody[CreateReq](), ghttp.JSON[ItemResp]().Status(201),
+    func(ctx context.Context, in CreateReq) (ItemResp, error) { /* … */ })
+
+// params + body
+s.Patch("/items/{id}").ToParamsBody(ghttp.JSONBody[UpdateReq](), ghttp.JSON[ItemResp](),
+    func(ctx context.Context, p ItemID, b UpdateReq) (ItemResp, error) { /* … */ })
+
+// 无 params 无 body
+s.Get("/healthz").ToNone(ghttp.JSON[HealthResp](),
+    func(ctx context.Context) (HealthResp, error) { /* … */ })
+
+// 路由级中间件 + 完全接管响应
+s.Get("/stream").Use(mw).ToRaw(func(ctx context.Context, req *ghttp.Request, resp *ghttp.Response) error { /* … */ })
+```
+
+- 动词：`Get`/`Post`/`Put`/`Patch`/`Delete`/`Head`/`Options`，以及自定义方法 `Method(verb, path)`。
+- 终结方法：`To`（params）、`ToBody`（仅 body）、`ToParamsBody`（params+body）、`ToNone`（无输入）、`ToRaw`（原始处理器）。均返回 `error`，错误语义与自由函数入口一致。
+- 分组同样可用：`g := s.Group("/api/v1"); g.Get("/items/{id}").To(…)`，路径相对分组前缀。
+- 链上 `Use(...)` 挂路由级中间件，折叠顺序为**全局 → 分组 → 路由 → 终端**（与 gin 一致）。
+- 链起点定义在内部 `mux` 上，经嵌入提升为 `Server` 的方法；`Group` 单独定义一份。
+
+> **版本门槛**：链式 API 位于 `//go:build go1.27` 文件中，Go < 1.27 的工具链会在构建约束层直接排除它，此时调用 `s.Get(...)` 会报 `has no field or method Get`——请改用上面的自由函数入口。`go.mod` 无需声明 `go 1.27`（构建标签会按需提升该文件的语言版本）。
+>
+> 注意：含泛型方法语法的文件**必须用 Go 1.27+ 的 gofmt 格式化**，旧版 gofmt 与 golangci-lint v1 的解析器无法解析它（CI 已分别固定工具链版本）。
 
 ### 请求体：InputSpec[B] 解码
 

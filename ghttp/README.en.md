@@ -106,6 +106,59 @@ func createOrder(ctx context.Context, o CreateOrder) (OrderResp, error) {
 }
 ```
 
+## Registration forms: free functions and chaining
+
+Typed endpoints have two entry forms sharing one registration implementation (identical binding plan, strict Content-Type check, and OpenAPI registry), and they mix freely.
+
+### Free functions (every supported Go version)
+
+Pass the router as the first argument; type parameters are inferred from the handler:
+
+```go
+ghttp.GetParams(s, "/items/{id}", ghttp.JSON[ItemResp](),
+    func(ctx context.Context, p ItemID) (ItemResp, error) { /* … */ })
+
+ghttp.PostBody(s, "/items", ghttp.JSONBody[CreateReq](), ghttp.JSON[ItemResp]().Status(201),
+    func(ctx context.Context, in CreateReq) (ItemResp, error) { /* … */ })
+```
+
+This is the **only** entry form under Go < 1.27, and it keeps working under Go >= 1.27.
+
+### Chained entries (**Go >= 1.27 only**)
+
+Go 1.27 lets methods declare type parameters (generic methods), which makes a **non-generic chain whose types are inferred at the terminal** possible — something inexpressible before Go 1.27, where type parameters could only be declared at the start of the chain, forcing callers to spell out `Req`/`Resp`:
+
+```go
+// params (path/query/header bound via struct tags)
+s.Get("/items/{id}").To(ghttp.JSON[ItemResp](),
+    func(ctx context.Context, p ItemID) (ItemResp, error) { /* … */ })
+
+// body only
+s.Post("/items").ToBody(ghttp.JSONBody[CreateReq](), ghttp.JSON[ItemResp]().Status(201),
+    func(ctx context.Context, in CreateReq) (ItemResp, error) { /* … */ })
+
+// params + body
+s.Patch("/items/{id}").ToParamsBody(ghttp.JSONBody[UpdateReq](), ghttp.JSON[ItemResp](),
+    func(ctx context.Context, p ItemID, b UpdateReq) (ItemResp, error) { /* … */ })
+
+// neither params nor body
+s.Get("/healthz").ToNone(ghttp.JSON[HealthResp](),
+    func(ctx context.Context) (HealthResp, error) { /* … */ })
+
+// route-level middleware plus full response ownership
+s.Get("/stream").Use(mw).ToRaw(func(ctx context.Context, req *ghttp.Request, resp *ghttp.Response) error { /* … */ })
+```
+
+- Verbs: `Get`/`Post`/`Put`/`Patch`/`Delete`/`Head`/`Options`, plus `Method(verb, path)` for custom methods.
+- Terminals: `To` (params), `ToBody` (body only), `ToParamsBody` (params+body), `ToNone` (no input), `ToRaw` (raw handler). All return `error` with the same semantics as the free-function entries.
+- Groups work the same way: `g := s.Group("/api/v1"); g.Get("/items/{id}").To(…)`, with paths relative to the group prefix.
+- `Use(...)` on the chain adds route-level middleware; the fold order is **global -> group -> route -> terminal** (matching gin).
+- Chain starters are defined on the internal `mux` and promoted onto `Server` by embedding; `Group` defines its own set.
+
+> **Version gate**: the chained API lives in `//go:build go1.27` files, which toolchains older than 1.27 exclude at the build-constraint level. Calling `s.Get(...)` there fails with `has no field or method Get` — use the free-function entries instead. `go.mod` need not declare `go 1.27` (the build tag raises that file's language version as needed).
+>
+> Note: files containing generic-method syntax **must be formatted with a Go 1.27+ gofmt**; older gofmt and golangci-lint v1 parsers cannot parse them (CI pins the respective toolchains).
+
 ## Real-time: SSE and WebSocket
 
 `Response` implements `http.Flusher` and `http.Hijacker` (`Flush` / `Hijack` pass through to the underlying connection); real-time features build on `RawHandle`.

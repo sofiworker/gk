@@ -61,7 +61,7 @@ jobs:
         run: GOTOOLCHAIN=go1.27rc2 go test ./...
 
   fmt:
-    # builder_go127.go uses generic-method syntax, so formatting must be
+    # Files with //go:build go1.27 use generic-method syntax, so formatting must be
     # checked with a Go 1.27+ gofmt.
     name: gofmt (1.27)
     runs-on: ubuntu-latest
