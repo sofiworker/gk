@@ -2,6 +2,7 @@ package ghttp
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"runtime/debug"
@@ -36,7 +37,16 @@ type RecoveryHandler func(info PanicInfo)
 // the standard logger → write 500.
 func Recovery() Middleware {
 	return RecoveryWith(func(info PanicInfo) {
-		log.Printf("ghttp: panic recovered %s %s: %v\n%s", info.Method, info.Path, info.Value, info.Stack)
+		// panic 值与方法/路径都可能含用户输入（某库对坏字段直接 panic、方法名来自请求行），
+		// 未净化时一个 %0a 就能把这行崩溃记录劈成两行并伪造出后续条目，事后无从分辨。
+		// 堆栈不净化：它本就多行，且只由 runtime 生成、不含请求原文。
+		// The panic value and the method/path can both carry user input (a library
+		// panicking on a bad field, a method from the request line); unescaped, a single
+		// %0a splits this crash record and forges the entries after it, leaving no way to
+		// tell them apart later. The stack is left as-is: it is multi-line by nature and
+		// produced by the runtime, never echoing the request.
+		log.Printf("ghttp: panic recovered %s %s: %s\n%s",
+			sanitizeLogToken(info.Method), sanitizeLogToken(info.Path), sanitizeLogToken(fmt.Sprint(info.Value)), info.Stack)
 	})
 }
 
@@ -71,16 +81,23 @@ func RecoveryWith(onPanic RecoveryHandler) Middleware {
 						Path:   req.URL.Path,
 					})
 				}
-				// 仅在下游尚未提交响应时写 500，避免破坏已写出的部分响应。
-				// Write 500 only if the downstream hasn't committed, to avoid
-				// corrupting an already-written partial response.
-				if !resp.Written() {
-					http.Error(resp, "500 internal server error", http.StatusInternalServerError)
-				}
-				// panic 已被处理，返回 nil，不再向上冒泡到核心错误路径重复写响应。
-				// The panic is handled; return nil so it does not bubble to the
-				// core error path and double-write.
-				err = nil
+				// 一律上抛 panicError，绝不在本中间件里手写响应：交给统一错误链才能与
+				// 其余 5xx 同形（JSON + code）、触发 onError、被 Logger 与 Metrics 记为
+				// 500。此前这里用 http.Error 写 text/plain 并 return nil，是包内最后一处
+				// 绕过错误链的出口；而"响应已提交"也不是咽掉 panic 的理由——流式场景
+				// （SSE、大文件、已 Flush）里崩溃的请求此前在错误钩子、访问日志与 5xx
+				// 指标中彻底消失，恰恰是最需要告警的一类事故。上抛后 writeError 遇到已
+				// 提交只会如实上报而不会改写响应。
+				// Always propagate panicError and never hand-write a response here: only
+				// the unified error chain matches the shape of other 5xx (JSON with a
+				// code), fires onError, and lets Logger and Metrics record a 500. Writing
+				// text/plain via http.Error and returning nil was the last exit in this
+				// package that bypassed the chain — and an already-committed response is no
+				// reason to swallow the panic: requests that crashed mid-stream (SSE, large
+				// files, after a Flush) vanished from the error hook, the access log and the
+				// 5xx metrics, which is exactly the class worth alerting on. Once propagated,
+				// writeError reports it without rewriting a committed response.
+				err = panicError(rec)
 			}()
 			return next(ctx, req, resp)
 		}

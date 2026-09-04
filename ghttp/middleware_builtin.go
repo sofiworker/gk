@@ -124,7 +124,13 @@ func Logger() Middleware {
 		if route == "" {
 			route = a.Path
 		}
-		log.Printf("ghttp %s %s -> %d (%s) %dB ip=%s", a.Method, route, a.Status, a.Elapsed, a.BytesOut, a.ClientIP)
+		// 净化后再落日志：路径已在路由层拦掉控制字符，但 Method/ClientIP 等仍可能来自
+		// 客户端可影响的输入，任何裸换行都会把一条访问记录劈成两行、伪造出多余记录。
+		// Sanitize before writing: paths already have control characters refused at the
+		// route layer, but Method/ClientIP and friends remain client-influenced, and any
+		// bare newline splits one access record in two, forging an extra entry.
+		log.Printf("ghttp %s %s -> %d (%s) %dB ip=%s",
+			sanitizeLogToken(a.Method), sanitizeLogToken(route), a.Status, a.Elapsed, a.BytesOut, sanitizeLogToken(a.ClientIP))
 	})
 }
 
