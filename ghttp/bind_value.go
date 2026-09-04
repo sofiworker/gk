@@ -238,7 +238,17 @@ func (b *fieldBinder) setMapping(fv reflect.Value, kv map[string][]string, src b
 	for k, vs := range kv {
 		ev := reflect.New(elemType).Elem()
 		if b.elem.vk == vkSlice {
-			if err := b.elem.setSequence(ev, vs, src, name+"["+k+"]"); err != nil {
+			// 切片元素必须与顶层 []T 走同一套逗号展开规则，否则 `filter[b]=3,4` 在这里
+			// 得到 ["3,4"]，而顶层 `?tags=3,4` 得到 ["3","4"]——同一个绑定引擎对"列表"给出
+			// 两种解释，调用方无法预判。expandList 幂等于已按重复键收集的多值（每个再按逗号
+			// 展开），故重复键与逗号写法可混用，与顶层完全一致。
+			// A slice element must follow the same comma-expansion as a top-level []T,
+			// else `filter[b]=3,4` yields ["3,4"] here while `?tags=3,4` yields ["3","4"]
+			// at the top level — one bind engine explaining "list" two ways, so callers
+			// cannot predict it. expandList is idempotent over already-collected multi-values
+			// (splitting each further by comma), so repeated keys and comma form mix
+			// exactly as they do at the top level.
+			if err := b.elem.setSequence(ev, expandList(vs), src, name+"["+k+"]"); err != nil {
 				return err
 			}
 		} else {

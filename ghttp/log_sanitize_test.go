@@ -16,7 +16,6 @@ import (
 // visible without emitting a bare newline, and a clean string must pass through
 // unchanged (the zero-copy fast path).
 func TestSanitizeLogToken(t *testing.T) {
-	t.Parallel()
 
 	cases := []struct {
 		in, want string
@@ -50,7 +49,6 @@ func TestSanitizeLogToken(t *testing.T) {
 // a crash after the response was committed disappeared from the onError hook, the
 // access log and the 5xx metrics — precisely the class worth alerting on.
 func TestRecovery_CommittedPanicIsNotSwallowed(t *testing.T) {
-	t.Parallel()
 
 	var hookErr error
 	var hookStatus int
@@ -97,7 +95,6 @@ func TestRecovery_CommittedPanicIsNotSwallowed(t *testing.T) {
 // Locks the other half: an uncommitted 500 must be rendered by the error chain
 // (JSON with a code), not as text/plain hand-written by the middleware.
 func TestRecovery_UsesUnifiedErrorChainShape(t *testing.T) {
-	t.Parallel()
 
 	s := New()
 	s.Use(Recovery())
@@ -126,7 +123,6 @@ func TestRecovery_UsesUnifiedErrorChainShape(t *testing.T) {
 // from a query string or error text must not split one access record into two lines
 // (log injection).
 func TestLogger_AccessLogIsSingleLine(t *testing.T) {
-	t.Parallel()
 
 	var lines []string
 	s := New()
@@ -176,7 +172,6 @@ func errText(err error) string {
 // panic value containing a newline must add only the stack line, never a whole extra
 // record.
 func TestSanitizeLogToken_DefaultRecoverySink(t *testing.T) {
-	t.Parallel()
 
 	var buf strings.Builder
 	origOut := log.Writer()

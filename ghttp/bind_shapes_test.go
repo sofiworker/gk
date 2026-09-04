@@ -161,7 +161,7 @@ func TestBindParams_Maps(t *testing.T) {
 
 	// 方括号风格 filter[key]=value 是 query 里表达 map 的事实标准(Rails/PHP 生态)。
 	req := httptest.NewRequest(http.MethodGet,
-		"/maps?filter[status]=active&filter[kind]=user&multi[tag]=a&multi[tag]=b&nums[count]=42", nil)
+		"/maps?filter[status]=active&filter[kind]=user&multi[tag]=a&multi[tag]=b&multi[csv]=1,2&multi[mix]=x,y&multi[mix]=z&nums[count]=42", nil)
 	req.Header.Set("X-Meta-Region", "eu-west")
 	req.Header.Set("X-Meta-Zone", "b")
 	rec := httptest.NewRecorder()
@@ -178,6 +178,19 @@ func TestBindParams_Maps(t *testing.T) {
 	}
 	if !equalStrings(got.Multi["tag"], []string{"a", "b"}) {
 		t.Errorf("Multi=%v", got.Multi)
+	}
+	// 逗号形式必须与顶层 []T 完全对称：`multi[csv]=1,2` 展开成 ["1","2"]，而非 ["1,2"]。
+	// 同一绑定引擎对"列表"只能有一种解释，否则调用方无法预判 map 值与顶层切片的差异。
+	// The comma form must be exactly symmetric with a top-level []T: `multi[csv]=1,2`
+	// expands to ["1","2"], not ["1,2"]. One bind engine may only explain "list" one way,
+	// or callers cannot predict the difference between a map value and a top-level slice.
+	if !equalStrings(got.Multi["csv"], []string{"1", "2"}) {
+		t.Errorf("Multi csv=%v, want [1 2] (comma form must match top-level []T)", got.Multi["csv"])
+	}
+	// 重复键与逗号可混用。
+	// Repeated keys and commas may mix.
+	if !equalStrings(got.Multi["mix"], []string{"x", "y", "z"}) {
+		t.Errorf("Multi mix=%v, want [x y z]", got.Multi["mix"])
 	}
 	if got.Nums["count"] != 42 {
 		t.Errorf("Nums=%v", got.Nums)
