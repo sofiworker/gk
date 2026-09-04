@@ -119,6 +119,15 @@ func Gzip(opts ...GzipOption) Middleware {
 	}
 	return func(next Handler) Handler {
 		return func(ctx context.Context, req *Request, resp *Response) error {
+			// 挂载本中间件后,同一 URL 的响应体随 Accept-Encoding 而变(压缩/未压缩两种
+			// 形态),必须声明 Vary,且【无论本次请求是否接受 gzip】:否则共享缓存会把
+			// 未压缩响应当作唯一形态缓存,或把 gzip 响应喂给不支持的客户端。
+			// Once this middleware is mounted, one URL's body varies with
+			// Accept-Encoding (compressed vs. not), so Vary must be declared — and
+			// REGARDLESS of whether this request accepts gzip: otherwise a shared
+			// cache stores the uncompressed response as the only variant, or feeds
+			// the gzip one to clients that cannot decode it.
+			ensureVary(resp.Header(), "Accept-Encoding")
 			if !acceptsGzip(req.Header.Get("Accept-Encoding")) {
 				return next(ctx, req, resp)
 			}
@@ -250,6 +259,23 @@ func (w *gzipResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 // Unwrap exposes the underlying writer for stdlib mechanisms such as
 // http.ResponseController.
 func (w *gzipResponseWriter) Unwrap() http.ResponseWriter { return w.orig }
+
+// ensureVary 幂等地把 value 追加进 Vary 头:已声明(含大小写变体、逗号合并列表)则不
+// 重复追加。Vary 语义是集合,重复项虽合法但会让下游缓存键解析做无谓工作,也易被误读。
+// ensureVary appends value to the Vary header idempotently: if already declared
+// (case-insensitively, including within comma-joined lists) nothing is added.
+// Vary is a set; duplicates are legal but make downstream cache-key parsing do
+// pointless work and are easy to misread.
+func ensureVary(h http.Header, value string) {
+	for _, existing := range h.Values("Vary") {
+		for _, item := range strings.Split(existing, ",") {
+			if strings.EqualFold(strings.TrimSpace(item), value) {
+				return
+			}
+		}
+	}
+	h.Add("Vary", value)
+}
 
 // acceptsGzip 判断 Accept-Encoding 是否含 gzip(带 q 值解析,q<=0 视为不接受)。
 // acceptsGzip reports whether Accept-Encoding includes gzip (q-values honored;

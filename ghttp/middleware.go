@@ -80,8 +80,20 @@ func LimitBody(maxBytes int64) Middleware {
 		return func(ctx context.Context, req *Request, resp *Response) error {
 			if cl := req.Header.Get("Content-Length"); cl != "" {
 				if clen, err := strconv.ParseInt(cl, 10, 64); err == nil && clen > maxBytes {
-					resp.WriteHeader(http.StatusRequestEntityTooLarge)
-					return fmt.Errorf("%w: %s (limit %d)", ErrInvalidInput, "request entity too large", maxBytes)
+					// 只返回错误、绝不在此提交响应:手动 WriteHeader(413) 会让响应体为空并
+					// 提前置 Written(),使统一错误链无法渲染 JSON 错误体;而返回的
+					// ErrInvalidInput 又被 classifyError 映射成 400,导致客户端(413 空体)、
+					// onError 钩子(400)、响应体三方互相矛盾。改用 ErrRequestEntityTooLarge
+					// 后状态码与 code 串都由错误链单点决定,三方必然一致。
+					// Return the error only; never commit the response here. A manual
+					// WriteHeader(413) emptied the body and set Written() early, so the
+					// unified error chain could not render the JSON error body, while the
+					// returned ErrInvalidInput was classified as 400 — leaving the client
+					// (413, empty body), the onError hook (400), and the body mutually
+					// inconsistent. With ErrRequestEntityTooLarge the status and code
+					// come from the single decision point in the error chain, so all
+					// three necessarily agree.
+					return fmt.Errorf("%w: declared %d bytes (limit %d)", ErrRequestEntityTooLarge, clen, maxBytes)
 				}
 			}
 			// 无 Content-Length 时，包装 Body 为 MaxBytesReader,解码期触发 413。

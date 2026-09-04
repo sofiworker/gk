@@ -6,9 +6,9 @@
 
 [English](README.en.md) | 中文
 
-`ghttp` 是基于标准库 `net/http` 的 **typed HTTP 路由框架**：handler 收裸参数、类型全推断、无包裹容器；同时内置生产所需的统一错误链、优雅退出、健康检查、指标、CORS、Recovery、Gzip 等组件，开箱即可部署真实服务。
+`ghttp` 是基于标准库 `net/http` 的 **typed HTTP 路由框架**：handler 收裸参数、类型全推断、无包裹容器；同时内置生产所需的统一错误链、优雅退出、健康检查、指标、CORS、Recovery、Gzip、限流、CSRF、安全头、OpenAPI 3.1 生成等组件，开箱即可部署真实服务。
 
-与 gin/echo 的核心差异：**typed 优先**。入口按输入形态分函数（`GetParams` / `PostBody` / `PostParamsBody` …），handler 签名即契约，注册期完成反射与绑定计划编译，请求期零反射、零额外分配。
+与 gin/echo 的核心差异：**typed 优先**。入口按输入形态分函数（`GetParams` / `PostBody` / `PostParamsBody` …），handler 签名即契约，注册期完成反射与绑定计划编译，请求期零反射、零额外分配。因为契约就在类型里，**OpenAPI 文档可以直接从同一份绑定计划生成**，不需要另写注解或 YAML。
 
 ## 目录
 
@@ -71,12 +71,16 @@ Content-Type: application/json; charset=utf-8
 
 ### 路由入口按输入形态分
 
-| 入口 | 输入形态 | handler 签名 |
-|------|----------|--------------|
-| `GetNone[O]` | 无 params 无 body | `func(ctx) (O, error)` |
-| `GetParams[P, O]` / `DeleteParams` / `PostParams` / `PutParams` / `PatchParams` | 仅 params | `func(ctx, P) (O, error)` |
-| `PostBody[B, O]` / `PutBody` / `PatchBody` | 仅 body | `func(ctx, B) (O, error)` |
-| `PostParamsBody[P, B, O]` / `PutParamsBody` / `PatchParamsBody` | params + body | `func(ctx, P, B) (O, error)` |
+入口命名恒为 `<Method><InputShape>`。七种 method 各有 `None` 与 `Params` 形态；可带请求体的四种（POST / PUT / PATCH / DELETE）另有 `Body` 与 `ParamsBody`。GET / HEAD / OPTIONS 不提供 `Body` 入口——按 RFC 9110 它们的请求体没有定义语义，提供入口只会诱导错误用法。
+
+| 输入形态 | handler 签名 | 可用 method |
+|----------|--------------|-------------|
+| 无 params 无 body | `func(ctx) (O, error)` | `GetNone` `PostNone` `PutNone` `PatchNone` `DeleteNone` `HeadNone` `OptionsNone` |
+| 仅 params | `func(ctx, P) (O, error)` | `GetParams` `PostParams` `PutParams` `PatchParams` `DeleteParams` `HeadParams` `OptionsParams` |
+| 仅 body | `func(ctx, B) (O, error)` | `PostBody` `PutBody` `PatchBody` `DeleteBody` |
+| params + body | `func(ctx, P, B) (O, error)` | `PostParamsBody` `PutParamsBody` `PatchParamsBody` `DeleteParamsBody` |
+
+`DeleteBody` / `DeleteParamsBody` 存在是因为批量删除（请求体里带 id 列表）是真实需求；`HeadNone` / `Options*` 便于手写条件请求探测与 CORS 预检端点。
 
 所有类型参数均由编译器推断，调用方不手写类型参数列表。需要完全接管响应时用 `RawHandle(method, path, RawHandlerFunc)`——它与 typed 端点共享同一执行路径与中间件链，是一等公民逃生入口。
 
@@ -93,10 +97,40 @@ type GetUser struct {
 }
 ```
 
-- 支持 `path:` / `query:` / `header:` 三类**传输层**来源；未打 tag 的字段静默跳过。
-- 标量字段支持 `int8/16/32/64`、`uint*`、`float*`、`bool`、`string`，缺失保留零值，越界或类型不符报 400。
+- 支持 `path:` / `query:` / `header:` 三类**传输层**来源；未打 tag 的字段静默跳过，tag 值 `"-"` 显式跳过。
 - 本框架**不内置校验**：required/范围/枚举等业务规则由 handler 自行判断（返回带 `StatusCoder` 的 error 即可映射任意状态码）。
 - 表单文本字段（`form:` tag）与上传文件（`Upload` / `[]Upload`）都属于**请求体**，用 `FormBody[B]()` 解码，见下节；params 结构体不再承载 `form:`/文件字段。纯 path/query/header 端点不解析请求体，零解析开销。
+
+#### 支持的字段形态
+
+path/query/header 与请求体表单共用同一套绑定引擎，**能力完全对等**——下面每种形态在 `form:` tag 上同样可用。
+
+```go
+type Search struct {
+    Pagination                          // 无 tag 的内嵌结构体：字段提升到外层，公共参数可复用
+    Filters                             // 具名嵌套同样递归展开（无需 tag）
+    Opt      *Options                   // 嵌套指针：整块缺省时保持 nil
+
+    ID       int64                       `path:"id"`       // 标量：int*/uint*/float*/bool/string
+    Limit    *int                        `query:"limit"`   // 指针：nil = 未提供，可与显式 0 区分
+    Tags     []string                    `query:"tags"`    // 列表：?tags=a&tags=b 或 ?tags=a,b（可混用）
+    Top      [3]int                      `query:"top"`     // 定长数组：多余丢弃，不足留零值
+    Filter   map[string]string           `query:"filter"`  // 映射：?filter[status]=active
+    Multi    map[string][]string         `query:"multi"`   // 映射到列表：?multi[k]=x&multi[k]=y
+    Since    time.Time                   `query:"since"`   // 实现 TextUnmarshaler 的类型
+    Addr     net.IP                      `query:"addr"`    // 同上（优先于底层 Kind）
+    Raw      []byte                      `query:"raw"`     // 取原始字节，不做 base64 解码
+    Meta     map[string]string           `header:"X-Meta"` // 头前缀族：X-Meta-Region → key "region"
+    AllHead  map[string]string           `header:"*"`      // 收全部头，键统一小写
+    Skipped  string                      `query:"-"`       // 显式跳过
+}
+```
+
+- **缺省语义**：标量保留零值，指针/切片/映射保持 `nil`，因此 handler 能区分"未提供"与"提供了零值/空列表"。
+- **元素解析失败整体报 400**（`ErrInvalidInput`），不静默丢弃坏元素——静默丢弃会让调用方误以为参数已生效。
+- **不支持的形态在注册期报错**：切片的切片、映射的映射、非字符串键的映射等在传输层没有公认编码，注册期拒绝比运行期猜测更诚实。`path:` 不能绑定映射（path 段是单值语义）。
+- 递归展开有深度上限（8 层），自引用结构体在注册期即报错而非栈溢出。
+
 
 ### 请求体：InputSpec[B] 解码
 
@@ -288,11 +322,62 @@ s := ghttp.New(
 | `Logger()` / `LoggerWith(fn)` | 后处理：记录结构化 `AccessLog`（含 Route、ClientIP、BytesOut、Err）。 |
 | `Recovery()` / `RecoveryWith(handler)` | 捕获 panic → 记录堆栈 → 写 500（不泄露细节）。 |
 | `CORS(cfg)` | 跨域：按 `CORSConfig` 写头并处理预检。`CORSDefault()` 提供宽松默认。 |
-| `Timeout(d)` | 协作式请求超时：注入 deadline context，下游超时未提交响应补写 503。 |
+| `Timeout(d)` | 协作式请求超时：注入 deadline context，下游超时未提交响应时返回 `ErrRequestTimeout`，经统一错误链输出 504 JSON。 |
 | `BasicAuth(realm, accounts)` | HTTP Basic 认证（恒定时间比较）；`BasicAuthUser(ctx)` 读取认证用户。 |
 | `Gzip(opts...)` | 按 Content-Type 白名单条件压缩，`gzip.Writer` 池化，未挂载零影响。 |
 | `LimitBody(maxBytes)` | 请求体大小限制，超限 413。 |
+| `RateLimit(cfg)` / `RateLimitByRoute(rps, burst)` | 分片令牌桶限流，默认按 `ClientIP` 分键；超限 429 + `Retry-After`。 |
+| `CSRF(cfg)` | 双提交 cookie + 同源校验，恒定时间比较；`CSRFTokenFromContext(ctx)` 取 token 供模板渲染。 |
+| `SecureHeaders(cfg)` / `SecureHeadersDefault()` | 安全响应头（nosniff / `X-Frame-Options: DENY` / `Referrer-Policy: strict-origin-when-cross-origin` 等）；HSTS 与 CSP 需显式开启。 |
 | `(*MetricsRegistry).Middleware()` | 请求指标收集（计数/延迟/响应大小/在途），按 `MatchedRoute` 低基数聚合。 |
+
+#### 限流（`RateLimit`）
+
+```go
+s.Use(ghttp.RateLimit(ghttp.RateLimitConfig{
+    RPS:   100,                              // 每秒补充的令牌数
+    Burst: 200,                              // 桶容量（允许的突发量），默认 = RPS
+}))
+
+s.Use(ghttp.RateLimitByRoute(50, 100))       // 按 method + 路由模板分别限流
+```
+
+- **令牌桶**而非固定窗口：允许短时突发（`Burst`），长期速率收敛到 `RPS`，比固定窗口的边界翻倍问题更可控。
+- 默认按 `ClientIP()` 分键（遵循可信代理配置，不会被伪造头绕过）；`KeyFunc` 可改为按用户 ID、API key 等分键，**返回空串表示豁免**（如内部健康检查）。
+- 桶按 key 分 16 片存放，锁竞争限制在片内；空闲桶超过 `IdleTimeout`（默认 10 分钟）自动回收。回收只发生在被访问的分片上，故另有 `MaxKeys`（默认 100000）硬性封顶跟踪的 key 数：达到上限后新 key 不建桶而**直接放行**——限流是可用性保护而非访问控制，"满了就全拒"会让一次 key 冲刷制造全站拒绝服务。
+- 超限返回 429 与 `Retry-After`（秒），错误为 `ErrRateLimitExceeded`，可用 `errors.Is` 判断；`OnLimited` 可自定义响应。
+- `RPS <= 0` 时直接返回**透传中间件**，不做任何记账——便于按环境开关而无需改代码结构。
+
+#### CSRF
+
+```go
+s.Use(ghttp.CSRF(ghttp.CSRFConfig{
+    TrustedOrigins: []string{"https://app.example.com"},
+}))
+```
+
+- **双提交 cookie**：写一个非 HttpOnly 的 `csrf_token` cookie，要求非安全方法（POST/PUT/PATCH/DELETE）在 `X-CSRF-Token` 头或表单字段里回传同值，恒定时间比较。cookie 故意**不设** HttpOnly——前端 JS 必须读到它才能回传。
+- 同时校验 `Origin`/`Referer` 是否属于可信来源，双重防线。
+- GET/HEAD/OPTIONS 视为安全方法，只补发 token 不校验；`CSRFTokenFromContext(ctx)` 供服务端模板把 token 渲染进表单。
+- 失败返回 403，错误为 `ErrCSRFTokenInvalid`。
+
+#### 安全响应头（`SecureHeaders`）
+
+```go
+s.Use(ghttp.SecureHeadersDefault())          // 安全默认
+
+s.Use(ghttp.SecureHeaders(ghttp.SecureHeadersConfig{
+    HSTSMaxAge:            31536000,          // 显式开启 HSTS（默认关闭）
+    ContentSecurityPolicy: "default-src 'self'",
+    FrameOptions:          "-",               // "-" 表示不写这个头
+}))
+```
+
+- 每个字段三态：**空串 = 用安全默认**，`"-"` = 明确不写该头，其他值 = 用该值。
+- **HSTS 默认关闭**（`HSTSMaxAge` 为 0）：它一旦被浏览器记住就难以撤回，误配在开发环境会锁死 localhost，因此必须显式开启；且默认只在 TLS 请求上写（`HSTSOnlyWhenTLS`）。
+- **CSP 默认不写**：任何通用默认值都会破坏真实页面，必须由使用方按站点内容制定。
+- 头部列表在注册期就冻结成切片，请求期只做写入；且**不覆盖**已存在的同名头，便于单条路由自行覆写。
+
 
 ### 健康检查与就绪探针
 
@@ -319,11 +404,65 @@ _ = ghttp.StaticFS(s, "/assets/", myEmbedFS,                 // embed.FS
 
 默认不列目录（安全默认）；`WithBrowsable()` 开启目录列表；`WithIndexFile(name)` 自定义索引名。
 
+#### 预压缩（`WithPrecompressed`）
+
+```go
+_ = ghttp.Static(s, "/assets/", "./dist",
+    ghttp.WithPrecompressed(),                                    // 优先 .br，回退 .gz
+)
+_ = ghttp.Static(s, "/assets/", "./dist",
+    ghttp.WithPrecompressedEncodings("gzip"),                     // 只用 .gz
+)
+```
+
+开启后，请求 `app.js` 时若客户端 `Accept-Encoding` 接受且磁盘上存在 `app.js.br` / `app.js.gz`，则直接服务该变体：
+
+- **压缩成本移到构建期**：不像 Gzip 中间件那样每请求压缩一遍，静态资源的 CPU 开销归零，且可以用更高压缩级别（构建期慢一次换取长期带宽收益）。
+- `Content-Type` 始终按**原始扩展名**判定（`app.js.br` 仍是 `application/javascript`），并写 `Content-Encoding` 与 `Vary: Accept-Encoding`；即使本次未命中变体也会写 `Vary`，避免缓存把压缩版投给不支持的客户端。
+- 与 Gzip 中间件安全共存：后者见到已有 `Content-Encoding` 会跳过，不会二次压缩。
+- 变体不存在时静默回退原文件，无需为每个资源都准备压缩版。
+
+### OpenAPI 3.1 生成
+
+```go
+s := ghttp.New(
+    ghttp.WithOpenAPI(ghttp.OpenAPIInfo{
+        Title:   "Orders API",
+        Version: "1.2.0",
+    },
+        ghttp.WithOpenAPIRoute("/openapi.json"),                  // 默认值，置 "" 则只在内存构建
+        ghttp.WithOpenAPIServers(
+            ghttp.OpenAPIServer{URL: "https://api.example.com", Description: "prod"},
+        ),
+        ghttp.WithOpenAPIErrorResponses(true),                    // 默认 true，附带 400/500 错误响应
+    ),
+)
+
+// 之后注册的 typed 路由自动进入 spec
+g := s.Group("/api/v1/orders")
+_ = ghttp.GetParams(g, "/{id}", ghttp.JSON[Order](), getOrder)
+_ = ghttp.PostBody(g, "", ghttp.JSONBody[CreateOrder](), ghttp.JSON[Order]().Status(201), createOrder)
+
+raw := s.SpecJSON()   // 也可直接取字节，写进构建产物或契约测试
+```
+
+**契约从代码里长出来，而不是另写一份。** 注册期从每个 typed 入口的 params / body / output 类型收集元数据，首次请求时构建一次 spec 并缓存字节。
+
+- **文档不会漂移**：参数说明复用请求期**同一份 `BindPlan`**——不是照着绑定规则再实现一遍。绑定支持的形态（列表、映射、指针可选、内嵌提升、`TextUnmarshaler`）在 spec 里就是对应的 `array` / `object+additionalProperties` / 非 required / 提升后的平铺参数 / `string`。改了 tag，文档跟着变；这一点由 `TestOpenAPI_ParametersMatchBindPlan` 守住。
+- **输出确定性**：spec 是手工序列化的，字段顺序固定。若用 `map[string]any` + `json.Marshal`，Go 的 map 遍历顺序随机会让同一份路由表每次产出不同字节，spec 就无法做 diff review 或契约快照测试。
+- **响应体形状与实际一致**：`NoContent` 输出声明 204 且**不带** `content`；错误响应引用统一的 `Error` schema，与错误链真正写出的 `{"error":{"code","message"}}` 同形。
+- **schema 生成**：具名结构体提取为 `components/schemas` 并以 `$ref` 引用（自引用类型因此能终止，不会栈溢出）；遵循 `encoding/json` 语义——`json:"-"` 跳过、`omitempty` 不进 required、内嵌结构体字段提升、不导出字段不出现；`time.Time` → `date-time`、`[]byte` → `byte`、指针 → OpenAPI 3.1 的 `["T","null"]`。
+- **tag 自动派生**：`/api/v1/orders/...` 归到 `orders` 标签（跳过 `api` 与版本段这类无信息量的前缀）。
+- **`RawHandle` 端点也会登记**：它们没有可反射的类型，但"路径与方法存在"本身就是契约的一部分——漏掉会让 spec 谎报端点不存在，反而误导契约测试与客户端生成。策略是**如实呈现而非编造**：登记路径与方法、从路径模板推出必填的 `string` 型 path 参数（否则 spec 非法），响应只声明"形状未由框架声明"而不生成 schema，也不追加 typed 绑定才会产生的 400/415。静态资源（`Static`/`StaticFS`）与健康检查（`Health`/`Ready`）建在 `RawHandle` 上，因此同样出现在 spec 里。
+- **零成本**：未调用 `WithOpenAPI` 时不收集元数据、不构建、不注册路由；spec 端点自身也不出现在 spec 里。
+- 注意 `WithOpenAPI` 是 `New` 的 Option，必须**先于**路由注册生效——在它之前注册的路由收集不到。
+
 ### 可观测性
 
-- `Request.MatchedRoute()` 返回低基数路由模板（如 `/users/:id`），适合作为 metrics/tracing/日志的路由维度。
+- `Request.MatchedRoute()` 返回低基数路由模板（如 `/users/:id`），适合作为 metrics/tracing/日志的路由维度。**全局中间件运行时即可读到**（含进入 `next` 之前）：路由匹配在中间件链之前完成，因此按路由聚合的中间件（指标、按路由限流、tracing span 命名）都能拿到模板；未命中时恒为空串，不会串上一个请求的值。
 - `Request.ClientIP()` / `RemoteIP()` 按可信代理模型解析真实客户端 IP；默认**不信任**转发头以防伪造，经 `WithTrustedProxies` / `WithForwardedHeaders` 配置。
 - `NewMetrics()` + `MetricsRegistry.Handler()` 暴露 Prometheus 文本格式 `/metrics` 端点，零第三方依赖。
+
 
 ### 参数校验
 
@@ -387,6 +526,41 @@ ghttp.ServeWS(m, "/ws/echo", nil, func(ctx context.Context, req *ghttp.Request, 
 - 错误响应默认脱敏。调试场景需 `WithExposeErrorDetails(true)` 显式开启。
 
 ## 迁移指南
+
+### 安全与正确性修复带来的行为变更（破坏性变更）
+
+按 `REVIEW.md` 逐条核实后的一批修复改变了若干可观测行为。下表只列**需要调用方或运维配合调整**的项；完整清单与每项的根因分析见 `CHANGELOG.md` 的 `[Unreleased] / Fixed`。
+
+| 变更 | 旧行为 | 新行为 | 需要做什么 |
+| --- | --- | --- | --- |
+| Prometheus 按状态码计数 | `http_requests_total{method,route,code}` | 独立 family `http_requests_by_code_total{method,route,code}`；`http_requests_total` 不再带 `code` | **改仪表盘与告警的指标名**。原样式让同一 family 的样本标签键集合不一致，属非法暴露格式，抓取端可能整份丢弃 |
+| `Timeout` 超时响应 | 503 `text/plain` | 504 `application/json`（`{"error":{"code":"request_timeout",...}}`） | 改断言状态码/响应体的客户端与探针；可用新哨兵 `ErrRequestTimeout` 做 `errors.Is` 分支 |
+| `Referrer-Policy` 默认值 | `no-referrer-when-downgrade` | `strict-origin-when-cross-origin` | 依赖同等级跳转能收到完整 Referer（含路径与查询串）的下游需显式配置回旧值 |
+| CORS 通配源 + 凭据 | 回显具体 `Origin` 并带 `Allow-Credentials: true` | 通配时**强制关闭**凭据 | 要带凭据必须把源显式列进 `AllowOrigins` |
+| CSRF 同源校验 | `Origin: null` 放行；只比 `Host` | 拒绝 `null`；比较**带 scheme** | 沙箱 iframe / `data:` 文档 / 跨源重定向后的请求会被拒；混用 http 与 https 的部署需统一 scheme |
+| `RequestID` 客户端值 | 只查长度 | 另按字符集 `[0-9A-Za-z._-]` 校验，非法值替换 | 使用 UUID 以外字符集（如带 `:` 或空格）的上游需改 ID 格式 |
+| `LimitBody` 超限 | 413 空体 / 400 | 413 + 统一 JSON 错误体 | 改断言响应体的客户端 |
+| 分组前缀归一 | `Group("/api/")` + `"/v1/x"` → `/api//v1/x` | → `/api/v1/x` | 检查是否有调用方依赖了带双斜杠的 URL |
+| 自定义 404/405 handler 返回 error | 静默 200 空体 | 走统一错误链输出 500 | 自定义 miss handler 应显式处理自身错误 |
+| form 端点收到非表单 Content-Type | 静默 200 + 零值结构体 | 415 `ErrUnsupportedMediaType` | 校正客户端的 `Content-Type`；或 `WithStrictContentType(false)` 保留旧宽松行为 |
+| JSON 请求体尾部多余内容 | 静默接受首个值 | 400 `ErrInvalidInput` | 修正发送方（`{"a":1} 垃圾`、`{"a":1}{"a":2}` 均不再被接受） |
+| `WithErrorHook` 的 `status` | 恒为错误分类值 | 响应**已提交**时报客户端实际收到的状态码 | 依赖分类值的钩子改用 `HTTPStatus(err)` 取回 |
+| 尾斜杠重定向目标 | 直接写入 `Location` | 拒绝 `//`、`/\` 开头及含控制字符的目标（按未命中处理返回 404） | 无需调整；这是开放重定向修复 |
+
+新增导出 API：`PanicValueOf(err) (any, bool)`（从 panic 错误取回原值）、`ErrRequestTimeout`、`RateLimitConfig.MaxKeys`、`CSRFConfig.UseHostPrefixedCookie`、`CSRFHostCookiePrefix`、`MultiContentTypeDecoder`。
+
+### `File` 新增变参选项（破坏性变更）
+
+`File` 的签名新增变参，以便单文件路由也能使用静态选项（如预压缩）：
+
+```go
+// 旧
+func File(m *Server, urlPath, name string, fsys fs.FS) error
+// 新
+func File(m *Server, urlPath, name string, fsys fs.FS, opts ...StaticOption) error
+```
+
+**既有调用无需修改**（变参可省略）。仅当以函数值形式引用 `File`（如赋给变量或作为参数传递）时需调整类型声明。
 
 ### Engine → Server（d098da 破坏性变更）
 

@@ -107,10 +107,10 @@ func (w *SSEWriter) SendMessage(m SSEMessage) error {
 	}
 	w.buf = w.buf[:0]
 	if m.ID != "" {
-		w.buf = appendSSEField(w.buf, "id", m.ID)
+		w.buf = appendSSEField(w.buf, "id", stripSSELineBreaks(m.ID))
 	}
 	if m.Event != "" {
-		w.buf = appendSSEField(w.buf, "event", m.Event)
+		w.buf = appendSSEField(w.buf, "event", stripSSELineBreaks(m.Event))
 	}
 	if m.Retry > 0 {
 		w.buf = append(w.buf, "retry:"...)
@@ -118,20 +118,28 @@ func (w *SSEWriter) SendMessage(m SSEMessage) error {
 		w.buf = append(w.buf, '\n')
 	}
 	// data 可为多行:按行拆分,每行一个 "data:" 字段;空 data 也写一个空 data 行,
-	// 使其成为一条合法事件。
+	// 使其成为一条合法事件。SSE 的行终止符是 \n、\r\n 或【单独的 \r】,三者都必须拆行——
+	// 只按 \n 拆会让裸 \r 原样进入 data 值,接收端据此断行,值的后半段就成了伪造字段。
 	// data may be multi-line: split per line into "data:" fields; empty data still
-	// writes one empty data line to form a valid event.
+	// writes one empty data line to form a valid event. An SSE line terminator is \n,
+	// \r\n, or a LONE \r, and all three must split — splitting on \n alone would let a
+	// bare \r reach the data value, where the receiver breaks the line and the tail of
+	// the value becomes a forged field.
 	if m.Data == "" {
 		w.buf = append(w.buf, "data:\n"...)
 	} else {
 		for {
-			nl := strings.IndexByte(m.Data, '\n')
+			nl := strings.IndexAny(m.Data, "\r\n")
 			if nl < 0 {
 				w.buf = appendSSEField(w.buf, "data", m.Data)
 				break
 			}
-			line := m.Data[:nl]
-			w.buf = appendSSEField(w.buf, "data", strings.TrimSuffix(line, "\r"))
+			w.buf = appendSSEField(w.buf, "data", m.Data[:nl])
+			// \r\n 作为单个终止符消费,避免多出一个空 data 行。
+			// Consume \r\n as one terminator so no extra empty data line appears.
+			if m.Data[nl] == '\r' && nl+1 < len(m.Data) && m.Data[nl+1] == '\n' {
+				nl++
+			}
 			m.Data = m.Data[nl+1:]
 		}
 	}
@@ -152,7 +160,10 @@ func (w *SSEWriter) Comment(text string) error {
 	}
 	w.buf = w.buf[:0]
 	w.buf = append(w.buf, ':')
-	w.buf = append(w.buf, text...)
+	// 注释同样是单行字段:值内的换行会结束注释行,其后内容被当作真实字段解析。
+	// A comment is a single-line field too: a newline inside the value ends the
+	// comment line and whatever follows is parsed as a real field.
+	w.buf = append(w.buf, stripSSELineBreaks(text)...)
 	w.buf = append(w.buf, '\n', '\n')
 	return w.flush(w.buf)
 }
@@ -178,12 +189,42 @@ func (w *SSEWriter) flush(b []byte) error {
 	return nil
 }
 
-// appendSSEField 追加一个 "field:value\n" 的 SSE 字段行。
-// appendSSEField appends one "field:value\n" SSE field line.
+// appendSSEField 追加一个 "field:value\n" 的 SSE 字段行。调用方须保证 value 不含
+// \r 或 \n——SSE 以行为单位,值内的换行会被接收端当作字段边界。
+// appendSSEField appends one "field:value\n" SSE field line. Callers must ensure
+// value contains no \r or \n: SSE is line-oriented, so a newline inside a value is
+// read as a field boundary by the receiver.
 func appendSSEField(dst []byte, field, value string) []byte {
 	dst = append(dst, field...)
 	dst = append(dst, ':')
 	dst = append(dst, value...)
 	dst = append(dst, '\n')
 	return dst
+}
+
+// stripSSELineBreaks 删除单行 SSE 字段值(id/event)中的 \r 与 \n。
+//
+// 这两个字段在协议上只能是单行,无法像 data 那样拆成多行表达。若原样写出,攻击者控制的
+// ID 或 Event 值即可注入任意字段乃至整条伪造事件(如 ID = "1\ndata:INJECTED"),因此这里
+// 剥离而非拒绝:SSE 无逐条报错的通道,静默丢弃非法字符比中断整个流更可用,且不改变字段语义。
+// stripSSELineBreaks removes \r and \n from a single-line SSE field value (id/event).
+//
+// The protocol allows only one line for these fields; they cannot be split across
+// lines the way data can. Emitting them verbatim would let an attacker-controlled ID
+// or Event value inject arbitrary fields or whole forged events (e.g.
+// ID = "1\ndata:INJECTED"). Stripping is preferred over rejecting: SSE has no
+// per-message error channel, so silently dropping the illegal bytes stays usable and
+// preserves the field's meaning.
+func stripSSELineBreaks(s string) string {
+	if strings.IndexAny(s, "\r\n") < 0 {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\r' && s[i] != '\n' {
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
 }

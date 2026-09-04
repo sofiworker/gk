@@ -2,6 +2,7 @@ package ghttp
 
 import (
 	"net/http"
+	"reflect"
 )
 
 // OutputSpec 是输出契约:注册期固定格式/状态码,encode 在请求期写响应。(Out, error)
@@ -11,6 +12,38 @@ import (
 // 200; format and status must be declared explicitly.
 type OutputSpec[T any] interface {
 	encode(resp *Response, v T) error
+}
+
+// outputDoc 是一个输出契约的注册期元数据(状态码、Content-Type、是否有响应体),供
+// OpenAPI 生成描述 responses。它是纯数据快照,不持有 encoder 或任何运行期对象。
+// outputDoc is an output contract's registration-time metadata (status,
+// Content-Type, whether a body exists) used by OpenAPI generation to describe
+// responses. It is a pure data snapshot holding no encoder or runtime object.
+type outputDoc struct {
+	status      int
+	contentType string
+	hasBody     bool
+	typ         reflect.Type
+}
+
+// outputDescriber 由输出契约实现以自述其响应元数据。包内密封:仅内置契约实现它,
+// 用户自定义契约不实现时 OpenAPI 退化为"200 + 无 schema",不影响运行。
+// outputDescriber is implemented by output contracts to describe their own
+// response metadata. Package-sealed: only built-in contracts implement it, and a
+// user contract that does not simply degrades OpenAPI to "200 without schema"
+// without affecting runtime behavior.
+type outputDescriber interface {
+	describeOutput() outputDoc
+}
+
+// outputDocOf 读取一个输出契约的响应元数据;未实现 outputDescriber 时返回 200 兜底。
+// outputDocOf reads an output contract's response metadata, falling back to a
+// plain 200 when outputDescriber is not implemented.
+func outputDocOf[T any](out OutputSpec[T]) outputDoc {
+	if d, ok := out.(outputDescriber); ok {
+		return d.describeOutput()
+	}
+	return outputDoc{status: http.StatusOK, hasBody: true, typ: reflect.TypeOf((*T)(nil)).Elem()}
 }
 
 // jsonOutput 以 JSON 编码输出 T,状态码可经 Status 覆盖(默认 200)。默认用内置 JSONCodec
@@ -68,6 +101,23 @@ func (o jsonOutput[T]) encode(resp *Response, v T) error {
 // .Status(code) and .WithEncoder(enc).
 func JSON[T any]() jsonOutput[T] { return jsonOutput[T]{} }
 
+// describeOutput 报告本契约的响应元数据:状态码(默认 200)、实际写出的 Content-Type
+// (自定义 encoder 时取其声明)与响应体类型。
+// describeOutput reports this contract's response metadata: status (default 200),
+// the Content-Type actually written (the custom encoder's declaration when set),
+// and the body type.
+func (o jsonOutput[T]) describeOutput() outputDoc {
+	status := o.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	ct := "application/json"
+	if o.enc != nil {
+		ct = o.enc.ContentType()
+	}
+	return outputDoc{status: status, contentType: ct, hasBody: true, typ: reflect.TypeOf((*T)(nil)).Elem()}
+}
+
 // noContent 是无响应体输出:写状态码(默认 204),不写 body。O 为占位类型。
 // noContent is a body-less output: writes the status (default 204), no body. O
 // is a placeholder type.
@@ -93,3 +143,14 @@ func (o noContent[T]) encode(resp *Response, _ T) error {
 // function still returns an O value (typically a placeholder like struct{}),
 // which is not written.
 func NoContent[T any]() noContent[T] { return noContent[T]{} }
+
+// describeOutput 报告本契约的响应元数据:状态码(默认 204)且无响应体。
+// describeOutput reports this contract's response metadata: the status (default
+// 204) and no body.
+func (o noContent[T]) describeOutput() outputDoc {
+	status := o.status
+	if status == 0 {
+		status = http.StatusNoContent
+	}
+	return outputDoc{status: status, hasBody: false}
+}

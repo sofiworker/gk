@@ -71,6 +71,15 @@ type Request struct {
 	// /users/:id), written by the dispatcher after a hit. Empty on a miss or a
 	// raw fast-path miss. Exposed read-only via MatchedRoute().
 	matchedRoute string
+	// resolved 暂存"全局链执行前已完成的路由解析结果"。全局中间件包在分发器外层,
+	// 故匹配必须先于链完成(否则中间件读不到 MatchedRoute),结果由链后的终端消费。
+	// 仅 dispatchChained 路径使用;无全局中间件的 dispatchRaw 直接匹配并执行。
+	// resolved parks the route resolution completed before the global chain runs.
+	// Global middleware wraps the dispatcher, so the match must precede the chain
+	// (otherwise middleware cannot read MatchedRoute), and the post-chain terminal
+	// consumes the result. Used only on the dispatchChained path; dispatchRaw, with
+	// no global middleware, matches and executes directly.
+	resolved resolvedRoute
 	// owner 指向借出本 Request 的 mux,在池的 New 闭包中一次性设置、reset 不清空,
 	// 使 ClientIP() 等访问器无需每请求写入即可读取 server 级配置。可能为 nil
 	// (miss 冷路径构造的临时 Request),访问器需容忍。
@@ -105,6 +114,7 @@ func (r *Request) reset() {
 	r.Params.reset()
 	r.skipped = r.skipped[:0]
 	r.matchedRoute = ""
+	r.resolved = resolvedRoute{}
 	r.Request = nil
 }
 
@@ -182,14 +192,40 @@ func (r *Response) Written() bool { return r.written }
 
 // Flush 把已写入的缓冲响应体立即冲刷给客户端,底层 writer 支持 http.Flusher 才透传,
 // 否则为 no-op。SSE 等流式场景每写一段后调用它,让数据即时到达而非滞留缓冲。
+//
+// 冲刷【隐式提交】响应:标准库会为尚未 WriteHeader 的响应先补一个 200 再送出。因此这里
+// 必须同步把本地状态标记为已提交,否则链外的 writeError 读到 Written()==false,会以为
+// 响应还没落地而去补写错误状态码——标准库打印 "superfluous response.WriteHeader call"
+// 警告并丢弃该状态,客户端实际收到 200,而 WithErrorHook 记录的却是 4xx/5xx。同一请求
+// 在客户端与服务端观测到两个不同状态,是最难排查的一类不一致。
 // Flush passes a flush through to the underlying writer when it implements
 // http.Flusher (no-op otherwise), pushing buffered body to the client
 // immediately. Streaming such as SSE calls it after each chunk so data arrives
 // promptly instead of sitting in a buffer.
+//
+// Flushing IMPLICITLY COMMITS the response: the standard library supplies a 200 for a
+// response that has not called WriteHeader yet, then sends it. The local state must
+// therefore be marked committed in step, or the out-of-chain writeError reads
+// Written()==false, believes nothing landed, and writes an error status — the standard
+// library then logs "superfluous response.WriteHeader call" and drops it, so the client
+// actually receives 200 while WithErrorHook records a 4xx/5xx. One request observed as
+// two different statuses on the client and the server is among the hardest
+// inconsistencies to trace.
 func (r *Response) Flush() {
-	if f, ok := r.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
+	f, ok := r.ResponseWriter.(http.Flusher)
+	if !ok {
+		// 底层不支持冲刷:什么也没送出,故不能标记已提交——否则会误让 writeError 放弃
+		// 补写一个本可正常写出的错误响应。
+		// The underlying writer cannot flush: nothing was sent, so it must not be marked
+		// committed — that would wrongly stop writeError from writing an error response
+		// that could still have been delivered.
+		return
 	}
+	if !r.written {
+		r.status = http.StatusOK
+		r.written = true
+	}
+	f.Flush()
 }
 
 // Hijack 夺取底层 TCP 连接的所有权(WebSocket 升级等),交由调用方直接读写。成功后

@@ -91,6 +91,62 @@ func translateTemplate(path string) (string, error) {
 	return b.String(), nil
 }
 
+// joinRoutePath 把分组前缀与其下注册的子路径拼成完整注册路径,并保证【连接处恰好一个
+// '/'】。它是分组前缀的唯一拼接口:路由注册(Group.register)与 OpenAPI 路径模板登记
+// (noteRoute)都必须经它,否则 spec 里会出现与实际注册路径不一致(甚至非法)的键。
+//
+// 规范化只作用于"分隔符"这一确定无疑的部分,不替用户补全缺失的语义:
+//   - 左侧去掉尾部所有 '/',故 Group("/api/") + "/v1/x" 得 /api/v1/x 而非 /api//v1/x;
+//   - 右侧不以 '/' 开头时补一个,故 Group("/api") + "users" 得 /api/users 而非 /apiusers;
+//   - 左侧为空(根分组 "" 或 "/")时右侧原样返回,使根分组与直接在 Server 上注册【完全
+//     等价】——空路径仍由 translateTemplate 报 ErrEmptyPath,不因套了一层根分组就被静默
+//     放行。
+//
+// 右侧为 "" 或 "/" 都表示"分组自身的根",结果是【去掉尾斜杠的前缀本身】:Group("/api")
+// 无论 + "" 还是 + "/",注册的都是 /api,不是 /api/。如此选择的理由:一是让 Group(P) 的
+// 根等价于直接注册 P,分组退化为纯粹的路径因式分解,不额外引入一个尾斜杠变体;二是 /api/
+// 仍可经 TSR 以 301 到达 /api,规范 URL 落在更常用的无尾斜杠形式上;三是 "" 早已是本包
+// 既有的分组根写法(拼接前它天然得到前缀本身),继续接受它才不破坏现有调用方。
+//
+// joinRoutePath joins a group prefix with a sub-path registered under it,
+// guaranteeing EXACTLY ONE '/' at the junction. It is the single joining point for
+// group prefixes: both route registration (Group.register) and OpenAPI path
+// template recording (noteRoute) must go through it, or the spec would carry keys
+// inconsistent with — or even illegal for — the routes actually registered.
+//
+// Normalization touches only the unambiguous part, the separator; it never invents
+// semantics the user omitted:
+//   - the left side loses every trailing '/', so Group("/api/") + "/v1/x" yields
+//     /api/v1/x rather than /api//v1/x;
+//   - a right side not starting with '/' gets one, so Group("/api") + "users"
+//     yields /api/users rather than /apiusers;
+//   - an empty left side (root group "" or "/") returns the right side verbatim, so
+//     a root group is EXACTLY equivalent to registering on the Server directly — an
+//     empty path still raises ErrEmptyPath from translateTemplate instead of being
+//     silently accepted just because a root group was interposed.
+//
+// A right side of "" or "/" both mean "the group's own root", yielding THE PREFIX
+// ITSELF with trailing slashes removed: Group("/api") registers /api — not /api/ —
+// for either. Rationale: it makes a group's root equivalent to registering P
+// directly, so a group is pure path factoring and introduces no extra
+// trailing-slash variant; /api/ still reaches /api via a 301 TSR redirect, so the
+// canonical URL is the more common slash-free form; and "" is already this package's
+// established group-root spelling (bare concatenation naturally produced the prefix
+// itself), so continuing to accept it keeps existing callers working.
+func joinRoutePath(prefix, path string) string {
+	base := strings.TrimRight(prefix, "/")
+	if base == "" {
+		return path
+	}
+	if path == "" || path == "/" {
+		return base
+	}
+	if path[0] == '/' {
+		return base + path
+	}
+	return base + "/" + path
+}
+
 // validateParamName 校验参数名合法(非空、无保留字符)。
 // validateParamName validates a parameter name (non-empty, no reserved chars).
 func validateParamName(name string) error {

@@ -37,6 +37,18 @@ type Server struct {
 
 	httpSrv *http.Server
 
+	// openAPI 非 nil 表示已开启 OpenAPI 生成(经 WithOpenAPI);它只在注册期与首次
+	// spec 构建时被读取。
+	// A non-nil openAPI means OpenAPI generation is enabled (via WithOpenAPI); it
+	// is read only at registration and on the first spec build.
+	openAPI *openAPIConfig
+	// pendingOpenAPIRoute 是待注册的 spec 暴露路径。New 在应用完所有 Option 后注册它,
+	// 从而使 spec 路由本身不被登记进 spec。
+	// pendingOpenAPIRoute is the spec route awaiting registration. New registers it
+	// after all Options are applied, keeping the spec route out of the spec itself.
+	pendingOpenAPIRoute string
+	specOnceHolder
+
 	// mu 守护 state。它守护的是【复合的判定—落笔】:markStarted 与 endRun 都必须在同一
 	// 临界区内先判定状态再改写,因此单纯把 state 换成原子变量并不够——那会留下"读到 idle
 	// → 期间被关闭 → 仍改写为 running"的竞态,即启动一个已关闭的 Server。
@@ -105,6 +117,14 @@ func New(opts ...Option) *Server {
 	for _, opt := range opts {
 		opt(s)
 	}
+	// spec 暴露路由在全部 Option 之后注册,使它自身不出现在 spec 里。注册失败只可能是
+	// 用户给了非法路径,此时静默跳过暴露(spec 仍可经 SpecJSON 取得),不破坏 New 的
+	// 无错签名。
+	// The spec route is registered after all Options so it stays out of the spec.
+	// Registration can only fail on a user-supplied illegal path; exposure is then
+	// skipped silently (the spec remains available via SpecJSON) rather than
+	// breaking New's error-free signature.
+	_ = s.registerOpenAPIRoute()
 	return s
 }
 
@@ -132,13 +152,17 @@ func WithStrictPath(strict bool) Option {
 	return func(s *Server) { s.strictPath = strict }
 }
 
-// WithStrictContentType 控制 body 入口是否在解码前校验请求 Content-Type 与端点声明的
-// RequestDecoder.ContentType() 一致。默认 true(不符即 415);置 false 时跳过校验,
-// 直接把请求体交给解码器(旧宽松行为)。
-// WithStrictContentType controls whether body entries verify the request
-// Content-Type against the endpoint's declared RequestDecoder.ContentType()
-// before decoding. Default true (415 on mismatch); false skips the check and
-// hands the body straight to the decoder (the older lenient behavior).
+// WithStrictContentType 控制 body 入口是否在解码前校验请求 Content-Type 属于端点声明的
+// 可接受集合。默认 true(不符即 415);置 false 时跳过校验,直接把请求体交给解码器
+// (旧宽松行为)。可接受集合优先取解码器实现的 MultiContentTypeDecoder.ContentTypes()
+// (表单据此声明 urlencoded 与 multipart 两种),否则回退到单值 RequestDecoder.ContentType()。
+// WithStrictContentType controls whether body entries verify that the request
+// Content-Type belongs to the endpoint's declared accepted set before decoding.
+// Default true (415 on mismatch); false skips the check and hands the body straight
+// to the decoder (the older lenient behavior). The accepted set prefers the decoder's
+// MultiContentTypeDecoder.ContentTypes() (which is how a form declares both
+// urlencoded and multipart), falling back to the single-valued
+// RequestDecoder.ContentType().
 func WithStrictContentType(strict bool) Option {
 	return func(s *Server) { s.strictContentType = strict }
 }

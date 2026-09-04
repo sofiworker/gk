@@ -20,8 +20,14 @@ type formTarget struct {
 
 func TestFormBody_DecodesURLEncoded(t *testing.T) {
 	dec := formCodec{}
-	if dec.ContentType() != "" {
-		t.Fatalf("ContentType = %q", dec.ContentType())
+	// 表单契约声明 urlencoded 作为单值代表,并经 ContentTypes 声明完整集合。此前它返回
+	// 空串,而空串在严格校验里等于放行,非表单请求体会被静默解成零值结构体。
+	if dec.ContentType() != contentTypeFormURLEncoded {
+		t.Fatalf("ContentType = %q, want %q", dec.ContentType(), contentTypeFormURLEncoded)
+	}
+	if got := dec.ContentTypes(); len(got) != 2 ||
+		got[0] != contentTypeFormURLEncoded || got[1] != contentTypeMultipartForm {
+		t.Fatalf("ContentTypes = %v, want [%s %s]", got, contentTypeFormURLEncoded, contentTypeMultipartForm)
 	}
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("name=alice&count=3&ratio=0.5&ok=true"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

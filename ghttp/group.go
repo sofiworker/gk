@@ -35,16 +35,16 @@ func (m *mux) Group(prefix string, mws ...Middleware) *Group {
 	}
 }
 
-// Group 基于已有分组再分组:前缀累加,中间件在父组快照上再追加。快照发生在创建时
-// (gin 语义):此后对父组的 Use 不影响本组。
-// Group nests a further group off an existing one: prefixes concatenate and
-// middleware appends onto the parent group's snapshot. The snapshot happens at
-// creation time (gin semantics): later Use on the parent group does not affect this
-// one.
+// Group 基于已有分组再分组:前缀经 joinRoutePath 规范化累加(连接处恰好一个 '/'),
+// 中间件在父组快照上再追加。快照发生在创建时(gin 语义):此后对父组的 Use 不影响本组。
+// Group nests a further group off an existing one: prefixes accumulate through
+// joinRoutePath (exactly one '/' at the junction) and middleware appends onto the
+// parent group's snapshot. The snapshot happens at creation time (gin semantics):
+// later Use on the parent group does not affect this one.
 func (g *Group) Group(prefix string, mws ...Middleware) *Group {
 	return &Group{
 		m:      g.m,
-		prefix: g.prefix + prefix,
+		prefix: joinRoutePath(g.prefix, prefix),
 		mws:    snapshotMiddleware(g.mws, mws),
 	}
 }
@@ -57,13 +57,15 @@ func (g *Group) Use(mws ...Middleware) *Group {
 	return g
 }
 
-// register 实现 router:把 terminal 折叠上本组中间件栈后,以组前缀 + path 注册。
+// register 实现 router:把 terminal 折叠上本组中间件栈后,以【规范化的】组前缀 + path
+// 注册。拼接经 joinRoutePath,保证连接处恰好一个 '/'(见其文档说明的边界语义)。
 // 全局中间件不在此叠加——它们在 ServeHTTP 期统一施加。
-// register implements router: fold terminal with this group's middleware stack,
-// then register at group-prefix + path. Global middleware is not layered here — it
-// is applied uniformly at ServeHTTP time.
+// register implements router: fold terminal with this group's middleware stack, then
+// register at the NORMALIZED group-prefix + path. Joining goes through joinRoutePath,
+// guaranteeing exactly one '/' at the junction (see its doc for the edge semantics).
+// Global middleware is not layered here — it is applied uniformly at ServeHTTP time.
 func (g *Group) register(method, path string, terminal Handler) error {
-	return g.m.handle(method, g.prefix+path, chain(terminal, g.mws))
+	return g.m.handle(method, joinRoutePath(g.prefix, path), chain(terminal, g.mws))
 }
 
 // owner 实现 router:分组的 owner 是其背后的 mux。
@@ -71,10 +73,17 @@ func (g *Group) register(method, path string, terminal Handler) error {
 func (g *Group) owner() *mux { return g.m }
 
 // RawHandle 在本分组上注册一个原始处理器,经本组中间件链、挂在组前缀下。
+// 开启 OpenAPI 收集时同样登记(传 g 以取得本组前缀与派生标签),理由见 mux.RawHandle。
 // RawHandle registers a raw handler on this group, wrapped by the group's
-// middleware chain and mounted under the group prefix.
+// middleware chain and mounted under the group prefix. With OpenAPI collection
+// enabled it is recorded as well (passing g supplies the group prefix and derived
+// tag); see mux.RawHandle for the rationale.
 func (g *Group) RawHandle(method, path string, fn RawHandlerFunc) error {
-	return g.register(method, path, Handler(fn))
+	if err := g.register(method, path, Handler(fn)); err != nil {
+		return err
+	}
+	g.m.noteRoute(g, method, path, routeDoc{raw: true})
+	return nil
 }
 
 // snapshotMiddleware 返回 base 与 extra 拼接后的独立副本,避免共享底层数组导致后续

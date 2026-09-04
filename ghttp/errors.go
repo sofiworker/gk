@@ -2,6 +2,7 @@ package ghttp
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 )
 
@@ -114,6 +115,20 @@ var (
 	// mapping to 413.
 	ErrRequestEntityTooLarge = errors.New("ghttp: request entity too large")
 
+	// ErrRateLimitExceeded 表示请求因 RateLimit 中间件被拒绝,对应 429 Too Many Requests。
+	// 调用方可经 errors.Is 判定,自定义错误渲染器亦可据此区分限流与其它 4xx。
+	// ErrRateLimitExceeded indicates the request was rejected by the RateLimit middleware,
+	// mapping to 429 Too Many Requests. Callers can errors.Is it, and a custom error renderer
+	// can distinguish throttling from other 4xx cases.
+	ErrRateLimitExceeded = errors.New("ghttp: rate limit exceeded")
+
+	// ErrCSRFTokenInvalid 表示 CSRF 校验失败(token 缺失、不匹配或来源不可信),对应 403。
+	// 统一用一个哨兵而不区分具体原因:向客户端区分"缺 token"与"token 错"会泄露防护细节。
+	// ErrCSRFTokenInvalid indicates CSRF verification failed (token missing, mismatched,
+	// or untrusted origin), mapping to 403. A single sentinel covers every cause on
+	// purpose: telling a client "missing" from "mismatched" would leak protection detail.
+	ErrCSRFTokenInvalid = errors.New("ghttp: CSRF verification failed")
+
 	// ErrNotHijackable 表示底层 http.ResponseWriter 不支持连接接管(不实现
 	// http.Hijacker),因此无法进行 WebSocket 升级等需要夺取原始连接的操作。
 	// 常见于被不透传 Hijack 的中间件包裹、或运行在不支持 hijack 的服务器上。
@@ -123,4 +138,68 @@ var (
 	// proceed. Typically caused by a middleware that does not pass Hijack through,
 	// or a server that does not support hijacking.
 	ErrNotHijackable = errors.New("ghttp: response writer does not support hijacking")
+
+	// ErrRequestTimeout 表示请求处理超过了 Timeout 中间件设定的时限,对应 504。
+	// 选 504 而非 503:503 表示"整个服务不可用",而这里是【单个请求】超时,上游/服务本身
+	// 仍然健康;504 Gateway Timeout 才准确表达"我等下游等超时了"。调用方可 errors.Is 它
+	// 来区分超时与其它失败,并在 WithErrorHook 中打点告警。
+	// ErrRequestTimeout indicates request handling exceeded the Timeout middleware's
+	// limit, mapping to 504.
+	// 504 rather than 503: 503 says "the whole service is unavailable", whereas this is
+	// a SINGLE request timing out while the service itself stays healthy; 504 Gateway
+	// Timeout accurately expresses "I waited for the downstream and it timed out".
+	// Callers can errors.Is it to tell a timeout from other failures and alert on it via
+	// WithErrorHook.
+	ErrRequestTimeout = errors.New("ghttp: request handling timed out")
 )
+
+// panicErr 把 recover 到的 panic 值包成错误,同时保持 errors.Is(err, ErrHandlerPanic)
+// 成立。它让 onError 钩子与日志能拿到真正的 panic 原因:此前兜底 recover 直接丢弃该值
+// (`_ = rec`),不挂 Recovery 中间件时排障只剩一句 "handler panicked",既无原因也无
+// 类型,是生产排障黑洞。
+// panicErr wraps a recovered panic value into an error while keeping
+// errors.Is(err, ErrHandlerPanic) true. It lets the onError hook and logs see the real
+// panic cause: the safety-net recover previously discarded that value (`_ = rec`), so
+// without a Recovery middleware debugging was left with just "handler panicked" — no
+// cause, no type — a production blind spot.
+type panicErr struct {
+	// value 是 recover() 的原始返回值。
+	// value is the raw recover() return value.
+	value any
+}
+
+// Error 实现 error。
+// Error implements error.
+func (e *panicErr) Error() string {
+	return fmt.Sprintf("%s: %v", ErrHandlerPanic.Error(), e.value)
+}
+
+// Is 让 errors.Is(err, ErrHandlerPanic) 对包装后的错误仍然成立。
+// Is keeps errors.Is(err, ErrHandlerPanic) true for the wrapped error.
+func (e *panicErr) Is(target error) bool { return target == ErrHandlerPanic }
+
+// PanicValue 返回被包装的 panic 值,供调用方类型断言原始原因。
+// PanicValue returns the wrapped panic value so callers can type-assert the cause.
+func (e *panicErr) PanicValue() any { return e.value }
+
+// panicError 构造 panicErr;value 为 nil 时退回裸哨兵。
+// panicError builds a panicErr; a nil value falls back to the bare sentinel.
+func panicError(value any) error {
+	if value == nil {
+		return ErrHandlerPanic
+	}
+	return &panicErr{value: value}
+}
+
+// PanicValueOf 从错误链中提取 panic 原始值。err 非 panic 错误时返回 (nil, false)。
+// 供 onError 钩子与日志记录真正的 panic 原因。
+// PanicValueOf extracts the original panic value from an error chain, returning
+// (nil, false) when err is not a panic error. Intended for onError hooks and logs to
+// record the real panic cause.
+func PanicValueOf(err error) (any, bool) {
+	var pe *panicErr
+	if errors.As(err, &pe) {
+		return pe.value, true
+	}
+	return nil, false
+}

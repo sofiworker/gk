@@ -59,6 +59,24 @@ func (r *Request) ClientIP() string {
 	if len(headers) == 0 {
 		headers = defaultForwardedHeaders
 	}
+	// 只认第一个【存在且非空】的转发头,推不出结果就回退直连 IP,不再尝试后续头。
+	//
+	// 逐个回退会开一个伪造口子:代理常见配置是只追加 XFF 而【透传】客户端自带的
+	// X-Real-IP。当 XFF 链全部落在可信网段内(内部调用、多层自有代理)时无法推出对端,
+	// 若继续试 X-Real-IP,客户端预置的 `X-Real-IP: 6.6.6.6` 就成了 ClientIP,按 IP 的
+	// 限流与审计随之被绕过。既然最靠前的头已经由可信代理写入,它就是权威来源;它推不出
+	// 结论意味着"链上没有外部客户端",而非"该问下一个头"。
+	// Only the first forwarded header that EXISTS and is non-empty is consulted; if it
+	// yields nothing, fall back to the direct IP instead of trying later headers.
+	//
+	// Falling through header by header opens a spoofing hole: proxies commonly append
+	// XFF while PASSING THROUGH a client-supplied X-Real-IP. When the XFF chain lies
+	// entirely inside trusted ranges (internal calls, several owned proxy layers) no
+	// peer can be derived, and continuing on to X-Real-IP would let a client-planted
+	// `X-Real-IP: 6.6.6.6` become the ClientIP, bypassing per-IP rate limiting and
+	// auditing. Since the foremost header was written by a trusted proxy, it is the
+	// authoritative source; deriving nothing from it means "no external client on the
+	// chain", not "ask the next header".
 	for _, h := range headers {
 		v := r.Header.Get(h)
 		if v == "" {
@@ -67,8 +85,27 @@ func (r *Request) ClientIP() string {
 		if ip := firstNonTrustedIP(v, r.owner.trustedProxies); ip != "" {
 			return ip
 		}
+		return remote
 	}
 	return remote
+}
+
+// fromTrustedProxy 报告本请求的直连对端是否落在配置的可信代理网段内。它是"是否采信
+// 转发头"的统一判定,供 ClientIP 之外的转发头消费者(如安全头的 X-Forwarded-Proto)
+// 复用同一套信任策略,避免各处自行判断导致策略不一致。
+// fromTrustedProxy reports whether this request's direct peer falls within a
+// configured trusted proxy network. It is the single decision for "may we trust
+// forwarded headers", reused by forwarded-header consumers beyond ClientIP (such as
+// X-Forwarded-Proto in the security headers) so no site invents its own policy.
+func (r *Request) fromTrustedProxy() bool {
+	if r.owner == nil || len(r.owner.trustedProxies) == 0 {
+		return false
+	}
+	addr, err := netip.ParseAddr(r.RemoteIP())
+	if err != nil {
+		return false
+	}
+	return ipInAnyPrefix(addr, r.owner.trustedProxies)
 }
 
 // firstNonTrustedIP 从一个逗号分隔的转发头值(如 X-Forwarded-For)自右向左回溯,返回第一个

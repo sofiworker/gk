@@ -130,10 +130,42 @@ func TestCORS_NoOriginPassthrough(t *testing.T) {
 	}
 }
 
-// TestCORS_CredentialsEchoOrigin 验证带凭证时回显具体 Origin 而非 *。
-func TestCORS_CredentialsEchoOrigin(t *testing.T) {
+// TestCORS_WildcardDropsCredentials 验证 "*" 与 AllowCredentials 同用时凭证被忽略。
+//
+// 这个组合被 CORS 规范禁止。此前的实现会"回显任意 Origin + Allow-Credentials: true",
+// 那比规范禁止的写法更危险:任意恶意站点都能带 cookie 跨域读取响应,同源保护完全失效。
+// 现在安全降级为保留 ACAO: * 并丢弃凭证——需要凭证必须显式列出来源。
+func TestCORS_WildcardDropsCredentials(t *testing.T) {
 	cfg := CORSConfig{
 		AllowOrigins:     []string{"*"},
+		AllowCredentials: true,
+	}
+	terminal := func(ctx context.Context, req *Request, resp *Response) error {
+		resp.WriteHeader(http.StatusOK)
+		return nil
+	}
+	rec := serveOne(CORS(cfg), terminal, http.MethodGet, "/api", map[string]string{
+		"Origin": "https://evil.example.com",
+	})
+	// 关键:绝不回显攻击者的 Origin。
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("ACAO=%q, want %q (an arbitrary origin must never be echoed with credentials)", got, "*")
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Errorf("ACAC=%q, want empty (credentials must be dropped alongside a wildcard origin)", got)
+	}
+	// 降级被显式记录,便于诊断而非静默改变语义。
+	if c := newCORS(cfg); !c.credentialsDroppedForWildcard || c.allowCredentials {
+		t.Errorf("expected the downgrade to be recorded: dropped=%v effective=%v",
+			c.credentialsDroppedForWildcard, c.allowCredentials)
+	}
+}
+
+// TestCORS_ExplicitOriginKeepsCredentials 验证显式列出来源时凭证正常生效——
+// 这是需要凭证时唯一安全的配置方式,不能被上面的降级波及。
+func TestCORS_ExplicitOriginKeepsCredentials(t *testing.T) {
+	cfg := CORSConfig{
+		AllowOrigins:     []string{"https://app.example.com"},
 		AllowCredentials: true,
 	}
 	terminal := func(ctx context.Context, req *Request, resp *Response) error {
@@ -144,10 +176,20 @@ func TestCORS_CredentialsEchoOrigin(t *testing.T) {
 		"Origin": "https://app.example.com",
 	})
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://app.example.com" {
-		t.Errorf("ACAO=%q, want echoed origin", got)
+		t.Errorf("ACAO=%q, want the echoed allow-listed origin", got)
 	}
 	if got := rec.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
 		t.Errorf("ACAC=%q, want true", got)
+	}
+	// 未列入白名单的来源仍不得获得凭证许可。
+	rec2 := serveOne(CORS(cfg), terminal, http.MethodGet, "/api", map[string]string{
+		"Origin": "https://evil.example.com",
+	})
+	if got := rec2.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("ACAO=%q for a disallowed origin, want empty", got)
+	}
+	if got := rec2.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Errorf("ACAC=%q for a disallowed origin, want empty", got)
 	}
 }
 
@@ -180,16 +222,55 @@ func TestTimeout_FastHandlerPassthrough(t *testing.T) {
 	}
 }
 
-// TestTimeout_SlowHandlerGets503 验证协作式超时：下游因 ctx 取消返回且未写响应 → 503。
-func TestTimeout_SlowHandlerGets503(t *testing.T) {
+// TestTimeout_SlowHandlerGets504 验证协作式超时：下游因 ctx 取消返回且未写响应 → 504。
+//
+// 原测试名与断言是 503。改为 504 是因为 503 语义错误:它表示"整个服务不可用",而这里
+// 只是单个请求超时、服务本身健康;504 Gateway Timeout 才准确。同时超时现在返回
+// ErrRequestTimeout 交统一错误链渲染,而不是自行 http.Error 写 text/plain——这样超时
+// 事件才对 onError 钩子可见(旧实现 return nil,超时在监控上完全静默)。
+func TestTimeout_SlowHandlerGets504(t *testing.T) {
 	terminal := func(ctx context.Context, req *Request, resp *Response) error {
 		// 模拟一个协作良好的下游：监听 ctx 取消后返回，未写响应。
 		<-ctx.Done()
 		return ctx.Err()
 	}
 	rec := serveOne(Timeout(10*time.Millisecond), terminal, http.MethodGet, "/slow", nil)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Errorf("status=%d, want 503", rec.Code)
+	if rec.Code != http.StatusGatewayTimeout {
+		t.Errorf("status=%d, want 504", rec.Code)
+	}
+	// 超时响应必须走统一 JSON 错误体,而不是 text/plain。
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Errorf("Content-Type=%q, want the unified JSON error body", ct)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "request_timeout") {
+		t.Errorf("body=%q, want the request_timeout error code", body)
+	}
+}
+
+// TestTimeout_IsObservableByErrorHook 锁定超时对 onError 钩子可见。
+// 旧实现写完 503 就 return nil,超时事件既不进钩子也不进外层中间件,无法打点告警——
+// 这正是把它改成返回哨兵错误的主要动机,故单独立测防止回退。
+func TestTimeout_IsObservableByErrorHook(t *testing.T) {
+	var hookStatus int
+	var hookErr error
+	s := New(WithErrorHook(func(_ *http.Request, status int, err error) {
+		hookStatus, hookErr = status, err
+	}))
+	s.Use(Timeout(10 * time.Millisecond))
+	if err := s.RawHandle(http.MethodGet, "/slow", func(ctx context.Context, _ *Request, _ *Response) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/slow", nil))
+
+	if hookStatus != http.StatusGatewayTimeout {
+		t.Errorf("hook status=%d, want 504 (a timeout must reach the error hook)", hookStatus)
+	}
+	if !errors.Is(hookErr, ErrRequestTimeout) {
+		t.Errorf("hook err=%v, want errors.Is(err, ErrRequestTimeout)", hookErr)
 	}
 }
 

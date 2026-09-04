@@ -53,6 +53,16 @@ func RecoveryWith(onPanic RecoveryHandler) Middleware {
 				if rec == nil {
 					return
 				}
+				if rec == http.ErrAbortHandler {
+					// 标准库约定:panic(http.ErrAbortHandler) 表示"静默放弃这个响应",
+					// net/http 据此断连且不打日志。它不是故障,既不该记 panic 日志,也不该
+					// 写 500 覆盖调用方的意图,故原样向上传播。
+					// Stdlib contract: panic(http.ErrAbortHandler) means "abandon this
+					// response silently"; net/http drops the connection without logging.
+					// It is not a failure, so neither log it as a panic nor write a 500
+					// over the caller's intent — re-panic as-is.
+					panic(rec)
+				}
 				if onPanic != nil {
 					onPanic(PanicInfo{
 						Value:  rec,

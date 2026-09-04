@@ -23,14 +23,24 @@ import (
 // "register + upgrade + teardown" into one call.
 // ===========================================================================
 
-// WSHandlerFunc 是 WebSocket 业务处理器:升级成功后被调用,拥有 conn 的读写与生命周期。
-// 返回的 error 仅用于观测(此时 HTTP 响应已在升级时提交,无法改写);ServeWS 会在它返回
-// 后关闭 conn。ctx 随请求取消而取消,可用于协调关闭。
+// WSHandlerFunc 是 WebSocket 业务处理器：升级成功后被调用，拥有 conn 的读写与生命周期。
+// 返回的 error 仅用于观测 (此时 HTTP 响应已在升级时提交，无法改写);ServeWS 会在它返回
+// 后关闭 conn。
+//
+// 注意:升级后的连接是 hijacked 状态，由应用自行管理生命周期;server.Shutdown 不会自动
+// 取消该连接的 context，也不会等待其排空。若需要优雅关闭，应在业务逻辑中监听外部信号
+// 或使用上下文键传递“停止条件”，并在 handler 内检测退出。
+//
 // WSHandlerFunc is the WebSocket business handler: called after a successful
 // upgrade, owning the conn's I/O and lifecycle. The returned error is for
 // observation only (the HTTP response was committed at upgrade and cannot be
-// rewritten); ServeWS closes conn after it returns. ctx cancels with the request
-// and can coordinate shutdown.
+// rewritten); ServeWS closes conn after it returns.
+//
+// Note: After upgrade the connection is hijacked and its lifecycle is managed by the
+// application; server.Shutdown does NOT automatically cancel that connection's context
+// nor wait for it to drain. For graceful shutdown, listen for external signals in your
+// business logic or pass "stop conditions" via context keys, and exit the handler when
+// detected.
 type WSHandlerFunc func(ctx context.Context, req *Request, conn *websocket.Conn) error
 
 // WSUpgrader 承载一个 websocket.Upgrader,把 HTTP 连接升级为 WebSocket。经 NewWSUpgrader
@@ -132,7 +142,7 @@ func ServeWS(r router, path string, up *WSUpgrader, handler WSHandlerFunc) error
 	if up == nil {
 		up = NewWSUpgrader()
 	}
-	return r.register(http.MethodGet, path, Handler(func(ctx context.Context, req *Request, resp *Response) error {
+	if err := r.register(http.MethodGet, path, Handler(func(ctx context.Context, req *Request, resp *Response) error {
 		conn, err := up.Upgrade(resp, req, nil)
 		if err != nil {
 			// 升级失败:gorilla 已写出 HTTP 错误响应(4xx),此处仅把错误上抛给错误钩子
@@ -144,5 +154,17 @@ func ServeWS(r router, path string, up *WSUpgrader, handler WSHandlerFunc) error
 		}
 		defer func() { _ = conn.Close() }()
 		return handler(ctx, req, conn)
-	}))
+	})); err != nil {
+		return err
+	}
+	// 登记进 OpenAPI 文档。WS 端点的响应形状不由框架决定(升级后走的是 WS 帧而非 HTTP
+	// 响应体),故与 RawHandle 同样按 raw 记录:spec 只声明"这个路径存在且是 GET",不编造
+	// 契约。漏掉这一步会让 WS 路径从 spec 中消失,与 RawHandle"路径存在即出现"的口径不一致。
+	// Record it in the OpenAPI docs. A WS endpoint's response shape is not the
+	// framework's to state (after the upgrade it speaks WS frames, not an HTTP body), so
+	// it is recorded as raw just like RawHandle: the spec declares only that this GET
+	// path exists, inventing no contract. Skipping this would drop WS paths from the
+	// spec, inconsistent with RawHandle's "a path that exists shows up" rule.
+	r.owner().noteRoute(r, http.MethodGet, path, routeDoc{raw: true})
+	return nil
 }

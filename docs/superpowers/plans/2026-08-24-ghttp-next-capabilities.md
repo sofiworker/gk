@@ -2,7 +2,21 @@
 
 > 日期：2026-08-24
 >
-> 状态：评审草案
+> 状态：**已实施**（原评审草案；下列 P0/P1/P2 候选项已全部落地）
+>
+> **实施说明（回填）**：本报告评估的候选能力已全部实现，实际取舍与原评估的差异记录在此，正文保留原始评估内容以便追溯决策过程。
+>
+> | 候选项 | 原评级 | 实际状态 | 实现要点与偏差 |
+> |--------|--------|----------|----------------|
+> | OpenAPI/文档生成 | P0 推荐 | ✅ 已实现 | 选项名为 `WithOpenAPI(info, opts...)`（非草案里的 `WithOpenAPISpec`）。产出 OpenAPI **3.1**（非 3.0）。与草案的关键差异：spec 在**首次请求时**构建并缓存字节，而非注册期立即构建——注册期只收集元数据，避免 `New` 返回前就付出构建成本。参数文档复用请求期同一份 `BindPlan`，故文档不会与绑定行为漂移；输出为手工序列化的确定性字节（`map` 遍历顺序随机会破坏字节稳定性，使 spec 无法 diff review）。 |
+> | Rate limiting | P1 备选 | ✅ 已实现 | `RateLimit(cfg)` / `RateLimitByRoute(rps, burst)`。分 16 片令牌桶 + 空闲桶回收（草案未提及回收，但不回收会被随机 IP 打爆内存）。`RPS<=0` 返回透传中间件。 |
+> | CSRF | P1 | ✅ 已实现 | `CSRF(cfg)`，双提交 cookie + Origin/Referer 校验。 |
+> | 安全头 | P1 | ✅ 已实现 | `SecureHeaders(cfg)` / `SecureHeadersDefault()`，字段三态（默认/`"-"` 省略/自定义）。HSTS 与 CSP 默认关闭。 |
+> | Compression 预压缩 (static) | P2 可选 | ✅ 已实现 | `WithPrecompressed()` / `WithPrecompressedEncodings(...)`。`File` 因此新增变参选项（破坏性变更，已记入 CHANGELOG）。 |
+> | 绑定能力扩展（§见正文） | 单列计划 | ✅ 已实现 | 未单列计划，与本批一并完成：列表/映射/指针可选/嵌套与内嵌递归/`TextUnmarshaler`/`[]byte`，且 params 与 form 收敛到同一套引擎以保证能力对等。 |
+> | typed 入口矩阵补全 | 未在本报告评估 | ✅ 已实现 | 补齐 `*None`、`HeadParams`/`OptionsParams`、`DeleteBody`/`DeleteParamsBody`。 |
+>
+> **⚠️ 正文勘误**：§0"当前能力基线"把校验列为"已完备"，但内置校验（`validate` tag 全族）已在提交 `9d8bffa` 中**整体移除**——params 现只做类型绑定，业务规则由 handler 自行判断。阅读正文时请以此为准。
 >
 > 关联文档：
 > - `docs/superpowers/plans/2026-08-06-ghttp-design-goals-and-rework.md`（设计目标与横评结论）

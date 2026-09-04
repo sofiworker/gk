@@ -60,6 +60,19 @@ func classifyError(err error) (status int, code string) {
 	var sc StatusCoder
 	if errors.As(err, &sc) {
 		s := sc.HTTPStatus()
+		// 校验业务返回的状态码:非法值传给 WriteHeader 会 panic,而 writeError 运行在
+		// 所有 recover 之外(它本身就是 panic 的善后出口),那个 panic 会直接击穿
+		// ServeHTTP 并由 net/http 断连。一个实现不当的错误类型不该能打挂连接,故非法
+		// 值回退 500——业务意图无法表达时,内部错误是唯一诚实的答复。
+		// Validate the status a business error returns: an illegal value makes
+		// WriteHeader panic, and writeError runs outside every recover (it is itself
+		// the cleanup path for panics), so that panic would pierce ServeHTTP and let
+		// net/http drop the connection. A poorly implemented error type must not be
+		// able to kill connections, so an illegal value falls back to 500 — when the
+		// intent cannot be expressed, an internal error is the only honest answer.
+		if !isValidHTTPStatus(s) {
+			return http.StatusInternalServerError, codeForStatus(http.StatusInternalServerError)
+		}
 		return s, codeForStatus(s)
 	}
 	switch {
@@ -69,6 +82,12 @@ func classifyError(err error) (status int, code string) {
 		return http.StatusUnsupportedMediaType, "unsupported_media_type"
 	case errors.Is(err, ErrRequestEntityTooLarge):
 		return http.StatusRequestEntityTooLarge, "request_entity_too_large"
+	case errors.Is(err, ErrRateLimitExceeded):
+		return http.StatusTooManyRequests, "rate_limit_exceeded"
+	case errors.Is(err, ErrCSRFTokenInvalid):
+		return http.StatusForbidden, "csrf_token_invalid"
+	case errors.Is(err, ErrRequestTimeout):
+		return http.StatusGatewayTimeout, "request_timeout"
 	case errors.Is(err, ErrHandlerPanic):
 		return http.StatusInternalServerError, "internal"
 	}
@@ -84,6 +103,14 @@ func classifyError(err error) (status int, code string) {
 // codeForStatus 为一个状态码返回稳定的 code 串(供 StatusCoder 路径与 miss 复用)。
 // codeForStatus returns a stable code string for a status (shared by the
 // StatusCoder path and miss handling).
+// isValidHTTPStatus 报告 status 是否为 WriteHeader 可接受的状态码。net/http 规定
+// 合法范围是 100–599,越界会 panic("invalid WriteHeader code")。
+// isValidHTTPStatus reports whether status is acceptable to WriteHeader. net/http
+// permits 100–599; anything outside panics with "invalid WriteHeader code".
+func isValidHTTPStatus(status int) bool {
+	return status >= 100 && status <= 599
+}
+
 func codeForStatus(status int) string {
 	switch status {
 	case http.StatusBadRequest:
@@ -104,6 +131,10 @@ func codeForStatus(status int) string {
 		return "request_entity_too_large"
 	case http.StatusUnprocessableEntity:
 		return "unprocessable_entity"
+	case http.StatusTooManyRequests:
+		return "rate_limit_exceeded"
+	case http.StatusGatewayTimeout:
+		return "request_timeout"
 	case http.StatusServiceUnavailable:
 		return "unavailable"
 	}
@@ -214,22 +245,52 @@ func buildMissBody(status int) []byte {
 
 // writeError 是错误链的唯一出口:分类 → 选状态码 → 按脱敏策略取文案 → 渲染。
 // 若响应已提交则只经 onError 记录、绝不改写,避免双写。err 为 nil 时空操作。
+//
+// 已提交时上报给 onError 的是【客户端实际收到的】状态码,而非错误的分类结果:响应头已
+// 落地,补写不可能生效,分类值只是"本应回什么"。此前一律上报分类值,于是 handler 先
+// Flush(或流式编码中途失败)再返回 error 时,客户端拿到 200 而钩子记 4xx/5xx——同一
+// 请求在两端被观测成两个状态,告警与实际交付脱节,是最难排查的一类不一致。err 原样传出,
+// 故根因不丢失。
 // writeError is the error chain's single exit: classify → status → message per
 // the sanitize policy → render. If already committed, it only reports via
 // onError and never rewrites, avoiding a double write. A nil err is a no-op.
+//
+// Once committed, the status reported to onError is the one the client ACTUALLY
+// received, not the classification: the header has landed, a rewrite cannot take
+// effect, and the classified value is merely "what should have been sent". Reporting
+// the classification unconditionally meant that a handler which flushed (or failed
+// mid-stream while encoding) before returning an error gave the client a 200 while the
+// hook recorded a 4xx/5xx — one request observed as two different statuses, decoupling
+// alerts from actual delivery, which is among the hardest inconsistencies to trace. The
+// err is passed through unchanged, so the root cause is never lost.
 func (m *mux) writeError(resp *Response, r *http.Request, err error) {
 	if err == nil {
 		return
 	}
 	status, code := classifyError(err)
+	// 纵深防御:classifyError 已校验 StatusCoder,但 status 也可能来自其它路径(未来的
+	// 分类分支、被改写的 code 表)。writeError 在所有 recover 之外运行,这里再兜一次,
+	// 确保任何非法值都不会变成 WriteHeader 的 panic。
+	// Defense in depth: classifyError already validates StatusCoder, but status may
+	// also arrive from other paths (future classification branches, an edited code
+	// table). writeError runs outside every recover, so clamp once more here to ensure
+	// no illegal value can turn into a WriteHeader panic.
+	if !isValidHTTPStatus(status) {
+		status, code = http.StatusInternalServerError, codeForStatus(http.StatusInternalServerError)
+	}
 
+	committed := resp.Written()
 	if m.onError != nil {
-		m.onError(r, status, err)
+		reported := status
+		if committed && isValidHTTPStatus(resp.Status()) {
+			reported = resp.Status()
+		}
+		m.onError(r, reported, err)
 	}
 
 	// 已提交:不能再改写头/体。分类与记录已完成,直接返回。
 	// Already committed: cannot rewrite. Classification/logging done; return.
-	if resp.Written() {
+	if committed {
 		return
 	}
 
@@ -268,9 +329,19 @@ func WithErrorRenderer(rn ErrorRenderer) Option {
 
 // WithErrorHook 注册一个错误观测钩子:错误链分类后调用(无论是否已提交响应),
 // 用于结构化日志/上报。它不写响应,只观测。
+//
+// status 始终是【客户端实际收到的】状态码:响应未提交时为即将写出的分类结果,已提交
+// (如 handler 先 Flush 或流式编码中途失败)时为已落地的那个码。这保证钩子的观测与
+// 客户端、Logger、metrics 三者口径一致;err 原样传出,分类语义可经 HTTPStatus(err) 取回。
 // WithErrorHook registers an error observation hook invoked after
 // classification (whether or not the response is committed), for structured
 // logging/reporting. It does not write the response, only observes.
+//
+// status is always the one the client ACTUALLY received: the classification about to
+// be written when the response is uncommitted, or the already-landed code when it is
+// committed (e.g. the handler flushed first, or streamed encoding failed midway). That
+// keeps the hook consistent with the client, the Logger and metrics; err is passed
+// through unchanged, so the classified status remains available via HTTPStatus(err).
 func WithErrorHook(hook func(r *http.Request, status int, err error)) Option {
 	return func(s *Server) { s.onError = hook }
 }

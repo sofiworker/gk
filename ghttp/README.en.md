@@ -9,10 +9,11 @@ Performance stance: a pure `net/http` foundation with no fasthttp and no self-ma
 ## Features
 
 - Routing: radix tree (gin lineage) + path params + catch-all + trailing-slash redirect (TSR)
-- Typed entries: generic free functions, plan built at registration (reflect once), zero reflection at request time
+- Typed entries: generic free functions, plan built at registration (reflect once), zero reflection at request time. Entries are always named `<Method><InputShape>`: all seven methods have `None` and `Params` shapes, and the four body-bearing ones (POST/PUT/PATCH/DELETE) additionally have `Body` and `ParamsBody`
 - Middleware: global `Use` treats hits and misses alike; a zero-overhead direct path when no global middleware
-- Built-in middleware: RequestID, Logger, LimitBody, Recovery, CORS (with preflight), Timeout, BasicAuth, Metrics (zero-dependency Prometheus-style metrics), Gzip (conditional compression with configurable level)
-- Static assets: `Static` / `StaticFS` (`os.DirFS` and `embed.FS`), `File`, SPA history fallback
+- Built-in middleware: RequestID, Logger, LimitBody, Recovery, CORS (with preflight), Timeout (504 through the unified error chain), BasicAuth, Metrics (zero-dependency Prometheus-style metrics), Gzip (conditional compression with configurable level), RateLimit (sharded token bucket, 429 + `Retry-After`), CSRF (double-submit cookie + origin check), SecureHeaders (safe defaults; HSTS and CSP opt-in)
+- OpenAPI 3.1: `WithOpenAPI` generates a deterministic spec from the same bind plan the request path uses, so documentation cannot drift; zero cost when disabled
+- Static assets: `Static` / `StaticFS` (`os.DirFS` and `embed.FS`), `File`, SPA history fallback, pre-compressed `.br` / `.gz` variants (`WithPrecompressed`)
 - Health checks: `Health` (liveness), `Ready` (readiness), `NewReadinessGate` (runtime toggle)
 - Real-time: SSE sugar (`NewSSEWriter`) and WebSocket (`ServeWS` / `WSUpgrader` via gorilla/websocket) over `RawHandle`
 - Lifecycle: `Run` / `RunTLS` / `Serve` / `ServeTLS` / `Shutdown` / `Close` / `RunGraceful`
@@ -56,15 +57,43 @@ s := ghttp.New(
 
 ## Observability
 
-- `Request.MatchedRoute()`: the low-cardinality matched route template (e.g. `/users/:id`), suited for the route dimension in metrics/tracing/logging.
+- `Request.MatchedRoute()`: the low-cardinality matched route template (e.g. `/users/:id`), suited for the route dimension in metrics/tracing/logging. **Readable while global middleware runs** (including before it calls `next`): route matching completes before the middleware chain, so route-aggregating middleware (metrics, per-route rate limiting, tracing span naming) sees the template. It is always empty on a miss and never carries the previous request's value.
 - `Request.ClientIP()` / `RemoteIP()`: resolve the real client IP under a trusted-proxy model. **No forwarded header is trusted by default** (anti-spoofing); after `WithTrustedProxies(...)`, `X-Forwarded-For` / `X-Real-IP` are walked only when the direct peer is trusted (header names overridable via `WithForwardedHeaders`).
 - `Logger` / `LoggerWith`: emit a structured `AccessLog` (with `Method`/`Path`/`Route`/`Status`/`Elapsed`/`ClientIP`/`BytesOut`/`Err`).
 - `Metrics`: zero-dependency Prometheus-style metrics middleware, recording request count/latency/error rate/bytes labelled by low-cardinality `MatchedRoute`. Mount the `/metrics` endpoint via `MetricsRegistry.Handler()`, which exports runtime metrics like `go_goroutines` and `go_memstats_alloc_bytes`.
 - `Gzip`: conditional compression middleware that compresses response bodies by configurable Content-Type whitelist and level (`WithGzipLevel`); automatically detects `Accept-Encoding` with q-value priority.
 
+## OpenAPI 3.1
+
+```go
+s := ghttp.New(
+	ghttp.WithOpenAPI(ghttp.OpenAPIInfo{Title: "Orders API", Version: "1.2.0"},
+		ghttp.WithOpenAPIRoute("/openapi.json"), // default; "" builds in memory only
+		ghttp.WithOpenAPIServers(ghttp.OpenAPIServer{URL: "https://api.example.com"}),
+	),
+)
+raw := s.SpecJSON() // or read the bytes directly for build artifacts / contract tests
+```
+
+The contract grows out of the code instead of being written twice. Metadata is collected at registration from each typed entry's params/body/output types; the spec is built once on the first request and its bytes cached.
+
+- **Documentation cannot drift**: parameter docs reuse the very same `BindPlan` the request path uses, rather than re-implementing the binding rules. Change a tag and the docs follow; `TestOpenAPI_ParametersMatchBindPlan` enforces it.
+- **Deterministic output**: the spec is serialized by hand so field order is fixed. With `map[string]any` + `json.Marshal`, Go's random map iteration order would make one route table emit different bytes every time, and the spec could not be diff-reviewed or snapshot-tested.
+- **Shapes match reality**: a `NoContent` output declares 204 with **no** `content`; error responses reference one `Error` schema shaped exactly like what the error chain actually writes.
+- **Schemas follow `encoding/json`**: `json:"-"` skipped, `omitempty` not required, embedded fields promoted, unexported fields absent; named structs are hoisted into `components/schemas` and referenced by `$ref` (so self-referential types terminate instead of overflowing the stack); `time.Time` → `date-time`, `[]byte` → `byte`, pointers → OpenAPI 3.1 `["T","null"]`.
+- **`RawHandle` endpoints are recorded too**: they expose no reflectable types, but the existence of a path and method is itself part of the contract — omitting them would make the spec claim the endpoint does not exist and mislead contract tests and client generators. The strategy is to report honestly rather than invent: record the path and method, derive required `string` path parameters from the template (otherwise the spec is invalid), declare the response shape as undeclared instead of fabricating a schema, and add none of the 400/415 responses that only typed binding produces. Static assets (`Static`/`StaticFS`) and health checks (`Health`/`Ready`) build on `RawHandle` and therefore appear as well.
+- **Zero cost when disabled**: nothing is collected, built, or registered, and the spec endpoint never documents itself.
+- `WithOpenAPI` is a `New` option and must take effect **before** routes are registered.
+
 ## Parameter binding
 
-Params fields support scalar binding: `string`, `bool`, `int/8/16/32/64`, `uint/8/16/32/64`, `float32/64`. A missing field keeps its zero value; a parse failure or out-of-range value yields 400 (`ErrInvalidInput`).
+`path:` / `query:` / `header:` and body form fields (`form:`) share one binding engine, so their capabilities are **exactly at parity** — every shape below works on `form:` too.
+
+Supported field shapes: scalars (`string`, `bool`, `int/8/16/32/64`, `uint/8/16/32/64`, `float32/64`); `*T` pointers (`nil` means "not provided", distinguishable from an explicit zero); types implementing `encoding.TextUnmarshaler` (`time.Time`, `net.IP`, …); `[]byte` (raw bytes); `[]T` / `[N]T` lists (repetition `?a=1&a=2` and comma separation `?a=1,2`, mixable); `map[string]T` / `map[string][]T` (`?filter[key]=v` in a query, a header prefix family or `*` for every header). Untagged embedded and nested structs expand recursively so shared parameters can be factored into reusable structs; a `"-"` tag value skips a field explicitly.
+
+Absence semantics: scalars keep their zero value while pointers, slices, and maps stay `nil` — and a nested struct pointer is not allocated when its whole block is absent — so a handler can tell "not provided" from "provided as zero/empty".
+
+A failed element parse fails the whole request with 400 (`ErrInvalidInput`) rather than silently dropping the bad element, which would let callers believe the parameter took effect. Unsupported shapes (slice of slice, map of map, non-string map keys, a map bound to `path:`) are rejected **at registration**, and recursion is capped at 8 levels so a self-referential struct errors instead of overflowing the stack.
 
 The framework has **no built-in validation**. Business rules (required, ranges, enums, formats) are checked by the handler itself; return an error implementing `StatusCoder` to map any status (e.g. 422), otherwise it falls back to 500. A dedicated validation layer will be designed separately.
 
@@ -117,6 +146,26 @@ ghttp.ServeWS(m, "/ws/echo", nil, func(ctx context.Context, req *ghttp.Request, 
 
 `WSUpgrader` options: `WithWSCheckOrigin` (origin check, default gorilla same-origin), `WithWSReadBufferSize` / `WithWSWriteBufferSize`, `WithWSSubprotocols`, `WithWSHandshakeTimeout`, `WithWSCompression`. When the underlying `ResponseWriter` cannot `Hijack`, `Hijack` returns `ErrNotHijackable`. See [`examples/realtime`](../examples/realtime).
 
+## Rate limiting, CSRF, and security headers
+
+```go
+s.Use(ghttp.RateLimit(ghttp.RateLimitConfig{RPS: 100, Burst: 200}))
+s.Use(ghttp.RateLimitByRoute(50, 100))   // keyed by method + route template
+
+s.Use(ghttp.CSRF(ghttp.CSRFConfig{TrustedOrigins: []string{"https://app.example.com"}}))
+
+s.Use(ghttp.SecureHeadersDefault())
+s.Use(ghttp.SecureHeaders(ghttp.SecureHeadersConfig{
+	HSTSMaxAge:            31536000,            // HSTS is off unless set
+	ContentSecurityPolicy: "default-src 'self'",
+	FrameOptions:          "-",                 // "-" omits the header
+}))
+```
+
+- **RateLimit** uses a token bucket, not a fixed window: it allows a `Burst` while the long-run rate converges to `RPS`, avoiding the boundary doubling of fixed windows. Keyed by `ClientIP()` by default (honouring the trusted-proxy config, so a spoofed header cannot bypass it); a `KeyFunc` can key by user or API key, and **returning an empty string exempts the request**. Buckets are spread over 16 shards to bound lock contention, and buckets idle beyond `IdleTimeout` (10 minutes by default) are reaped. Reaping only fires on the shard being touched, so `MaxKeys` (100000 by default) additionally caps how many keys are tracked: beyond it a new key gets no bucket and **passes through** — rate limiting is an availability protection, not access control, and "reject everything once full" would let one key flush produce a site-wide denial of service. Over the limit it answers 429 with `Retry-After`; the error is `ErrRateLimitExceeded` (usable with `errors.Is`), and `OnLimited` customizes the response. With `RPS <= 0` it returns a pass-through middleware and does no accounting, so it can be toggled per environment without restructuring code.
+- **CSRF** combines a double-submit cookie with an `Origin`/`Referer` check. The `csrf_token` cookie is deliberately **not** HttpOnly, because front-end JS must read it to echo it back in `X-CSRF-Token` or a form field; comparison is constant-time. Safe methods only issue the token, and `CSRFTokenFromContext(ctx)` lets server-side templates render it into a form. Failure yields 403 with `ErrCSRFTokenInvalid`. A non-form body (e.g. JSON) is never parsed, so the body typed decoding needs is left intact.
+- **SecureHeaders** treats each field as tri-state: empty means the safe default, `"-"` omits that header, anything else is used verbatim. **HSTS and CSP are off by default** — HSTS is hard to retract once a browser remembers it and a misconfiguration locks out localhost (so it requires `HSTSMaxAge > 0` and, by default, a TLS request), while any generic CSP default would break real pages. The header list is frozen into a slice at registration, and existing headers of the same name are **never overwritten**, so a single route can override one.
+
 ## Graceful shutdown and auth
 
 ```go
@@ -145,7 +194,30 @@ This repository is pre-v1.0.0; the following changes are not backward-compatible
 | B2 | error body `text/plain` → JSON `{"error":{code,message}}` | clients parsing the error body | `WithErrorRenderer` |
 | B3 | request Content-Type strictly verified by default (415 on mismatch) | old clients sending a wrong CT | `WithStrictContentType(false)` |
 | B4 | `LoggerWith` signature `(method,path,status,elapsed)` → `(AccessLog)` | callers | use the struct fields |
+| B5 | `File` gained variadic `opts ...StaticOption` | only function-value references to `File` | existing calls need no change |
 | B5 | 404/405 now carry a JSON response body | tests asserting an empty body | update assertions |
+
+### Security and correctness batch (from `REVIEW.md`)
+
+A batch of verified fixes changed observable behavior. Only items needing caller or operator action are listed; the full list with per-item root causes is in `CHANGELOG.md` under `[Unreleased] / Fixed`.
+
+| # | Change | Impact | Migration |
+|---|---|---|---|
+| S1 | Per-status Prometheus counts moved from `http_requests_total{code=}` to a new family `http_requests_by_code_total` | scrapers, dashboards, alerts | rename the metric; the old shape gave one family inconsistent label keys, which is an invalid exposition format |
+| S2 | `Timeout` answers 504 `application/json` instead of 503 `text/plain` | clients and probes asserting the old status or body | branch on the new `ErrRequestTimeout` sentinel |
+| S3 | `Referrer-Policy` default is now `strict-origin-when-cross-origin` | downstreams needing a full same-level Referer (path and query included) | set the old value explicitly |
+| S4 | CORS force-drops credentials for a wildcard origin | configs pairing `*` with `AllowCredentials` | list the origins explicitly |
+| S5 | CSRF rejects `Origin: null` and compares the scheme | sandboxed iframes, `data:` documents, post-redirect requests, mixed http/https deployments | unify the scheme; those origins are now refused |
+| S6 | `RequestID` also validates the charset `[0-9A-Za-z._-]` | upstreams sending other characters | change the ID format |
+| S7 | `LimitBody` over-limit answers 413 with the unified JSON body | clients asserting the body | update assertions |
+| S8 | Group prefixes are normalized (`/api/` + `/v1/x` → `/api/v1/x`, not `/api//v1/x`) | callers depending on the double-slash URL | use the normalized path |
+| S9 | An error returned by a custom 404/405 handler now yields 500 instead of a silent 200 | custom miss handlers | handle their own errors explicitly |
+| S10 | A form endpoint receiving a non-form Content-Type answers 415 instead of a silent 200 with a zero-value struct | clients sending a wrong CT | fix the CT, or `WithStrictContentType(false)` |
+| S11 | JSON decoding rejects trailing content after the first value | senders emitting `{"a":1} junk` or `{"a":1}{"a":2}` | send one value per body |
+| S12 | `WithErrorHook`'s `status` reports the delivered status once the response is committed | hooks relying on the classified value | recover it with `HTTPStatus(err)` |
+| S13 | Trailing-slash redirects refuse targets starting `//` or `/\` and targets with control characters (treated as a miss, 404) | none | this is an open-redirect fix |
+
+New exported API: `PanicValueOf(err) (any, bool)`, `ErrRequestTimeout`, `RateLimitConfig.MaxKeys`, `CSRFConfig.UseHostPrefixedCookie`, `CSRFHostCookiePrefix`, `MultiContentTypeDecoder`.
 
 ## Status
 

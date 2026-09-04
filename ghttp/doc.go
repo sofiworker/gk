@@ -3,19 +3,27 @@
 // the standard net/http package.
 //
 // 入口按输入组合分函数（GetParams / PostParams / PostBody / PostParamsBody 等），handler 收裸
-// 参数，类型全推断，无包裹容器。params 经 struct tag（path:/query:/header:）绑定,只承载传输层
-// 参数;请求体经 InputSpec[B] 解码(内置 JSONBody[B]/XMLBody[B]/FormBody[B]/TextBody[B],或
-// Body[B](codec) 传自定义解码器),表单文本字段(form: tag)与上传文件(Upload / []Upload 字段)
-// 都归请求体,由 FormBody[B]() 一并解码;输出经 OutputSpec[O] 编码;需完全接管响应时用 RawHandle。
+// 参数，类型全推断，无包裹容器。入口命名恒为 <Method><InputShape>：七种 method（GET / POST /
+// PUT / PATCH / DELETE / HEAD / OPTIONS）各有 None 与 Params 形态，可带请求体的四种
+// （POST / PUT / PATCH / DELETE）另有 Body 与 ParamsBody；GET / HEAD / OPTIONS 不提供 Body
+// 入口，因为按 RFC 9110 它们的请求体没有定义语义。params 经 struct tag（path:/query:/header:）
+// 绑定,只承载传输层参数;请求体经 InputSpec[B] 解码(内置 JSONBody[B]/XMLBody[B]/FormBody[B]/
+// TextBody[B],或 Body[B](codec) 传自定义解码器),表单文本字段(form: tag)与上传文件
+// (Upload / []Upload 字段)都归请求体,由 FormBody[B]() 一并解码;输出经 OutputSpec[O] 编码;
+// 需完全接管响应时用 RawHandle。
 // Entries are split by input shape (GetParams / PostParams / PostBody / PostParamsBody, etc.);
 // handlers take naked parameters with all type parameters inferred and no wrapper
-// container. Params bind via struct tags (path:/query:/header:) and carry only
-// transport parameters; the body is decoded by an InputSpec[B] (built-in
-// JSONBody[B]/XMLBody[B]/FormBody[B]/TextBody[B], or Body[B](codec) for a custom
-// decoder), with form text fields (form: tag) and uploaded files (Upload /
-// []Upload fields) both belonging to the body and decoded together by
-// FormBody[B](); output is encoded by an OutputSpec[O]; use RawHandle to fully
-// own the response.
+// container. Entries are always named <Method><InputShape>: each of the seven methods
+// (GET / POST / PUT / PATCH / DELETE / HEAD / OPTIONS) has None and Params shapes, and
+// the four body-bearing ones (POST / PUT / PATCH / DELETE) additionally have Body and
+// ParamsBody; GET / HEAD / OPTIONS expose no Body entry because per RFC 9110 their
+// request bodies have no defined semantics. Params bind via struct tags
+// (path:/query:/header:) and carry only transport parameters; the body is decoded by
+// an InputSpec[B] (built-in JSONBody[B]/XMLBody[B]/FormBody[B]/TextBody[B], or
+// Body[B](codec) for a custom decoder), with form text fields (form: tag) and
+// uploaded files (Upload / []Upload fields) both belonging to the body and decoded
+// together by FormBody[B](); output is encoded by an OutputSpec[O]; use RawHandle to
+// fully own the response.
 //
 // 核心取向:单一 typed 执行模型 + 显式 RawHandler 逃生;纯 net/http 地基,
 // 不引入 fasthttp 或自管 TCP;性能红利只来自池化上下文与零反射 codec。
@@ -64,10 +72,22 @@
 //   - 中间件：RequestID、Logger、LimitBody 之外，另有 Recovery（panic→500 且不
 //     泄露细节）、CORS（含预检）、Timeout（协作式，尊重池化生命周期）、BasicAuth
 //     （恒定时间比较，认证用户经 BasicAuthUser 下传）、Gzip（按 Content-Type 白名单
-//     条件压缩，gzip.Writer 池化，未挂载零影响）。
+//     条件压缩，gzip.Writer 池化，未挂载零影响）、RateLimit / RateLimitByRoute
+//     （分片令牌桶，默认按 ClientIP 限流，超限 429 + Retry-After，空闲桶自动回收）、
+//     CSRF（双提交 cookie + 同源校验，恒定时间比较）、SecureHeaders（nosniff /
+//     DENY / Referrer-Policy 安全默认，HSTS 与 CSP 需显式开启）。
 //
 //   - 静态资源：Static / StaticFS（支持 os.DirFS 与 embed.FS）、File；默认不列
-//     目录，支持目录索引、自定义索引名、SPA history 回退。
+//     目录，支持目录索引、自定义索引名、SPA history 回退；WithPrecompressed /
+//     WithPrecompressedEncodings 在客户端可接受且磁盘存在 .br / .gz 变体时直接服务
+//     预压缩文件（把压缩成本移到构建期，并自动声明 Vary: Accept-Encoding）。
+//
+//   - OpenAPI 3.1：WithOpenAPI 开启后，注册期从 typed 入口的 params/body/output 类型
+//     收集契约，首次请求时构建一次 spec 并缓存字节，默认在 /openapi.json 暴露
+//     （WithOpenAPIRoute 可改路径或置空只在内存构建，Server.SpecJSON 取字节）。
+//     参数说明复用请求期同一份 BindPlan，故文档与实际绑定行为不会漂移；输出为确定性
+//     字节（同一路由表恒等），可纳入版本控制与契约测试。未开启时不收集、不构建、
+//     不注册路由，零成本。
 //
 //   - 健康检查：Health（liveness）、Ready（readiness，多 Checker）、
 //     NewReadinessGate（运行时开关，用于启动完成/开始排水）。
@@ -86,7 +106,13 @@
 //     BytesOut、Err）；NewMetrics / MetricsRegistry 提供 Prometheus 文本格式的请求
 //     指标（计数/延迟/响应大小/在途请求数，按 MatchedRoute 聚合），零依赖可抓取。
 //
-//   - 参数绑定：params 字段支持 int8/16/32/64、uint*、float*、bool、string 等标量绑定,
+//   - 参数绑定：params 字段支持 int8/16/32/64、uint*、float*、bool、string 等标量,
+//     *T 指针（nil 表示"未提供"，可与显式零值区分）、实现 encoding.TextUnmarshaler
+//     的类型（time.Time、net.IP 等）、[]byte（取原始字节）、[]T / [N]T 列表（重复出现
+//     ?a=1&a=2 与逗号分隔 ?a=1,2 两种风格可混用）、map[string]T / map[string][]T
+//     （query 用 filter[key]=v，header 用 X-Meta- 前缀族或 `*` 收全部头）。无 tag 的
+//     内嵌与嵌套结构体递归展开，公共参数可抽成可复用的结构体；tag 值 "-" 显式跳过字段。
+//     path/query/header 与请求体表单（form: tag）共用同一套绑定引擎，能力完全对等。
 //     按字段类型解析,越界或类型不符报 400（ErrInvalidInput）。本框架不内置校验,
 //     业务规则由 handler 自行判断。
 //
@@ -99,13 +125,30 @@
 //   - Middleware: besides RequestID, Logger, LimitBody, there are Recovery
 //     (panic→500 without leaking details), CORS (with preflight), Timeout
 //     (cooperative, respecting the pooled lifecycle), BasicAuth (constant-time
-//     comparison, authenticated user passed down via BasicAuthUser), and Gzip
+//     comparison, authenticated user passed down via BasicAuthUser), Gzip
 //     (conditional compression per a Content-Type whitelist, gzip.Writer pooled,
-//     zero impact when unmounted).
+//     zero impact when unmounted), RateLimit / RateLimitByRoute (a sharded token
+//     bucket keyed by ClientIP by default, answering 429 + Retry-After over the
+//     limit and reaping idle buckets), CSRF (double-submit cookie plus a
+//     same-origin check, compared in constant time), and SecureHeaders (nosniff /
+//     DENY / Referrer-Policy safe defaults, with HSTS and CSP opt-in).
 //
 //   - Static assets: Static / StaticFS (os.DirFS and embed.FS) and File; no
 //     directory listing by default, with directory index, custom index name, and
-//     SPA history fallback.
+//     SPA history fallback; WithPrecompressed / WithPrecompressedEncodings serve a
+//     pre-compressed .br / .gz variant when the client accepts it and the file
+//     exists (moving compression cost to build time and declaring
+//     Vary: Accept-Encoding automatically).
+//
+//   - OpenAPI 3.1: once WithOpenAPI is enabled, the contract is collected at
+//     registration from each typed entry's params/body/output types, the spec is
+//     built once on the first request and its bytes cached, and it is exposed at
+//     /openapi.json by default (WithOpenAPIRoute changes the path, or an empty path
+//     builds in memory only; Server.SpecJSON returns the bytes). Parameter docs
+//     reuse the very same BindPlan the request path uses, so documentation cannot
+//     drift from actual binding; output is deterministic (identical bytes for one
+//     route table), making it committable and contract-testable. Nothing is
+//     collected, built, or registered when disabled — zero cost.
 //
 //   - Health checks: Health (liveness), Ready (readiness with multiple Checkers),
 //     and NewReadinessGate (a runtime toggle for startup-complete / draining).
@@ -131,9 +174,18 @@
 //     zero-dep and scrapable.
 //
 //   - Parameter binding: params fields accept int8/16/32/64, uint*, float*, bool,
-//     string scalar binding, parsed per field type; out-of-range or type mismatch
-//     yields 400 (ErrInvalidInput). The framework has no built-in validation;
-//     business rules are checked by the handler itself.
+//     and string scalars; *T pointers (nil meaning "not provided", distinguishable
+//     from an explicit zero); types implementing encoding.TextUnmarshaler
+//     (time.Time, net.IP, …); []byte (raw bytes); []T / [N]T lists (repetition
+//     ?a=1&a=2 and comma separation ?a=1,2, mixable); and map[string]T /
+//     map[string][]T (filter[key]=v in a query, an X-Meta- prefix family or `*` for
+//     every header). Untagged embedded and nested structs expand recursively so
+//     shared parameters can be factored into reusable structs, and a "-" tag value
+//     skips a field explicitly. path/query/header and body form fields (form: tag)
+//     share one binding engine, so their capabilities are exactly at parity. Values
+//     are parsed per field type; out-of-range or type mismatch yields 400
+//     (ErrInvalidInput). The framework has no built-in validation; business rules
+//     are checked by the handler itself.
 //
 //   - 实时能力 / Real-time: Response 实现 http.Flusher 与 http.Hijacker(经 Flush /
 //     Hijack 透传底层连接)。在 RawHandle 之上,NewSSEWriter 提供 Server-Sent Events

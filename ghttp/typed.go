@@ -2,8 +2,8 @@ package ghttp
 
 import (
 	"context"
-	"fmt"
 	"net/http"
+	"net/url"
 	"reflect"
 )
 
@@ -57,18 +57,43 @@ func PatchParams[P, O any](r router, path string, out OutputSpec[O], h func(cont
 	return registerParams(r, http.MethodPatch, path, out, h)
 }
 
+// HeadParams HEAD 入口（仅 params,无 body）。HEAD 语义上不返回响应体,故通常配
+// NoContent[O]() 或只依赖 out 写出的响应头;标准库会为 HEAD 自动丢弃响应体。
+// HeadParams is the HEAD entry (params only, no body). HEAD carries no response
+// body by definition, so pair it with NoContent[O]() or rely on the headers out
+// writes; the standard library discards the body for HEAD automatically.
+func HeadParams[P, O any](r router, path string, out OutputSpec[O], h func(context.Context, P) (O, error)) error {
+	return registerParams(r, http.MethodHead, path, out, h)
+}
+
+// OptionsParams OPTIONS 入口（仅 params,无 body）。用于自定义某路由的 OPTIONS 响应
+// (如声明 Allow 或 CORS 头);框架的 CORS 中间件已处理标准预检,此入口用于业务化的
+// OPTIONS 语义。
+// OptionsParams is the OPTIONS entry (params only, no body). Use it to customize a
+// route's OPTIONS response (declaring Allow or CORS headers); the CORS middleware
+// already handles standard preflight, so this entry is for business-level OPTIONS
+// semantics.
+func OptionsParams[P, O any](r router, path string, out OutputSpec[O], h func(context.Context, P) (O, error)) error {
+	return registerParams(r, http.MethodOptions, path, out, h)
+}
+
 // registerParams 是 params-only 入口的共享注册逻辑。
 // registerParams is the shared registration logic for params-only entries.
 func registerParams[P, O any](r router, method, path string, out OutputSpec[O], h func(context.Context, P) (O, error)) error {
 	if out == nil {
 		return ErrMissingOutput
 	}
-	plan, err := buildBindPlan(reflect.TypeOf((*P)(nil)).Elem())
+	pt := reflect.TypeOf((*P)(nil)).Elem()
+	plan, err := buildBindPlan(pt)
 	if err != nil {
 		return err
 	}
 	c := &compiledParams[P, O]{plan: plan, out: out, h: h}
-	return r.register(method, path, c.serve)
+	if err := r.register(method, path, c.serve); err != nil {
+		return err
+	}
+	r.owner().noteRoute(r, method, path, routeDoc{params: pt, out: outputDocOf(out)})
+	return nil
 }
 
 // compiledParams 仅 params(无 body)的类型擦除执行器：注册期建 bindPlan;请求期只运行不反射。
@@ -82,7 +107,13 @@ type compiledParams[P, O any] struct {
 
 func (e *compiledParams[P, O]) serve(ctx context.Context, req *Request, resp *Response) error {
 	var p P
-	if err := e.plan.apply(req, req.Query(), &p); err != nil {
+	// 纯 path 端点跳过 url.ParseQuery；needQuery=true 时才调用 Query()。
+	// Pure-path endpoints skip url.ParseQuery; only call Query() if needQuery=true.
+	var q url.Values
+	if e.plan.needQuery {
+		q = req.Query()
+	}
+	if err := e.plan.apply(req, q, &p); err != nil {
 		return err
 	}
 	out, err := e.h(ctx, p)
@@ -98,11 +129,62 @@ func (e *compiledParams[P, O]) serve(ctx context.Context, req *Request, resp *Re
 // GetNone is the GET entry for endpoints without params or body, returning just
 // output. Suitable for health checks and simple endpoints.
 func GetNone[O any](r router, path string, out OutputSpec[O], h func(context.Context) (O, error)) error {
+	return registerNone(r, http.MethodGet, path, out, h)
+}
+
+// DeleteNone DELETE 入口：无 params 无 body(如删除固定路径的单例资源)。
+// DeleteNone is the DELETE entry without params or body (e.g. deleting a
+// singleton resource at a fixed path).
+func DeleteNone[O any](r router, path string, out OutputSpec[O], h func(context.Context) (O, error)) error {
+	return registerNone(r, http.MethodDelete, path, out, h)
+}
+
+// PostNone POST 入口：无 params 无 body(如触发一个无入参的动作)。
+// PostNone is the POST entry without params or body (e.g. triggering an action
+// that takes no input).
+func PostNone[O any](r router, path string, out OutputSpec[O], h func(context.Context) (O, error)) error {
+	return registerNone(r, http.MethodPost, path, out, h)
+}
+
+// PutNone PUT 入口：无 params 无 body。
+// PutNone is the PUT entry without params or body.
+func PutNone[O any](r router, path string, out OutputSpec[O], h func(context.Context) (O, error)) error {
+	return registerNone(r, http.MethodPut, path, out, h)
+}
+
+// PatchNone PATCH 入口：无 params 无 body。
+// PatchNone is the PATCH entry without params or body.
+func PatchNone[O any](r router, path string, out OutputSpec[O], h func(context.Context) (O, error)) error {
+	return registerNone(r, http.MethodPatch, path, out, h)
+}
+
+// HeadNone HEAD 入口：无 params 无 body。常用于探测资源存在性与元数据。
+// HeadNone is the HEAD entry without params or body, typically probing resource
+// existence and metadata.
+func HeadNone[O any](r router, path string, out OutputSpec[O], h func(context.Context) (O, error)) error {
+	return registerNone(r, http.MethodHead, path, out, h)
+}
+
+// OptionsNone OPTIONS 入口：无 params 无 body。用于业务化的 OPTIONS 语义(标准 CORS
+// 预检由 CORS 中间件处理)。
+// OptionsNone is the OPTIONS entry without params or body, for business-level
+// OPTIONS semantics (standard CORS preflight is handled by the CORS middleware).
+func OptionsNone[O any](r router, path string, out OutputSpec[O], h func(context.Context) (O, error)) error {
+	return registerNone(r, http.MethodOptions, path, out, h)
+}
+
+// registerNone 是无 params 无 body 入口的共享注册逻辑。
+// registerNone is the shared registration logic for entries without params or body.
+func registerNone[O any](r router, method, path string, out OutputSpec[O], h func(context.Context) (O, error)) error {
 	if out == nil {
 		return ErrMissingOutput
 	}
 	c := &compiledNone[O]{out: out, h: h}
-	return r.register(http.MethodGet, path, c.serve)
+	if err := r.register(method, path, c.serve); err != nil {
+		return err
+	}
+	r.owner().noteRoute(r, method, path, routeDoc{out: outputDocOf(out)})
+	return nil
 }
 
 // compiledNone 是无 params 无 body 的极简执行器：只调业务函数再编码输出。
@@ -144,25 +226,49 @@ func PatchParamsBody[P, B, O any](r router, path string, in InputSpec[B], out Ou
 	return registerParamsBody(r, http.MethodPatch, path, in, out, h)
 }
 
-// registerParamsBody 是 params+body 入口的共享注册逻辑；in 为 nil 时报 ErrMissingCodec。
+// DeleteParamsBody DELETE 入口：params + 请求体。RFC 9110 允许 DELETE 携带请求体
+// (语义由服务端定义),批量删除等场景需要它。
+// DeleteParamsBody is the DELETE entry with params plus a body. RFC 9110 permits a
+// body on DELETE (with server-defined semantics), which batch deletion needs.
+func DeleteParamsBody[P, B, O any](r router, path string, in InputSpec[B], out OutputSpec[O], h func(context.Context, P, B) (O, error)) error {
+	return registerParamsBody(r, http.MethodDelete, path, in, out, h)
+}
+
+// registerParamsBody 是 params+body 入口的共享注册逻辑；in 为 nil 或内部无解码器时报
+// ErrMissingCodec。
 // registerParamsBody is the shared registration logic for params+body entries; a
-// nil in returns ErrMissingCodec.
+// nil in, or one holding no decoder, returns ErrMissingCodec.
 func registerParamsBody[P, B, O any](r router, method, path string, in InputSpec[B], out OutputSpec[O], h func(context.Context, P, B) (O, error)) error {
 	if out == nil {
 		return ErrMissingOutput
 	}
-	if in == nil {
+	// 两道检查各挡一种形态:in == nil 挡真正的 nil 接口值,codecMissing 挡 Body[B](nil)
+	// 造出的非 nil 接口值(内部 decoder 为 nil)。少了后者,取 Content-Type 时会 panic。
+	// The two checks catch different shapes: in == nil catches a genuinely nil interface
+	// value, codecMissing catches the non-nil interface value Body[B](nil) builds (with a
+	// nil decoder inside). Without the latter, reading the Content-Type panics.
+	if in == nil || in.codecMissing() {
 		return ErrMissingCodec
 	}
-	plan, err := buildBindPlan(reflect.TypeOf((*P)(nil)).Elem())
+	pt := reflect.TypeOf((*P)(nil)).Elem()
+	plan, err := buildBindPlan(pt)
 	if err != nil {
 		return err
 	}
 	c := &compiledParamsBody[P, B, O]{plan: plan, in: in, out: out, h: h}
 	if r.owner().strictContentType {
-		c.wantCT = in.contentType()
+		c.wantCT = in.contentTypes()
 	}
-	return r.register(method, path, c.serve)
+	if err := r.register(method, path, c.serve); err != nil {
+		return err
+	}
+	r.owner().noteRoute(r, method, path, routeDoc{
+		params: pt,
+		body:   reflect.TypeOf((*B)(nil)).Elem(),
+		bodyCT: in.contentType(),
+		out:    outputDocOf(out),
+	})
+	return nil
 }
 
 // compiledParamsBody params+body 的类型擦除执行器：两个裸参数分离(传输 params vs 纯净 body)。
@@ -173,22 +279,32 @@ type compiledParamsBody[P, B, O any] struct {
 	in   InputSpec[B]
 	out  OutputSpec[O]
 	h    func(ctx context.Context, p P, b B) (O, error)
-	// wantCT 非空时,请求期校验请求 Content-Type 与之一致,不符则 415。注册期由
-	// strictContentType 决定是否填充(空=不校验)。
-	// wantCT, when non-empty, makes the request verify its Content-Type matches
-	// it, yielding 415 on mismatch. Filled at registration per strictContentType
-	// (empty = no check).
-	wantCT string
+	// wantCT 非空时,请求期校验请求 Content-Type 属于该集合,不符则 415。注册期由
+	// strictContentType 决定是否填充(空=不校验)。集合形态是为了让表单这类接受多个
+	// Content-Type 的契约也能被严格校验。
+	// wantCT, when non-empty, makes the request verify its Content-Type belongs to
+	// the set, yielding 415 otherwise. Filled at registration per strictContentType
+	// (empty = no check). It is a set so contracts accepting several Content-Types,
+	// such as forms, can also be strictly checked.
+	wantCT []string
 }
 
 func (e *compiledParamsBody[P, B, O]) serve(ctx context.Context, req *Request, resp *Response) error {
 	var p P
 	var b B
-	if err := e.plan.apply(req, req.Query(), &p); err != nil {
+	// 纯 path+body 端点跳过 url.ParseQuery；needQuery=true 时才调用 Query()。
+	// Pure-path+body endpoints skip url.ParseQuery; only call Query() if needQuery=true.
+	var q url.Values
+	if e.plan.needQuery {
+		q = req.Query()
+	}
+	if err := e.plan.apply(req, q, &p); err != nil {
 		return err
 	}
-	if e.wantCT != "" && !contentTypeMatches(req.Header.Get("Content-Type"), e.wantCT) {
-		return fmt.Errorf("%w: got %q want %q", ErrUnsupportedMediaType, mediaType(req.Header.Get("Content-Type")), e.wantCT)
+	if len(e.wantCT) != 0 {
+		if got := req.Header.Get("Content-Type"); !contentTypeIn(got, e.wantCT) {
+			return unsupportedMediaTypeError(got, e.wantCT)
+		}
 	}
 	if err := e.in.decode(req, &b); err != nil {
 		return err
@@ -221,21 +337,39 @@ func PatchBody[B, O any](r router, path string, in InputSpec[B], out OutputSpec[
 	return registerBody(r, http.MethodPatch, path, in, out, h)
 }
 
-// registerBody 是仅 body 入口的共享注册逻辑；in 为 nil 时报 ErrMissingCodec。
+// DeleteBody DELETE 入口：无 params,只接收请求体(如按条件批量删除)。
+// DeleteBody is the DELETE entry with no params, receiving only a body (e.g.
+// conditional batch deletion).
+func DeleteBody[B, O any](r router, path string, in InputSpec[B], out OutputSpec[O], h func(context.Context, B) (O, error)) error {
+	return registerBody(r, http.MethodDelete, path, in, out, h)
+}
+
+// registerBody 是仅 body 入口的共享注册逻辑；in 为 nil 或内部无解码器时报 ErrMissingCodec。
 // registerBody is the shared registration logic for body-only entries; returns
-// ErrMissingCodec if in is nil.
+// ErrMissingCodec if in is nil or holds no decoder.
 func registerBody[B, O any](r router, method, path string, in InputSpec[B], out OutputSpec[O], h func(context.Context, B) (O, error)) error {
 	if out == nil {
 		return ErrMissingOutput
 	}
-	if in == nil {
+	// 见 registerParamsBody:两道检查分别挡 nil 接口值与内含 nil decoder 的非 nil 接口值。
+	// See registerParamsBody: the two checks catch a nil interface value and a non-nil
+	// one holding a nil decoder, respectively.
+	if in == nil || in.codecMissing() {
 		return ErrMissingCodec
 	}
 	c := &compiledBody[B, O]{in: in, out: out, h: h}
 	if r.owner().strictContentType {
-		c.wantCT = in.contentType()
+		c.wantCT = in.contentTypes()
 	}
-	return r.register(method, path, c.serve)
+	if err := r.register(method, path, c.serve); err != nil {
+		return err
+	}
+	r.owner().noteRoute(r, method, path, routeDoc{
+		body:   reflect.TypeOf((*B)(nil)).Elem(),
+		bodyCT: in.contentType(),
+		out:    outputDocOf(out),
+	})
+	return nil
 }
 
 // compiledBody 是仅 body 场景的执行器：params 为空，只解码 body。
@@ -247,13 +381,15 @@ type compiledBody[B, O any] struct {
 	h   func(context.Context, B) (O, error)
 	// wantCT 见 compiledParamsBody.wantCT。
 	// wantCT: see compiledParamsBody.wantCT.
-	wantCT string
+	wantCT []string
 }
 
 func (e *compiledBody[B, O]) serve(ctx context.Context, req *Request, resp *Response) error {
 	var b B
-	if e.wantCT != "" && !contentTypeMatches(req.Header.Get("Content-Type"), e.wantCT) {
-		return fmt.Errorf("%w: got %q want %q", ErrUnsupportedMediaType, mediaType(req.Header.Get("Content-Type")), e.wantCT)
+	if len(e.wantCT) != 0 {
+		if got := req.Header.Get("Content-Type"); !contentTypeIn(got, e.wantCT) {
+			return unsupportedMediaTypeError(got, e.wantCT)
+		}
 	}
 	if err := e.in.decode(req, &b); err != nil {
 		return err
