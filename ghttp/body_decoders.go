@@ -17,6 +17,41 @@ import (
 // form; the rest spills to temp files (matches net/http's 32 MiB default).
 const defaultMaxMultipartMemory = 32 << 20
 
+// defaultMaxFormBytes 是 URL 编码表单体的读取上限，与 net/http 为
+// PostFormValue/ParseForm 设的 10 MiB 一致：POST/PUT/PATCH 走 ParseForm 时已被此上限
+// 保护，唯独其余方法（DELETE 等）由本包自行读体，若不设同一上限就等于“换个 method 参数
+// 即可绕过限额”，让 opt-in 的 LimitBody 形同虚设。
+// defaultMaxFormBytes caps a URL-encoded body at the same 10 MiB net/http applies
+// to ParseForm. POST/PUT/PATCH get that protection free via ParseForm; only the
+// remaining methods (DELETE, …) read the body here, so without the same cap the
+// limit would be bypassable by switching the method, making the opt-in LimitBody
+// moot.
+const defaultMaxFormBytes = 10 << 20
+
+// defaultMaxTextBodyBytes 是 text/plain 请求体的读取上限。textCodec 必须把整块体读进
+// 内存才能交给 *string/*[]byte，而 JSON/XML 解码器是流式的（边读边解析，内存有界），
+// 因此只有这一处需要额外设防。
+// defaultMaxTextBodyBytes caps a text/plain body. textCodec must hold the whole
+// body in memory to hand it to a *string/*[]byte, whereas the JSON/XML decoders
+// stream (bounded memory), so this is the only site needing the extra guard.
+const defaultMaxTextBodyBytes = 10 << 20
+
+// readAllCapped 读取至多 limit 字节；超出即返回 ErrRequestEntityTooLarge（错误链映射
+// 413），从而在解码层自身设限，不依赖调用方是否挂了 opt-in 的 LimitBody。
+// readAllCapped reads at most limit bytes and returns ErrRequestEntityTooLarge
+// beyond it (the error chain maps it to 413), so the cap lives in the decoder
+// itself rather than depending on whether the caller mounted the opt-in LimitBody.
+func readAllCapped(r io.Reader, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, ErrRequestEntityTooLarge
+	}
+	return data, nil
+}
+
 // uploadType / sliceUploadType 是 Upload 与 []Upload 的反射类型,供 form 解码识别文件字段。
 // 包级缓存,避免每次解码重复 reflect.TypeOf。
 // uploadType / sliceUploadType are the reflect types of Upload and []Upload, used
@@ -128,14 +163,19 @@ func parseURLEncodedBody(req *Request) (url.Values, error) {
 		}
 		return req.PostForm, nil
 	}
-	// 其余方法(DELETE 等)标准库不读体,自行读取。上游 LimitBody 的 MaxBytesReader 仍在
-	// req.Body 上生效,故此处无需另设上限;错误经 decodeError 分类以保留 413 语义。
-	// For other methods (DELETE, …) the stdlib does not read the body, so read it
-	// here. An upstream LimitBody MaxBytesReader still wraps req.Body, so no extra cap
-	// is needed; errors go through decodeError to preserve the 413 mapping.
-	raw, err := io.ReadAll(req.Body)
+	// 其余方法(DELETE 等)标准库不读体,在此自行读取,故必须自己设帽:LimitBody 是
+	// opt-in 中间件,没挂上的服务此前可以被一条超大 DELETE 体直接打满内存。
+	// For other methods (DELETE, …) the stdlib does not read the body, so we do — and
+	// must cap it here: LimitBody is opt-in, so a server without it could be driven
+	// out of memory by one oversized DELETE body.
+	raw, err := readAllCapped(req.Body, defaultMaxFormBytes)
 	if err != nil {
-		return nil, decodeError(err)
+		// 413 原样返回：decodeError 会把一切错误包成 ErrInvalidInput，而分类表先匹配
+		// ErrInvalidInput → 400，超限就被误报成解析失败。
+		// Return the 413 verbatim: decodeError wraps everything as ErrInvalidInput, and
+		// the classifier matches ErrInvalidInput first, so an oversized body would be
+		// misreported as a parse failure.
+		return nil, err
 	}
 	values, err := url.ParseQuery(string(raw))
 	if err != nil {
@@ -345,9 +385,11 @@ func (textCodec) Decode(req *Request, v any) error {
 	if req.Body == nil {
 		return fmt.Errorf("%w: empty body", ErrInvalidInput)
 	}
-	data, err := io.ReadAll(req.Body)
+	data, err := readAllCapped(req.Body, defaultMaxTextBodyBytes)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidInput, err)
+		// 同上：保留 413 语义，不被包成 400。
+		// As above: preserve the 413 rather than wrapping it into a 400.
+		return err
 	}
 	switch dst := v.(type) {
 	case *string:

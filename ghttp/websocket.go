@@ -49,8 +49,19 @@ type WSHandlerFunc func(ctx context.Context, req *Request, conn *websocket.Conn)
 // WebSocket. Construct it via NewWSUpgrader; it is reusable (concurrency-safe, as
 // gorilla.Upgrader carries no per-connection state).
 type WSUpgrader struct {
-	up websocket.Upgrader
+	up        websocket.Upgrader
+	readLimit int64
 }
+
+// defaultWSReadLimit 是升级后对单条消息的字节上限。gorilla 默认【不限】读长度，于是任意
+// 已连接的客户端都能以持续大帧把服务端内存打满（这是 WS 最常见的 DoS 面之一），而本包
+// 此前没有任何设置点。取 1 MiB：足以覆盖控制面/JSON 消息，又能挡住无界洪泛。
+// defaultWSReadLimit caps a single message's size after the upgrade. gorilla places
+// no read limit by default, so any connected client can exhaust server memory with
+// ever-larger frames (one of the most common WS DoS surfaces), and this package
+// previously offered no place to set it. 1 MiB covers control/JSON messages while
+// blocking unbounded flooding.
+const defaultWSReadLimit = 1 << 20
 
 // WSOption 配置 WSUpgrader。
 // WSOption configures a WSUpgrader.
@@ -62,7 +73,7 @@ type WSOption func(*WSUpgrader)
 // default CheckOrigin (rejects cross-origin: only same-origin or Origin-less
 // requests pass); allow cross-origin explicitly via WithWSCheckOrigin.
 func NewWSUpgrader(opts ...WSOption) *WSUpgrader {
-	u := &WSUpgrader{}
+	u := &WSUpgrader{readLimit: defaultWSReadLimit}
 	for _, opt := range opts {
 		opt(u)
 	}
@@ -114,6 +125,16 @@ func WithWSCompression(enabled bool) WSOption {
 	return func(u *WSUpgrader) { u.up.EnableCompression = enabled }
 }
 
+// WithWSReadLimit 设置升级后单条消息的字节上限；传 0 或负值表示【不限】（显式退回
+// gorilla 默认行为）。该上限是读侧唯一的内存防线，改大前需确认消息尺寸分布。
+// WithWSReadLimit sets the per-message byte cap after the upgrade; 0 or a negative
+// value means NO cap, explicitly opting back into gorilla's default. This limit is
+// the only memory defense on the read side, so raise it only with a known message
+// size distribution.
+func WithWSReadLimit(n int64) WSOption {
+	return func(u *WSUpgrader) { u.readLimit = n }
+}
+
 // Upgrade 在 RawHandle 内把 resp/req 升级为 WebSocket 连接。成功时 resp 已被 Hijack、
 // 握手响应已写出,返回的 *websocket.Conn 归调用方所有(需自行 Close);失败时 gorilla
 // 已写出相应的 HTTP 错误响应,调用方通常直接返回 err 即可。responseHeader 可携带随
@@ -125,7 +146,15 @@ func WithWSCompression(enabled bool) WSOption {
 // returns err. responseHeader may carry extra headers returned with the 101 (e.g.
 // Set-Cookie); pass nil for none.
 func (u *WSUpgrader) Upgrade(resp *Response, req *Request, responseHeader http.Header) (*websocket.Conn, error) {
-	return u.up.Upgrade(resp, req.Request, responseHeader)
+	conn, err := u.up.Upgrade(resp, req.Request, responseHeader)
+	if err != nil {
+		return nil, err
+	}
+	// 读上限必须在升级成功后逐连接设置（gorilla 的限制是连接级而非 Upgrader 级）。
+	// The read limit is per-connection in gorilla, so it must be set after the
+	// upgrade rather than on the Upgrader.
+	conn.SetReadLimit(u.readLimit)
+	return conn, nil
 }
 
 // ServeWS 注册一个 GET 端点作为 WebSocket 升级点:请求到达时用 up 升级,成功则调用
