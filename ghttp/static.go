@@ -301,7 +301,7 @@ func pickPrecompressed(req *Request, fsys fs.FS, name string, cfg staticConfig) 
 		return precompressedVariant{}, "", false
 	}
 	for _, v := range cfg.precompressed {
-		if !acceptsEncoding(ae, v.encoding) {
+		if !AcceptsEncoding(ae, v.encoding) {
 			continue
 		}
 		vname := name + v.suffix
@@ -314,12 +314,21 @@ func pickPrecompressed(req *Request, fsys fs.FS, name string, cfg staticConfig) 
 	return precompressedVariant{}, "", false
 }
 
-// acceptsEncoding 报告 Accept-Encoding 头是否接受编码 enc。它按 token 切分并识别
-// "q=0" 表示的显式拒绝(如 "gzip;q=0"),避免把拒绝误读为接受。
-// acceptsEncoding reports whether an Accept-Encoding header admits coding enc. It
+// AcceptsEncoding 报告 Accept-Encoding 头是否接受编码 enc。它按 token 切分并识别
+// "q=0" 表示的显式拒绝(如 "gzip;q=0"),避免把拒绝误读为接受；通配符 "*" 接受任意编码。
+//
+// 它由静态服务与 gzip 中间件共享：两处若各写一套解析，就会在 `*`、q 值等边界上漂移，
+// 出现"预压缩文件按 * 命中、动态 gzip 却不压"这类不一致。单一实现保证两者同判。
+// AcceptsEncoding reports whether an Accept-Encoding header admits coding enc. It
 // splits on tokens and honors an explicit refusal expressed as "q=0" (e.g.
-// "gzip;q=0"), so a refusal is not misread as acceptance.
-func acceptsEncoding(header, enc string) bool {
+// "gzip;q=0"), so a refusal is not misread as acceptance; the wildcard "*" admits any
+// encoding.
+//
+// It is shared by the static service and the gzip middleware: two independent parsers
+// drift on edges like `*` and q-values, producing inconsistencies such as "a
+// precompressed file is served for `*` but dynamic gzip declines to compress". One
+// implementation keeps them agreeing.
+func AcceptsEncoding(header, enc string) bool {
 	for _, part := range strings.Split(header, ",") {
 		token, params, _ := strings.Cut(strings.TrimSpace(part), ";")
 		token = strings.TrimSpace(token)

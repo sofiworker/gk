@@ -749,8 +749,8 @@ func TestAcceptsEncoding(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := acceptsEncoding(c.header, c.enc); got != c.want {
-				t.Errorf("acceptsEncoding(%q, %q)=%v, want %v", c.header, c.enc, got, c.want)
+			if got := AcceptsEncoding(c.header, c.enc); got != c.want {
+				t.Errorf("AcceptsEncoding(%q, %q)=%v, want %v", c.header, c.enc, got, c.want)
 			}
 		})
 	}

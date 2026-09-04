@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 )
@@ -128,7 +127,7 @@ func Gzip(opts ...GzipOption) Middleware {
 			// cache stores the uncompressed response as the only variant, or feeds
 			// the gzip one to clients that cannot decode it.
 			ensureVary(resp.Header(), "Accept-Encoding")
-			if !acceptsGzip(req.Header.Get("Accept-Encoding")) {
+			if !AcceptsEncoding(req.Header.Get("Accept-Encoding"), "gzip") {
 				return next(ctx, req, resp)
 			}
 			orig := resp.ResponseWriter
@@ -290,29 +289,6 @@ func ensureVary(h http.Header, value string) {
 		}
 	}
 	h.Add("Vary", value)
-}
-
-// acceptsGzip 判断 Accept-Encoding 是否含 gzip(带 q 值解析,q<=0 视为不接受)。
-// acceptsGzip reports whether Accept-Encoding includes gzip (q-values honored;
-// q<=0 counts as not accepted).
-func acceptsGzip(header string) bool {
-	for _, part := range strings.Split(header, ",") {
-		fields := strings.Split(part, ";")
-		token := strings.TrimSpace(fields[0])
-		if !strings.EqualFold(token, "gzip") {
-			continue
-		}
-		for _, param := range fields[1:] {
-			param = strings.TrimSpace(param)
-			if strings.HasPrefix(param, "q=") {
-				if q, err := strconv.ParseFloat(strings.TrimPrefix(param, "q="), 64); err == nil && q <= 0 {
-					return false
-				}
-			}
-		}
-		return true
-	}
-	return false
 }
 
 // bodyAllowed 报告状态码是否允许携带响应体(204/304/1xx 不允许)。
