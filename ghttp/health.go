@@ -3,7 +3,9 @@ package ghttp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -53,8 +55,34 @@ func Health(m *Server, path string) error {
 // check's status. For a K8s readinessProbe. A checkTimeout<=0 imposes no per-check
 // timeout.
 func Ready(m *Server, path string, checkTimeout time.Duration, checks ...Checker) error {
+	return ReadyWith(m, path, checkTimeout, true, checks...)
+}
+
+// ReadyWith 与 Ready 相同，并决定是否把【失败原因原文】写进响应 JSON。
+// details=true（Ready 的默认）报原因但强制单行限长；details=false 只报 "fail"。
+//
+// 两种模式都是合理选择，取决于探测端点的可达范围：原因文本常含依赖的地址与
+// 凭据线索（`dial tcp 10.0.3.7:5432: connection refused`、含 DSN 片段的解析错误），
+// 对公网可达的探测端点应改用 details=false 把内部拓扑收在服务端日志里；
+// 而仅对集群内网开放时，原因（含本包自身的 ErrShuttingDown="draining"）是有价值的
+// 诊断信息，默认保留。
+// ReadyWith is Ready with a switch for whether the raw failure reason goes into the
+// response JSON. details=true (Ready's default) reports the reason but forces it onto
+// one bounded line; details=false reports only "fail".
+//
+// Either choice is legitimate depending on the endpoint's reachability: reason text
+// routinely carries dependency addresses and credential hints
+// (`dial tcp 10.0.3.7:5432: connection refused`, parse errors embedding DSN fragments),
+// so a probe reachable from the public internet should use details=false and keep the
+// internal topology in server logs. When the probe is cluster-internal only, the
+// reason — including this package's own ErrShuttingDown="draining" — is valuable
+// diagnostic information, hence the default keeps it.
+func ReadyWith(m *Server, path string, checkTimeout time.Duration, details bool, checks ...Checker) error {
+	if err := validateCheckers(checks); err != nil {
+		return err
+	}
 	handler := func(ctx context.Context, req *Request, resp *Response) error {
-		result := runChecks(ctx, checkTimeout, checks)
+		result := runChecks(ctx, checkTimeout, checks, details)
 		code := http.StatusOK
 		if !result.healthy {
 			code = http.StatusServiceUnavailable
@@ -84,7 +112,7 @@ func (r readyResult) body() map[string]any {
 
 // runChecks 顺序运行所有检查项，收集结果；每项可选加 timeout。
 // runChecks runs all checks sequentially, collecting results; each may get a timeout.
-func runChecks(ctx context.Context, timeout time.Duration, checks []Checker) readyResult {
+func runChecks(ctx context.Context, timeout time.Duration, checks []Checker, details bool) readyResult {
 	res := readyResult{healthy: true, checks: make(map[string]string, len(checks))}
 	for _, c := range checks {
 		cctx := ctx
@@ -96,14 +124,71 @@ func runChecks(ctx context.Context, timeout time.Duration, checks []Checker) rea
 		if cancel != nil {
 			cancel()
 		}
-		if err != nil {
-			res.healthy = false
-			res.checks[c.Name] = err.Error()
-		} else {
+		switch {
+		case err == nil:
 			res.checks[c.Name] = "ok"
+		case details:
+			res.healthy = false
+			// 即便开启细节，也必须压成单行并限长：错误文本可能来自下游（含换行的驱动
+			// 报错、超长 DSN），JSON 里塞整段堆栈既无益也放大响应体。
+			// Even with details on, collapse to one line and bound the length: text from a
+			// downstream (multi-line driver errors, long DSNs) adds nothing and inflates
+			// the response.
+			res.checks[c.Name] = truncateOneLine(err.Error(), maxHealthDetailLen)
+		default:
+			res.healthy = false
+			res.checks[c.Name] = "fail"
 		}
 	}
 	return res
+}
+
+// maxHealthDetailLen 限制开启细节时单条原因的长度。
+// maxHealthDetailLen bounds one failure reason's length when details are enabled.
+const maxHealthDetailLen = 200
+
+// validateCheckers 在注册期挡住会导致请求期 panic 或响应歧义的检查项定义。
+// ① Check 为 nil：请求期 `c.Check(cctx)` 空指针 panic，而探针往往是无鉴权的公开端点，
+//
+//	一次构造不良的注册就永久挂死该路径。
+//
+// ② Name 为空或重复：结果 map 以 Name 为键，重名会让后一项静默覆盖前一项，运维看到的
+//
+//	"某依赖 ok" 实际来自另一个依赖——比缺少信息更糟，是给出错误的信息。
+//
+// validateCheckers refuses, at registration, checker definitions that would panic at
+// request time or make the response ambiguous. (1) A nil Check panics on
+// `c.Check(cctx)`, and probes are typically unauthenticated public endpoints, so one bad
+// registration wedges the path permanently. (2) An empty or duplicated Name keys the
+// result map, so a later check silently overwrites an earlier one and "dependency X is
+// ok" in the response actually came from a different dependency — worse than missing
+// information, it is wrong information.
+func validateCheckers(checks []Checker) error {
+	seen := make(map[string]bool, len(checks))
+	for i, c := range checks {
+		if c.Check == nil {
+			return fmt.Errorf("%w: checker %q (index %d) has a nil Check", ErrInvalidParam, c.Name, i)
+		}
+		if c.Name == "" {
+			return fmt.Errorf("%w: checker at index %d has an empty Name", ErrInvalidParam, i)
+		}
+		if seen[c.Name] {
+			return fmt.Errorf("%w: duplicate checker name %q; results are keyed by name and would overwrite each other", ErrInvalidParam, c.Name)
+		}
+		seen[c.Name] = true
+	}
+	return nil
+}
+
+// truncateOneLine 把多行文本折叠为单行并限长。
+// truncateOneLine collapses multi-line text into one line and bounds its length.
+func truncateOneLine(s string, max int) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
 }
 
 // registerProbe 为探针路径注册 GET 与 HEAD。

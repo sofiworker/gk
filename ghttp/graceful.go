@@ -130,6 +130,14 @@ func (s *Server) RunGraceful(addr string, opts ...GracefulOption) error {
 	}
 }
 
+// ErrShutdownTimedOut 表示排水未在 shutdownTimeout 内完成，进程改为【强制关闭】：仍有
+// 请求在进行中而被中断。它不是启动失败，但代表一次有损关闭，调用方应据此告警或调大超时。
+// ErrShutdownTimedOut reports that the drain did not finish within shutdownTimeout and
+// the process force-closed instead, interrupting requests still in flight. It is not a
+// startup failure, but it is a lossy shutdown worth alerting on or raising the timeout
+// for.
+var ErrShutdownTimedOut = errors.New("ghttp: graceful shutdown timed out; connections were force-closed")
+
 // gracefulStop 执行摘流→等待→排水→(超时)强关,并汇合 Run 的最终返回值。
 // gracefulStop performs drain-readiness → wait → drain → (timeout) force-close,
 // then joins Run's final return value.
@@ -149,9 +157,11 @@ func (s *Server) gracefulStop(cfg *gracefulConfig, runErr <-chan error) error {
 	shutCtx, cancel := context.WithTimeout(context.Background(), cfg.shutdownTimeout)
 	defer cancel()
 	err := s.Shutdown(shutCtx)
+	timedOut := false
 	if err != nil && errors.Is(err, context.DeadlineExceeded) {
 		// ④ 排水超时:强制关闭,中断残留连接。
 		// (4) Drain timed out: force-close, interrupting lingering connections.
+		timedOut = true
 		_ = s.Close()
 	}
 	// 汇合 Run 的返回:正常关闭它返回 ErrServerClosed,这里归一为 nil;排水阶段本身
@@ -164,6 +174,19 @@ func (s *Server) gracefulStop(cfg *gracefulConfig, runErr <-chan error) error {
 	}
 	if runResult != nil && !errors.Is(runResult, ErrServerClosed) {
 		return runResult
+	}
+	// 排水超时不能被归一为"正常关闭"：强制关闭会【中断】进行中的请求（长连接、大文件、
+	// 慢查询），调用方必须能区分"排空后干净退出"与"掐断了还在跑的请求"。运维据此决定是
+	// 否需要调大 shutdownTimeout、是否有客户端因此收到截断响应；归一为 nil 会让这类事故
+	// 在启动日志里彻底隐形，而进程退出码仍是 0。
+	// A timed-out drain must not be normalized into "clean shutdown": force-closing
+	// INTERRUPTS in-flight requests (long-lived connections, large files, slow queries),
+	// and the caller must be able to tell an emptied-and-clean exit from one that cut off
+	// work still running — that decides whether to raise shutdownTimeout or whether
+	// clients received truncated bodies. Collapsing it to nil hides the incident from the
+	// startup log while the process still exits 0.
+	if timedOut {
+		return ErrShutdownTimedOut
 	}
 	return nil
 }

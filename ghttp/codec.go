@@ -135,12 +135,22 @@ func (jsonCodec) Decode(req *Request, v any) error {
 	err := dec.Decode(v)
 	if err != nil {
 		if errors.Is(err, io.EOF) {
-			// 空请求体:v 保持零值。这【不是】错误——GET 之外的方法允许无体请求,且本框架
-			// 不内置校验,是否必填由业务判断。此处显式注明,以免读者误以为漏了处理。
-			// An empty body: v stays zero. This is NOT an error — non-GET methods may send
-			// no body, and this framework has no built-in validation, so requiredness is
-			// the business's call. Stated explicitly so readers do not think it was
-			// overlooked.
+			// 空请求体：v 保持零值。这通常【不是】错误——本框架不内置校验，是否必填由业务
+			// 判断。但“客户端声明了 body 而实际一个字节都没到”是另一回事：那是传输被截断
+			// （连接中断、半写请求），把它当成功会让 handler 拿着【全零结构体】继续执行——
+			// 一次注册表单变成“用户名=空、密码=空”仍然 200。故仅在明确声明了正长度时报错，
+			// 长度未知（chunked / -1）或为 0 时保持宽容。
+			// An empty body leaves v at its zero value, which usually is NOT an error: this
+			// framework has no built-in validation, so requiredness is the business's call.
+			// But "the client declared a body while not one byte arrived" is different — that
+			// is a truncated transfer (dropped connection, half-written request), and calling
+			// it success lets the handler proceed with an ALL-ZERO struct: a signup request
+			// becomes "empty username, empty password" and still returns 200. So report it
+			// only when a positive length was declared, staying lenient when the length is
+			// unknown (chunked / -1) or zero.
+			if req.ContentLength > 0 {
+				return fmt.Errorf("%w: body of %d bytes ended before any JSON value", ErrInvalidInput, req.ContentLength)
+			}
 			return nil
 		}
 		return decodeError(err)
@@ -184,8 +194,39 @@ func (xmlCodec) Decode(req *Request, v any) error {
 	if req.Body == nil {
 		return fmt.Errorf("%w: empty body", ErrInvalidInput)
 	}
-	if err := xml.NewDecoder(req.Body).Decode(v); err != nil && !errors.Is(err, io.EOF) {
+	dec := xml.NewDecoder(req.Body)
+	err := dec.Decode(v)
+	if err != nil {
+		// 与 JSON 同一立场：声明了正长度却读到 EOF 属于截断，不能当空 body 成功。
+		// Same stance as JSON: a declared positive length that yields EOF is truncation,
+		// not a successful empty body.
+		if errors.Is(err, io.EOF) {
+			if req.ContentLength > 0 {
+				return fmt.Errorf("%w: body of %d bytes ended before any XML element", ErrInvalidInput, req.ContentLength)
+			}
+			return nil
+		}
 		return decodeError(err)
+	}
+	// 拒绝首个元素之后的内容：Decode 只读一个元素就返回，于是 `<User>…</User><User>…</User>`
+	// 会静默按第一个处理，与链路上另一个解析器可能取到的第二个不一致（请求混淆一类）。
+	// XML 没有 json.Decoder.More，需自行推进到下一个非字符令牌。
+	// Reject content after the first element: Decode returns after one element, so
+	// `<User>…</User><User>…</User>` is silently handled as the first while another parser
+	// on the path may take the second (a request-confusion class). XML lacks
+	// json.Decoder.More, so advance to the next non-character token manually.
+	for {
+		tok, terr := dec.Token()
+		if terr == io.EOF {
+			break
+		}
+		if terr != nil {
+			return decodeError(terr)
+		}
+		if _, isChar := tok.(xml.CharData); isChar {
+			continue
+		}
+		return fmt.Errorf("%w: unexpected trailing content after the XML document", ErrInvalidInput)
 	}
 	return nil
 }
