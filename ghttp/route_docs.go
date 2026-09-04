@@ -59,9 +59,9 @@ type routeEntry struct {
 	// tags are OpenAPI tags derived from the group (its prefix's first segment), so
 	// endpoints of one group cluster together in the document.
 	tags []string
-	// summary 是端点摘要,由 WithRouteSummary 之类的后续能力填充;当前留空。
-	// summary is the endpoint summary, to be filled by later capabilities such as
-	// WithRouteSummary; currently left empty.
+	// summary 是端点摘要，预留给后续能力，当前未被填充。
+	// summary is the endpoint summary, reserved for a future capability and not
+	// populated today.
 	summary string
 }
 

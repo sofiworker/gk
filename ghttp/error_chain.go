@@ -100,17 +100,17 @@ func classifyError(err error) (status int, code string) {
 	return http.StatusInternalServerError, "internal"
 }
 
-// codeForStatus 为一个状态码返回稳定的 code 串(供 StatusCoder 路径与 miss 复用)。
-// codeForStatus returns a stable code string for a status (shared by the
-// StatusCoder path and miss handling).
 // isValidHTTPStatus 报告 status 是否为 WriteHeader 可接受的状态码。net/http 规定
-// 合法范围是 100–599,越界会 panic("invalid WriteHeader code")。
+// 合法范围是 100–599，越界会 panic("invalid WriteHeader code")。
 // isValidHTTPStatus reports whether status is acceptable to WriteHeader. net/http
 // permits 100–599; anything outside panics with "invalid WriteHeader code".
 func isValidHTTPStatus(status int) bool {
 	return status >= 100 && status <= 599
 }
 
+// codeForStatus 为一个状态码返回稳定的 code 串（供 StatusCoder 路径与 miss 复用）。
+// codeForStatus returns a stable code string for a status (shared by the
+// StatusCoder path and miss handling).
 func codeForStatus(status int) string {
 	switch status {
 	case http.StatusBadRequest:

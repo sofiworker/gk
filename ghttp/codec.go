@@ -252,28 +252,16 @@ func mediaType(contentType string) string {
 	return strings.ToLower(strings.TrimSpace(contentType))
 }
 
-// contentTypeMatches 报告请求 Content-Type 是否与端点期望的 want 一致(按 media-type
-// 比对)。请求无 Content-Type 时放行(交给解码器处理空体/宽松场景),避免对无体请求误判。
-// contentTypeMatches reports whether the request Content-Type matches the
-// endpoint's expected want (compared by media-type). A missing request
-// Content-Type passes (deferring empty-body/lenient cases to the decoder),
-// avoiding false rejections of body-less requests.
-func contentTypeMatches(got, want string) bool {
-	if got == "" || want == "" {
-		return true
-	}
-	return mediaType(got) == mediaType(want)
-}
-
-// contentTypeIn 报告请求 Content-Type 是否属于 want 集合(按 media-type 比对)。语义与
-// contentTypeMatches 保持一致:请求无 Content-Type 时放行,want 为空集时不校验。
+// contentTypeIn 报告请求 Content-Type 是否属于 want 集合(按 media-type 比对)。请求无
+// Content-Type 时放行(交给解码器处理空体/宽松场景，避免对无体请求误判)，want 为空集时不校验。
 //
-// want 在注册期就已归一化为 media-type 小写形式(见 acceptedContentTypes),故此处只
-// 归一化请求侧一次,不在每请求上重复处理端点声明。集合最多两三项,线性比对比 map 查找
+// want 在注册期就已归一化为 media-type 小写形式(见 acceptedContentTypes)，故此处只
+// 归一化请求侧一次，不在每请求上重复处理端点声明。集合最多两三项，线性比对比 map 查找
 // 更快且零分配。
 // contentTypeIn reports whether the request Content-Type belongs to the want set
-// (compared by media-type). Semantics match contentTypeMatches: a missing request
-// Content-Type passes, and an empty want set means no check.
+// (compared by media-type). A missing request Content-Type passes (deferring
+// empty-body/lenient cases to the decoder) so body-less requests are not wrongly
+// rejected, and an empty want set means no check.
 //
 // want is already normalized to lowercase media-type form at registration (see
 // acceptedContentTypes), so only the request side is normalized here rather than

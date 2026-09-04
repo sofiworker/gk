@@ -165,13 +165,6 @@ func implementsTextUnmarshaler(t reflect.Type) bool {
 	return reflect.PointerTo(t).Implements(textUnmarshalerType)
 }
 
-// isScalarLike 报告该绑定器是否接收单个原始字符串（标量 / 文本 / 字节）。
-// isScalarLike reports whether this binder consumes a single raw string
-// (scalar / text / bytes).
-func (b *fieldBinder) isScalarLike() bool {
-	return b.vk == vkScalar || b.vk == vkText || b.vk == vkBytes
-}
-
 // deref 按需为指针字段分配对象并返回可赋值的目标值。
 // deref allocates a pointer field on demand and returns the assignable target.
 func (b *fieldBinder) deref(fv reflect.Value) reflect.Value {

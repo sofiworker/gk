@@ -147,10 +147,13 @@ func (p *BindPlan) collect(t reflect.Type, prefix []int, depth int) error {
 			// so request time hits the textproto canonical form directly.
 			name = textproto.CanonicalMIMEHeaderKey(name)
 		}
-		switch src {
-		case bindSrcQuery:
+		// 只有 query 来源需要额外标记（触发请求期解析 query）；path/header 无此需求，
+		// 曾有的空 `case bindSrcHeader` 是死分支，已删。
+		// Only the query source needs the extra flag (to trigger query parsing at
+		// request time); path/header do not. The former empty `case bindSrcHeader`
+		// was a dead branch and is gone.
+		if src == bindSrcQuery {
 			p.needQuery = true
-		case bindSrcHeader:
 		}
 		p.steps = append(p.steps, bindStep{index: index, source: src, name: name, binder: binder})
 	}

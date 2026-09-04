@@ -266,16 +266,15 @@ func (m *mux) buildChain() {
 // terminal, so the tree is walked once.
 func (m *mux) dispatchChained(w http.ResponseWriter, r *http.Request) {
 	req := m.pool.Get().(*Request)
+	// 借出与归还都走同一个 reset()：请求侧字段的清理清单只有一份，不会两处分叉漏字段
+	// （历史上正是这种分叉导致 matchedRoute 跨请求泄漏）。reset() 不清 resp，故 resp 仍
+	// 单独重置。
+	// Borrow and return share one reset(): the request-side clearing list lives in a
+	// single place and cannot fork into two divergent lists that drop a field (such a
+	// fork previously leaked matchedRoute across requests). reset() leaves resp alone,
+	// so it is reset separately.
+	req.reset()
 	req.Request = r
-	req.queryCache = nil
-	req.Params.reset()
-	req.skipped = req.skipped[:0]
-	// matchedRoute 必须在借出时清空:它只在匹配成功后写入,若沿用池中残留值,未命中的
-	// 请求会向中间件报告上一个请求的路由模板(按路由聚合的日志/指标/限流会串数据)。
-	// matchedRoute must be cleared on borrow: it is written only after a successful
-	// match, so a stale pooled value would report the PREVIOUS request's route
-	// template on a miss (cross-contaminating per-route logs, metrics, limiting).
-	req.matchedRoute = ""
 	req.resp.reset()
 	req.resp.ResponseWriter = w
 
@@ -294,8 +293,7 @@ func (m *mux) dispatchChained(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.resolved = resolvedRoute{}
-	req.resp.reset()
-	req.Request = nil
+	req.reset()
 	m.pool.Put(req)
 }
 
@@ -461,17 +459,15 @@ func (m *mux) dispatchRaw(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req := m.pool.Get().(*Request)
+	// 与 dispatchChained 同理：借出与归还共用一个 reset()，清理清单只有一份。
+	// Same as dispatchChained: borrow and return share one reset(), one clearing list.
+	req.reset()
 	req.Request = r
-	req.queryCache = nil
-	req.Params.reset()
-	req.skipped = req.skipped[:0]
-	req.matchedRoute = "" // 同 dispatchChained:防止池中残留的路由模板泄漏到本请求
-	// Same as dispatchChained: prevents a stale pooled route template leaking in.
 
 	v := t.root.getValue(path, &req.Params, &req.skipped)
 	if v.handler == nil {
 		tsr := v.tsr
-		req.Request = nil
+		req.reset()
 		m.pool.Put(req)
 		m.writeMissRaw(w, r, path, tsr)
 		return
@@ -493,8 +489,7 @@ func (m *mux) dispatchRaw(w http.ResponseWriter, r *http.Request) {
 		m.writeError(&req.resp, r, serr)
 	}
 
-	req.resp.reset()
-	req.Request = nil
+	req.reset()
 	m.pool.Put(req)
 }
 
