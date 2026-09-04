@@ -2,6 +2,7 @@ package ghttp
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"net/netip"
@@ -110,6 +111,10 @@ type mux struct {
 	// collectDocs gates noteRoute's recording of route metadata. It stays false
 	// without WithOpenAPI, so the recorder returns immediately, keeping "unused
 	// means zero cost".
+	// serving 标记服务是否已开始接收请求。register/handle 据此拒绝运行期注册。
+	// serving marks whether the server has started accepting requests; register
+	// and handle refuse runtime registration based on it.
+	serving     atomic.Bool
 	collectDocs bool
 	// docs 是注册期收集的 typed 端点元数据,仅供 spec 构建使用。
 	// docs holds typed endpoint metadata collected at registration, used only for
@@ -179,6 +184,24 @@ func (m *mux) owner() *mux { return m }
 // handle registers a compiled handler for method + path. The path is first
 // translated from template syntax into gin form (:name / *name) before insertion.
 func (m *mux) handle(method, path string, h compiledHandler) error {
+	// 注册守卫：路由树是裸 map + 无锁读，服务已开始后注册会与匹配路径构成数据竞争，
+	// race detector 可直接判死。宁可显式拒绝，也不留下"多数时候能用、压测时随机崩"的
+	// 陷阱；确有需要热注册请走 COW 或另建实例。
+	// Registration guard: the route tree is a plain map read without locks, so
+	// registering after serving began races with matching and the race detector
+	// rightly fails. Refusing explicitly beats a "works until it doesn't" trap; use
+	// copy-on-write or a second instance if hot registration is genuinely needed.
+	if m.serving.Load() {
+		return fmt.Errorf("%w: cannot register %s %s after the server started serving", ErrRegistrationAfterStart, method, path)
+	}
+	// 方法必须是合法 token 且非小写变体："get" 永远匹配不到 GET，却会建出一棵树，
+	// 让 MatchRoute 对真实请求返回空串（观测层彻底丢失路由归属）。
+	// The method must be a valid token and not a lowercase variant: "get" can never
+	// match GET yet still builds a tree, and MatchRoute then returns an empty route
+	// for the real request, losing route attribution in the observability layer.
+	if err := validateMethodToken(method); err != nil {
+		return err
+	}
 	ginPath, err := translateTemplate(path)
 	if err != nil {
 		return err

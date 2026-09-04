@@ -368,6 +368,7 @@ func (s *Server) markStarted() error {
 	switch s.state {
 	case stateIdle:
 		s.state = stateRunning
+		s.mux.serving.Store(true)
 		return nil
 	case stateRunning:
 		return ErrServerStarted

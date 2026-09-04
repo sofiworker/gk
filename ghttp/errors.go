@@ -88,6 +88,17 @@ var (
 	// to reuse a terminated Server.
 	ErrServerNotStartable = errors.New("ghttp: server already closed")
 
+	// ErrRegistrationAfterStart 表示在服务已开始接收请求后尝试注册端点，被拒绝。
+	// 路由树是无锁读的结构，运行期写会与匹配路径构成数据竞争（race detector 直接判
+	// 死），因此宁可显式拒绝，也不留"多数时候能用、压测时随机崩"的陷阱。确需热注册请
+	// 显式走 COW 或另建实例。
+	// ErrRegistrationAfterStart refuses an endpoint registration after the server
+	// began accepting requests. The route tree is read lock-free, so a runtime write
+	// races with matching (the race detector rightly fails). Refusing explicitly beats
+	// a "works until load-tested" trap; use copy-on-write or a second instance if hot
+	// registration is genuinely required.
+	ErrRegistrationAfterStart = errors.New("ghttp: cannot register after the server started serving")
+
 	// ErrTLSConfig 表示 TLS 配置不足:RunTLS/ServeTLS 既未注入含证书的
 	// TLSConfig,也未提供 certFile/keyFile。调用方可经 errors.Is 判定 TLS 校验失败。
 	// ErrTLSConfig indicates insufficient TLS configuration: RunTLS/ServeTLS was

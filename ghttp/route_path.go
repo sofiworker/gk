@@ -2,6 +2,7 @@ package ghttp
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 )
 
@@ -166,6 +167,63 @@ func validateParamName(name string) error {
 // 粗筛 '.';无 '.' 则不可能有 dot 段,立即放行(REST 路径常态)。空段(如 //)放行,
 // 交给匹配层(与 gin 一致)。
 // strict=true(严格模式):完整逐段校验,dot 段与空段任一非法即返回错误。
+// isStandardMethod 报告 method 是否属于标准方法集。
+// isStandardMethod reports whether method belongs to the standard method set.
+func isStandardMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
+		http.MethodPatch, http.MethodDelete, http.MethodConnect,
+		http.MethodOptions, http.MethodTrace:
+		return true
+	}
+	return false
+}
+
+// validateMethodToken 把 HTTP method 限制为合法 token，并且禁止小写变体（如 "get"）——
+// Go 服务器原样透传客户端的方法，所以 "get" 路由永远不会被 GET 命中，却会建出一棵无用的树，
+// 让 MatchRoute 对 GET 返回空串（观测层丢失路由归属）。自定义扩展（WEBHOOK 等）允许。
+// validateMethodToken restricts the HTTP method to a valid token and forbids the
+// lowercase variants (such as "get"): Go's server passes the client's method verbatim,
+// so a "get" route can never be hit by GET, yet it builds a useless tree and MatchRoute
+// returns an empty route for GET (losing route attribution for observability). Custom
+// extensions (WEBHOOK etc.) remain allowed.
+func validateMethodToken(method string) error {
+	if method == "" {
+		return fmt.Errorf("%w: method must not be empty", ErrInvalidParam)
+	}
+	// 标准 token 字符集：RFC 9110 的 tchar 限定。
+	// Standard token character set: RFC 9110's tchar.
+	for i := 0; i < len(method); i++ {
+		c := method[i]
+		if c >= 'a' && c <= 'z' {
+			// 小写 → 大写后若是标准方法，说明是拼写错误；否则视为自定义扩展（合法）。
+			// Uppercase: if it becomes a standard method, it's a typo; otherwise it's
+			// a custom extension (legal).
+			upper := strings.ToUpper(method)
+			if isStandardMethod(upper) && method != upper {
+				return fmt.Errorf("%w: method %q is lowercase; use %q (Go passes the client's method verbatim, so the tree would never match)", ErrInvalidParam, method, upper)
+			}
+		}
+		if !isTokenChar(c) {
+			return fmt.Errorf("%w: method %q contains invalid character %#x", ErrInvalidParam, method, c)
+		}
+	}
+	return nil
+}
+
+// isTokenChar 判定单字节是否为 tchar。
+// isTokenChar reports whether a byte is a tchar.
+func isTokenChar(c byte) bool {
+	switch c {
+	case '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~':
+		return true
+	}
+	if c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' {
+		return true
+	}
+	return false
+}
+
 // validateRequestPath validates the request path without rewriting it (zero
 // allocation). The trailing slash is left to the match layer's TSR (as in gin).
 // The root "/" passes.
