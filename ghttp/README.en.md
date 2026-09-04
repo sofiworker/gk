@@ -95,6 +95,8 @@ Absence semantics: scalars keep their zero value while pointers, slices, and map
 
 A failed element parse fails the whole request with 400 (`ErrInvalidInput`) rather than silently dropping the bad element, which would let callers believe the parameter took effect. Unsupported shapes (slice of slice, map of map, non-string map keys, a map bound to `path:`) are rejected **at registration**, and recursion is capped at 8 levels so a self-referential struct errors instead of overflowing the stack.
 
+**Lazy query lookup**: the bind plan knows at registration which keys it reads, so at request time no `url.Values` map is built — keys are scanned directly in the raw query string, and a value free of `%`/`+` is referenced as a substring of the original, making lookup **allocation-free**. Semantics match `net/url.ParseQuery` exactly (including semicolon invalidation and skipping bad escapes, validated by table-driven comparison and fuzzing). Two cases fall back to building the map automatically: map-shaped fields (`query:"filter"` / `query:"*"` must enumerate every key), and queries with more than 24 keys (past which a linear scan loses to a map). Pure-path endpoints never touch the query at all.
+
 The framework has **no built-in validation**. Business rules (required, ranges, enums, formats) are checked by the handler itself; return an error implementing `StatusCoder` to map any status (e.g. 422), otherwise it falls back to 500. A dedicated validation layer will be designed separately.
 
 ```go

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/textproto"
-	"net/url"
 	"reflect"
 	"strings"
 )
@@ -59,7 +58,24 @@ type BindPlan struct {
 	// pay for parsing the query string. Note: header reads are lightweight
 	// Header.Get calls that do not require special optimization.
 	needQuery bool
+	// queryMapStep 报告是否存在 map 形态的 query 步(`query:"filter"` 收 filter[k],
+	// 或 `query:"*"` 收全部键)。这类步必须【枚举】所有 query 键才能收集,无法按键查找,
+	// 因此它的存在会禁用惰性 query,请求期回退到 url.ParseQuery 建映射。
+	// queryMapStep reports whether a map-shaped query step exists (`query:"filter"`
+	// collecting filter[k], or `query:"*"` collecting every key). Such a step must
+	// ENUMERATE all query keys and cannot look up by key, so its presence disables
+	// lazy query and the request falls back to url.ParseQuery.
+	queryMapStep bool
 }
+
+// canLazyQuery 报告本计划能否用惰性按键查找替代建 url.Values 映射。
+// 前提是不含 map 形态的 query 步(那必须枚举全部键)。键数阈值在请求期另行判定,
+// 因为键数是请求携带的、注册期不可知。
+// canLazyQuery reports whether this plan can use lazy per-key lookup instead of
+// building a url.Values map. It requires no map-shaped query step (those must
+// enumerate every key). The key-count threshold is checked at request time, since
+// the count comes with the request and is unknowable at registration.
+func (p *BindPlan) canLazyQuery() bool { return !p.queryMapStep }
 
 // buildBindPlan 注册期反射遍历 params 结构体建计划；无 tag 字段静默跳过。空结构体产出空计划。
 // params 只承载传输层参数(path/query/header);表单文本与上传文件属于请求体,由 form
@@ -154,6 +170,12 @@ func (p *BindPlan) collect(t reflect.Type, prefix []int, depth int) error {
 		// was a dead branch and is gone.
 		if src == bindSrcQuery {
 			p.needQuery = true
+			// map 形态的 query 步必须枚举全部键,无法按键查找,故禁用惰性 query。
+			// A map-shaped query step must enumerate every key and cannot look up by
+			// key, so it disables lazy query.
+			if binder.vk == vkMap {
+				p.queryMapStep = true
+			}
 		}
 		p.steps = append(p.steps, bindStep{index: index, source: src, name: name, binder: binder})
 	}
@@ -242,17 +264,18 @@ func fieldByIndexAlloc(v reflect.Value, index []int) reflect.Value {
 	return v
 }
 
-// apply 请求期跑计划：query 由调用方预解析一次传入（避免重复 URL.Query()开销）。
+// apply 请求期跑计划：query 取值源由调用方构造一次传入(避免重复判定与重复解析)。
 //
 // 先取值、后定位字段:定位会沿途分配 nil 结构体指针,若在确认有值之前就定位,`*Nested`
 // 形态的字段会被无条件分配,handler 便无法用 nil 判断"整块参数未提供"。
-// apply executes the plan at request time: query pre-parsed once by caller (avoids repeated URL.Query() cost).
+// apply executes the plan at request time: the query source is built once by the
+// caller (avoiding repeated decisions and repeated parsing).
 //
 // Values are fetched BEFORE the field is located: locating allocates nil struct
 // pointers on the way, so locating before confirming a value would allocate a
 // `*Nested` field unconditionally and rob the handler of using nil to detect "this
 // whole block was not provided".
-func (p *BindPlan) apply(req *Request, query url.Values, paramsPtr any) error {
+func (p *BindPlan) apply(req *Request, query querySource, paramsPtr any) error {
 	if len(p.steps) == 0 {
 		return nil
 	}
@@ -290,15 +313,13 @@ func (p *BindPlan) apply(req *Request, query url.Values, paramsPtr any) error {
 
 // rawSingle 取该步的单个原始值,并报告是否存在。
 // rawSingle fetches this step's single raw value and reports its presence.
-func (s *bindStep) rawSingle(req *Request, query url.Values) (string, bool) {
+func (s *bindStep) rawSingle(req *Request, query querySource) (string, bool) {
 	switch s.source {
 	case bindSrcPath:
 		raw := req.Params.Get(s.name)
 		return raw, raw != ""
 	case bindSrcQuery:
-		if vs := query[s.name]; len(vs) > 0 {
-			return vs[0], true
-		}
+		return query.first(s.name)
 	case bindSrcHeader:
 		if vs := req.Header[s.name]; len(vs) > 0 {
 			return vs[0], true
@@ -312,12 +333,12 @@ func (s *bindStep) rawSingle(req *Request, query url.Values) (string, bool) {
 // collectSlice gathers this step's multiple values. Query and header accept both
 // repetition and comma separation, mixable; a path segment can only be
 // comma-separated (one segment is one value).
-func (s *bindStep) collectSlice(req *Request, query url.Values) []string {
+func (s *bindStep) collectSlice(req *Request, query querySource) []string {
 	switch s.source {
 	case bindSrcPath:
 		return splitList(req.Params.Get(s.name))
 	case bindSrcQuery:
-		return expandList(query[s.name])
+		return expandList(query.all(s.name))
 	case bindSrcHeader:
 		return expandList(req.Header[s.name])
 	}
@@ -329,10 +350,10 @@ func (s *bindStep) collectSlice(req *Request, query url.Values) []string {
 // collectMap gathers the name[key] shape (or every key under `*`). The header source
 // additionally strips a canonical prefix, so `header:"X-Meta"` can receive a prefix
 // family such as X-Meta-Foo.
-func (s *bindStep) collectMap(req *Request, query url.Values) map[string][]string {
+func (s *bindStep) collectMap(req *Request, query querySource) map[string][]string {
 	switch s.source {
 	case bindSrcQuery:
-		return collectBracketed(query, s.name)
+		return collectBracketed(query.mapValues(), s.name)
 	case bindSrcHeader:
 		return collectHeaderMap(req.Header, s.name)
 	}

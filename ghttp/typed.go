@@ -3,7 +3,6 @@ package ghttp
 import (
 	"context"
 	"net/http"
-	"net/url"
 	"reflect"
 )
 
@@ -110,11 +109,12 @@ type compiledParams[P, O any] struct {
 
 func (e *compiledParams[P, O]) serve(ctx context.Context, req *Request, resp *Response) error {
 	var p P
-	// 纯 path 端点跳过 url.ParseQuery；needQuery=true 时才调用 Query()。
-	// Pure-path endpoints skip url.ParseQuery; only call Query() if needQuery=true.
-	var q url.Values
+	// 纯 path 端点完全不碰 query;needQuery=true 时才构造取值源(惰性扫描或建映射)。
+	// Pure-path endpoints never touch the query; only when needQuery=true is a value
+	// source built (lazy scan or parsed map).
+	var q querySource
 	if e.plan.needQuery {
-		q = req.Query()
+		q = newQuerySource(req, e.plan)
 	}
 	if err := e.plan.apply(req, q, &p); err != nil {
 		return err
@@ -297,11 +297,12 @@ type compiledParamsBody[P, B, O any] struct {
 func (e *compiledParamsBody[P, B, O]) serve(ctx context.Context, req *Request, resp *Response) error {
 	var p P
 	var b B
-	// 纯 path+body 端点跳过 url.ParseQuery；needQuery=true 时才调用 Query()。
-	// Pure-path+body endpoints skip url.ParseQuery; only call Query() if needQuery=true.
-	var q url.Values
+	// 纯 path+body 端点完全不碰 query;needQuery=true 时才构造取值源。
+	// Pure-path+body endpoints never touch the query; only when needQuery=true is a
+	// value source built.
+	var q querySource
 	if e.plan.needQuery {
-		q = req.Query()
+		q = newQuerySource(req, e.plan)
 	}
 	if err := e.plan.apply(req, q, &p); err != nil {
 		return err
