@@ -189,6 +189,14 @@ func (w *gzipResponseWriter) shouldCompress(status int) bool {
 	if w.resp.Header().Get("Content-Encoding") != "" {
 		return false
 	}
+	// Range 响应绝不压缩：Content-Range 描述的是原始字节区间，一旦压缩，同一区间对应的
+	// 字节数就变了，客户端解压后与声明的区间彻底对不上。
+	// Never compress a Range response: Content-Range describes the raw byte
+	// interval, and once compressed that interval maps to a different byte count, so
+	// the client's decompressed body cannot line up with what was declared.
+	if status == http.StatusPartialContent || w.resp.Header().Get("Content-Range") != "" {
+		return false
+	}
 	ct := mediaType(w.resp.Header().Get("Content-Type"))
 	if ct == "" {
 		return false
@@ -230,10 +238,17 @@ func (w *gzipResponseWriter) WriteString(s string) (int, error) {
 	return w.orig.Write([]byte(s))
 }
 
-// Flush 透传:压缩路径先冲刷 gzip 内部缓冲,再冲刷底层连接(SSE 等流式场景)。
-// Flush passes through: on the compression path it flushes the gzip internal
-// buffer, then the underlying connection (for streaming such as SSE).
+// Flush 必须先定案再冲刷：未走过 Write/WriteHeader 时 decided=false、compress=false，
+// 直接 orig.Flush 会把不带 Content-Encoding 的 200 头提交出去，随后的 Write 又判定要压缩
+// 并写 gzip 字节 —— 客户端收到的是一段"没有 gzip 头的 gzip 体"，无法解码。
+// Flush must decide before flushing: with decided=false and compress=false, calling
+// orig.Flush directly commits a 200 header without Content-Encoding, and the Write
+// that follows then compresses — leaving the client with gzip bytes and no header to
+// decode them.
 func (w *gzipResponseWriter) Flush() {
+	if !w.decided {
+		w.WriteHeader(http.StatusOK)
+	}
 	if w.compress && w.gz != nil {
 		_ = w.gz.Flush()
 	}

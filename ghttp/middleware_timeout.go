@@ -2,7 +2,8 @@ package ghttp
 
 import (
 	"context"
-	"fmt"
+	"net/http"
+	"strings"
 	"time"
 )
 
@@ -54,6 +55,24 @@ func TimeoutWithMessage(d time.Duration, message string) Middleware {
 			ctx, cancel := context.WithTimeout(ctx, d)
 			defer cancel()
 
+			// deadline 必须同时挂到 req.Request 上。只把它作为闭包参数传下去是不够的：
+			// raw 端点与中间件普遍用 req.Request.Context()（或 req.Context()）取上下文，
+			// 过去它们看到的仍是无 deadline 的原 ctx，于是"带超时的下游"照样能无限阻塞，
+			// 而 Timeout 已判定超时并写了 504——同一个请求里存在两个互相矛盾的上下文。
+			// The deadline must also land on req.Request. Passing it only as the closure
+			// argument is not enough: raw endpoints and middleware typically read
+			// req.Request.Context() (or req.Context()), and those previously saw the
+			// deadline-free parent, so a "timed-out" downstream could still block
+			// forever while Timeout had already written a 504 — two contradictory
+			// contexts within one request.
+			orig := req.Request
+			req.Request = orig.WithContext(ctx)
+			// Requests 是池化对象，改写必须在返回前复原，否则下一个持有该对象的
+			// 请求会拿到已被 cancel 的 deadline context。
+			// Requests are pooled, so the mutation must be undone before returning;
+			// otherwise the next holder of this object gets a cancelled deadline.
+			defer func() { req.Request = orig }()
+
 			err := next(ctx, req, resp)
 
 			// 下游已提交响应：无论是否超时都不再改写，尊重下游已写出的内容。
@@ -79,12 +98,74 @@ func TimeoutWithMessage(d time.Duration, message string) Middleware {
 			// body, forcing clients to special-case timeouts. Returning a sentinel fixes
 			// all three at once: status 504, unified JSON body, observable by hooks.
 			if ctx.Err() == context.DeadlineExceeded {
-				if message != "" {
-					return fmt.Errorf("%w: %s", ErrRequestTimeout, message)
+				// 下游可能同时带着自己的错误返回。过去这里无条件 return ErrRequestTimeout,
+				// 把 cause 整个丢弃:排障时只剩"超时"二字,看不到真正失败的那一层。现在用
+				// timeoutError 同时保住两者,并靠 StatusCoder 让 504 仍然优先
+				// （分类表 StatusCoder 先于哨兵,否则 cause 是个 400 类错误时会顶掉超时状态）。
+				// Downstream may return its own error too. The unconditional
+				// `return ErrRequestTimeout` discarded that cause, leaving only "timed
+				// out" for debugging with no sign of the layer that actually failed.
+				// timeoutError keeps both, and relies on StatusCoder so 504 still wins
+				// (the classifier checks StatusCoder before sentinels; otherwise a 400-ish
+				// cause would override the timeout status).
+				te := &timeoutError{message: message, cause: err}
+				if err == nil {
+					// 无 cause 时仍返回哨兵本身，保持既有 errors.Is/文案契约且零分配。
+					// Without a cause, return the sentinel itself: same errors.Is and
+					// text contract, no allocation.
+					if message != "" {
+						return &timeoutError{message: message}
+					}
+					return ErrRequestTimeout
 				}
-				return ErrRequestTimeout
+				return te
 			}
 			return err
 		}
 	}
 }
+
+// timeoutError 合并"请求超时"与下游 cause：对外仍是 504 且 errors.Is 命中
+// ErrRequestTimeout，对内保留 cause 供钩子与日志排查。
+// timeoutError merges "request timed out" with downstream cause: externally it is
+// still a 504 matching ErrRequestTimeout via errors.Is, while the cause stays
+// available to hooks and logs.
+type timeoutError struct {
+	message string // 可选说明 / optional detail
+	cause   error  // 下游返回的错误，可为 nil / downstream error, may be nil
+}
+
+// Error 实现 error。
+// Error implements error.
+func (e *timeoutError) Error() string {
+	var b strings.Builder
+	b.WriteString(ErrRequestTimeout.Error())
+	if e.message != "" {
+		b.WriteString(": ")
+		b.WriteString(e.message)
+	}
+	if e.cause != nil {
+		b.WriteString(": ")
+		b.WriteString(e.cause.Error())
+	}
+	return b.String()
+}
+
+// HTTPStatus 固定 504，使超时状态不被 cause 的分类顶掉。
+// HTTPStatus pins 504 so the timeout status cannot be overridden by the cause's
+// own classification.
+func (e *timeoutError) HTTPStatus() int { return http.StatusGatewayTimeout }
+
+// Unwrap 返回 [ErrRequestTimeout, cause]，使两个方向的 errors.Is 都成立。
+// Unwrap returns [ErrRequestTimeout, cause] so errors.Is matches either side.
+func (e *timeoutError) Unwrap() []error {
+	if e.cause == nil {
+		return []error{ErrRequestTimeout}
+	}
+	return []error{ErrRequestTimeout, e.cause}
+}
+
+var (
+	_ error       = (*timeoutError)(nil)
+	_ StatusCoder = (*timeoutError)(nil)
+)

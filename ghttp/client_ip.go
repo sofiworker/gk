@@ -78,7 +78,20 @@ func (r *Request) ClientIP() string {
 	// authoritative source; deriving nothing from it means "no external client on the
 	// chain", not "ask the next header".
 	for _, h := range headers {
-		v := r.Header.Get(h)
+		// 必须合并同名头的【全部】行，而不是 Header.Get 只取第一行。转发代理常以"再写
+		// 一行 X-Forwarded-For"的方式追加链路，而客户端可以预先塞入任意多行。只看第一行
+		// 等于让客户端写的那一行单独成立：整条可信链路被忽略，攻击者 IP 直接成为
+		// ClientIP，从而绕过按 IP 限流并污染审计。Values 按出现顺序拼接，右回溯仍从
+		// 最近的可信代理起算，语义才是"链路上第一个不可信地址"。
+		// Join EVERY line of a repeated header instead of Header.Get's first one only.
+		// Proxies commonly append by writing another X-Forwarded-For line while a client
+		// can preload arbitrary lines. Reading only the first line lets the client's own
+		// line stand alone: the whole trusted chain is ignored, the attacker's address
+		// becomes ClientIP, and per-IP rate limiting plus auditing are both defeated.
+		// Values preserves wire order, so the right-to-left walk still starts from the
+		// nearest trusted proxy — which is what "first untrusted address on the chain"
+		// actually means.
+		v := strings.Join(r.Header.Values(h), ",")
 		if v == "" {
 			continue
 		}
