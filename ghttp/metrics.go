@@ -189,7 +189,7 @@ func (m *MetricsRegistry) Handler() RawHandlerFunc {
 	return func(_ context.Context, _ *Request, resp *Response) error {
 		resp.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 		resp.WriteHeader(http.StatusOK)
-		m.writeHTTPMetrics(resp)
+		m.writeHTTPMetrics(resp, m.snapshot())
 		m.writeGoMetrics(resp)
 		return nil
 	}
@@ -219,12 +219,24 @@ func (m *MetricsRegistry) Handler() RawHandlerFunc {
 //
 // Iteration is therefore grouped by family (one HELP/TYPE plus contiguous samples
 // each) rather than by route.
-func (m *MetricsRegistry) writeHTTPMetrics(w *Response) {
+// metricsRouteSnapshot 是一条路由在一次抓取内的不可变读数。
+// metricsRouteSnapshot is one route's immutable reading for a single scrape.
+type metricsRouteSnapshot struct {
+	key         metricsRouteKey
+	total       uint64
+	inflight    int64
+	durSumNS    uint64
+	respBytes   uint64
+	statusCodes []int
+	statusCount []uint64
+}
+
+// snapshot 在锁内只拷贝数值，把网络写留在锁外。
+// snapshot copies values under the lock, leaving network writes outside it.
+func (m *MetricsRegistry) snapshot() []metricsRouteSnapshot {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// 按 method+route 排序,保证输出稳定可 diff。
-	// Sort by method+route for stable, diffable output.
 	keys := make([]metricsRouteKey, 0, len(m.routes))
 	for k := range m.routes {
 		keys = append(keys, k)
@@ -236,60 +248,75 @@ func (m *MetricsRegistry) writeHTTPMetrics(w *Response) {
 		return keys[i].route < keys[j].route
 	})
 
+	out := make([]metricsRouteSnapshot, 0, len(keys))
+	for _, k := range keys {
+		st := m.routes[k]
+		snap := metricsRouteSnapshot{
+			key:       k,
+			total:     st.total.Load(),
+			inflight:  st.inflight.Load(),
+			durSumNS:  st.durSumNS.Load(),
+			respBytes: st.respBytes.Load(),
+		}
+		st.mu.Lock()
+		for code := range st.counts {
+			snap.statusCodes = append(snap.statusCodes, code)
+		}
+		sort.Ints(snap.statusCodes)
+		for _, code := range snap.statusCodes {
+			snap.statusCount = append(snap.statusCount, st.counts[code].Load())
+		}
+		st.mu.Unlock()
+		out = append(out, snap)
+	}
+	return out
+}
+
+// writeHTTPMetrics 在锁外把已拷贝的快照渲染为 Prometheus 文本。
+// writeHTTPMetrics renders the copied snapshot as Prometheus text outside the lock.
+func (m *MetricsRegistry) writeHTTPMetrics(w *Response, snaps []metricsRouteSnapshot) {
 	labelsOf := func(k metricsRouteKey) string {
 		return fmt.Sprintf(`method="%s",route="%s"`, escapePromLabel(k.method), escapePromLabel(k.route))
 	}
 
 	writePromLine(w, "# HELP http_requests_total Total number of HTTP requests.")
 	writePromLine(w, "# TYPE http_requests_total counter")
-	for _, k := range keys {
-		writePromLine(w, fmt.Sprintf(`http_requests_total{%s} %d`, labelsOf(k), m.routes[k].total.Load()))
+	for _, s := range snaps {
+		writePromLine(w, fmt.Sprintf(`http_requests_total{%s} %d`, labelsOf(s.key), s.total))
 	}
 
 	writePromLine(w, "# HELP http_requests_in_flight Currently in-flight requests.")
 	writePromLine(w, "# TYPE http_requests_in_flight gauge")
-	for _, k := range keys {
-		writePromLine(w, fmt.Sprintf(`http_requests_in_flight{%s} %d`, labelsOf(k), m.routes[k].inflight.Load()))
+	for _, s := range snaps {
+		writePromLine(w, fmt.Sprintf(`http_requests_in_flight{%s} %d`, labelsOf(s.key), s.inflight))
 	}
 
-	// _count 与 _sum 配对暴露,抓取端才能算平均延迟(sum/count)。只有 _sum 时均值无从计算。
+	// _count 与 _sum 配对暴露，抓取端才能算平均延迟（sum/count）。只有 _sum 时均值无从计算。
 	// _count is exposed alongside _sum so a scraper can compute mean latency
 	// (sum/count); with only _sum the mean is not derivable.
 	writePromLine(w, "# HELP http_request_duration_seconds_count Total number of observed requests.")
 	writePromLine(w, "# TYPE http_request_duration_seconds_count counter")
-	for _, k := range keys {
-		writePromLine(w, fmt.Sprintf(`http_request_duration_seconds_count{%s} %d`, labelsOf(k), m.routes[k].total.Load()))
+	for _, s := range snaps {
+		writePromLine(w, fmt.Sprintf(`http_request_duration_seconds_count{%s} %d`, labelsOf(s.key), s.total))
 	}
 
 	writePromLine(w, "# HELP http_request_duration_seconds_sum Cumulative request duration in seconds.")
 	writePromLine(w, "# TYPE http_request_duration_seconds_sum counter")
-	for _, k := range keys {
-		writePromLine(w, fmt.Sprintf(`http_request_duration_seconds_sum{%s} %s`, labelsOf(k), formatSeconds(m.routes[k].durSumNS.Load())))
+	for _, s := range snaps {
+		writePromLine(w, fmt.Sprintf(`http_request_duration_seconds_sum{%s} %s`, labelsOf(s.key), formatSeconds(s.durSumNS)))
 	}
 
 	writePromLine(w, "# HELP http_response_size_bytes_sum Cumulative response body bytes.")
 	writePromLine(w, "# TYPE http_response_size_bytes_sum counter")
-	for _, k := range keys {
-		writePromLine(w, fmt.Sprintf(`http_response_size_bytes_sum{%s} %d`, labelsOf(k), m.routes[k].respBytes.Load()))
+	for _, s := range snaps {
+		writePromLine(w, fmt.Sprintf(`http_response_size_bytes_sum{%s} %d`, labelsOf(s.key), s.respBytes))
 	}
 
 	writePromLine(w, "# HELP http_requests_by_code_total Total number of HTTP requests by response status code.")
 	writePromLine(w, "# TYPE http_requests_by_code_total counter")
-	for _, k := range keys {
-		s := m.routes[k]
-		s.mu.Lock()
-		statuses := make([]int, 0, len(s.counts))
-		for st := range s.counts {
-			statuses = append(statuses, st)
-		}
-		sort.Ints(statuses)
-		lines := make([]string, 0, len(statuses))
-		for _, st := range statuses {
-			lines = append(lines, fmt.Sprintf(`http_requests_by_code_total{%s,code="%d"} %d`, labelsOf(k), st, s.counts[st].Load()))
-		}
-		s.mu.Unlock()
-		for _, ln := range lines {
-			writePromLine(w, ln)
+	for _, s := range snaps {
+		for i, code := range s.statusCodes {
+			writePromLine(w, fmt.Sprintf(`http_requests_by_code_total{%s,code="%d"} %d`, labelsOf(s.key), code, s.statusCount[i]))
 		}
 	}
 }
