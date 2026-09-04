@@ -465,7 +465,7 @@ func TestCheckCSRFOrigin(t *testing.T) {
 			if c.referer != "" {
 				r.Header.Set("Referer", c.referer)
 			}
-			err := checkCSRFOrigin(&Request{Request: r}, trusted)
+			err := checkCSRFOrigin(&Request{Request: r}, trusted, false)
 			if c.wantErr {
 				if !errors.Is(err, ErrCSRFTokenInvalid) {
 					t.Errorf("err=%v, want errors.Is(err, ErrCSRFTokenInvalid)", err)

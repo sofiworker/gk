@@ -87,6 +87,17 @@ type CSRFConfig struct {
 	// origin must be same-origin with the request host or present in this list.
 	TrustedOrigins []string
 
+	// TrustedOriginsOnly 收紧来源判定为【仅】TrustedOrigins 列表：不再以"Origin 的 host
+	// 等于请求 Host"作为同源兜底。适用于按 Host 分发（通配虚拟主机、DNS 可被指向本站）
+	// 或对来源有合规硬要求的服务。代价：本站自身来源也必须显式列进 TrustedOrigins，否则
+	// 同源表单提交会被拒。
+	// TrustedOriginsOnly tightens origin checking to the TrustedOrigins list alone,
+	// dropping the "Origin host equals request Host" same-origin fallback. Use it where
+	// routing is Host-based (wildcard vhosts, DNS that can point at this server) or where
+	// the source list is a hard compliance requirement. The cost: your own origin must
+	// also be listed, or same-origin form posts are rejected.
+	TrustedOriginsOnly bool
+
 	// Skip 返回 true 时跳过该请求的校验,用于豁免 API token 认证的端点(它们不受
 	// CSRF 威胁,因为浏览器不会自动附带 Authorization 头)。
 	// Skip exempts a request from verification when it returns true, for endpoints
@@ -223,7 +234,7 @@ func CSRF(cfg CSRFConfig) Middleware {
 
 			// 非安全方法:先做同源校验(第二道防线)。
 			// Unsafe method: same-origin check first (the second line of defense).
-			if err := checkCSRFOrigin(req, trusted); err != nil {
+			if err := checkCSRFOrigin(req, trusted, cfg.TrustedOriginsOnly); err != nil {
 				return err
 			}
 			if cookieToken == "" {
@@ -287,7 +298,26 @@ func setCSRFCookie(resp *Response, cfg CSRFConfig, token string) {
 // csrfFormToken 从表单里取 token。只在请求头未提交时调用,避免无谓地解析请求体。
 // csrfFormToken reads the token from the form. Called only when no header token was
 // submitted, avoiding a needless body parse.
+// maxCSRFPreAuthBodyBytes 限制"仅为取 CSRF 表单 token"而解析体的声明长度（4 MiB）。
+// maxCSRFPreAuthBodyBytes caps the declared length of a body parsed only to fetch a
+// CSRF form token (4 MiB).
+const maxCSRFPreAuthBodyBytes = 4 << 20
+
 func csrfFormToken(req *Request, field string) string {
+	// 解析请求体只为取一个可能根本不存在的 token，而这次解析发生在鉴权结论之前：超大
+	// multipart 体会先吃掉内存与临时文件（ParseMultipartForm 的 32 MiB 是【驻留内存】
+	// 上限，不是总大小上限），随后请求才因缺 token 被拒。攻击者因此能用"注定失败的请求"
+	// 消耗资源。声明长度超限时直接不解析：真要用表单字段带 token 的正常表单远小于此，
+	// 而 header 通道完全不受影响。
+	// Parsing the body only to find a token that may not exist, and doing so BEFORE the
+	// verdict: an oversized multipart body first eats memory and temp files
+	// (ParseMultipartForm's 32 MiB caps the IN-MEMORY portion, not the total), and only
+	// then is the request rejected for a missing token — so an attacker spends resources
+	// on requests that were always going to fail. Skip parsing beyond this declared
+	// length: real form-field tokens are far smaller, and the header path is untouched.
+	if req.ContentLength > maxCSRFPreAuthBodyBytes {
+		return ""
+	}
 	switch mediaType(req.Header.Get("Content-Type")) {
 	case "application/x-www-form-urlencoded":
 		if err := req.ParseForm(); err != nil {
@@ -352,7 +382,7 @@ func csrfFormToken(req *Request, field string) string {
 // it is derived via isTLSRequest, which already implements the "trust
 // X-Forwarded-Proto only behind a trusted proxy" policy and is reused here to keep one
 // trust model shared with ClientIP and the security headers.
-func checkCSRFOrigin(req *Request, trusted map[string]bool) error {
+func checkCSRFOrigin(req *Request, trusted map[string]bool, trustedOnly bool) error {
 	origin := req.Header.Get("Origin")
 	if origin == "" {
 		if ref := req.Header.Get("Referer"); ref != "" {
@@ -379,7 +409,27 @@ func checkCSRFOrigin(req *Request, trusted map[string]bool) error {
 	if err != nil || u.Host == "" {
 		return fmt.Errorf("%w: malformed Origin", ErrCSRFTokenInvalid)
 	}
-	if strings.EqualFold(u.Host, req.Host) && strings.EqualFold(u.Scheme, requestScheme(req)) {
+	// Host 反射兜底：Origin 的 host 与请求自身 Host 相同即视为同源放行。
+	//
+	// 这一兜底并非无代价：Host 属于客户端可影响输入，在按 Host 分发的部署（通配虚拟主机、
+	// 误配的代理、DNS 重绑定）下，`Host: evil.com` 与 `Origin: http://evil.com` 成对出现
+	// 即可通过，从而绕过运维声明的白名单。但另一方面，运维配了 TrustedOrigins 往往只是
+	// 为了【追加】允许的合作来源，本站自身仍是靠这个兜底放行的——直接取消会让所有同源
+	// 表单提交（token 走表单字段而非 header 的那类）全部 403。
+	// 权衡结果：默认保留兜底（不破坏既有部署），并给出 TrustedOriginsOnly 让对来源有硬
+	// 要求的服务显式收紧。
+	// The Host-reflection fallback admits any Origin whose host equals the request's
+	// own Host.
+	//
+	// The fallback is not free: Host is client-influenced, so under Host-based routing
+	// (wildcard vhosts, a misconfigured proxy, DNS rebinding) a matched
+	// `Host: evil.com` + `Origin: http://evil.com` pair passes it and bypasses the
+	// declared whitelist. But operators usually add TrustedOrigins only to ALLOW MORE
+	// partners, relying on this fallback for their own site — removing it outright 403s
+	// every same-origin form post that carries its token as a form field rather than a
+	// header. Trade-off: keep the fallback by default so existing deployments stand, and
+	// offer TrustedOriginsOnly for services that need a hard source list.
+	if !trustedOnly && strings.EqualFold(u.Host, req.Host) && strings.EqualFold(u.Scheme, requestScheme(req)) {
 		return nil
 	}
 	return fmt.Errorf("%w: untrusted origin %q", ErrCSRFTokenInvalid, origin)

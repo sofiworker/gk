@@ -93,6 +93,11 @@ const defaultRateLimitMaxKeys = 100000
 // defaultRateLimitIdle is the default bucket idle-reap duration.
 const defaultRateLimitIdle = 10 * time.Minute
 
+// rateLimitUnknownKey 是默认 KeyFunc 取不到客户端地址时的兜底分桶键。
+// rateLimitUnknownKey is the fallback bucket key when the default KeyFunc cannot
+// resolve a client address.
+const rateLimitUnknownKey = "__ghttp_unknown_client__"
+
 // tokenBucket 是一个 key 的桶状态。用 tokens + last 的惰性补充模型:不跑定时器,
 // 取令牌时按经过的时间一次性补足,因此空闲的桶不消耗任何 CPU。
 // tokenBucket is one key's bucket state. It uses a lazy tokens + last refill
@@ -152,7 +157,16 @@ type rateLimitShard struct {
 // It limits by client IP by default; to limit by route, user, or tenant, supply
 // KeyFunc (e.g. func(req *ghttp.Request) string { return req.MatchedRoute() }).
 func RateLimit(cfg RateLimitConfig) Middleware {
-	if cfg.RPS <= 0 {
+	// 用 `!(RPS > 0)` 而非 `RPS <= 0`：后者对 NaN 恒为 false，于是 NaN 会一路穿过——
+	// 桶容量与补充速率都变成 NaN，`tokens < 1` 恒 false，结果每个请求都被放行却仍在
+	// 记账，限流静默失效。NaN 可由 `RateLimitConfig{RPS: float64(n)/0}`、反序列化或
+	// 配置合并产生，不是纯理论输入。
+	// `!(RPS > 0)` rather than `RPS <= 0`: the latter is false for NaN, so NaN would
+	// sail through — bucket capacity and refill both NaN, `tokens < 1` never true, and
+	// every request admitted while still being tracked, silently disabling limiting.
+	// NaN is reachable via division by zero, deserialization or config merging; it is
+	// not a theoretical input.
+	if !(cfg.RPS > 0) {
 		// 无效速率:透传而非静默拒绝一切,避免配置失误造成全站不可用。
 		// An invalid rate passes through rather than silently rejecting everything,
 		// so a misconfiguration cannot take the whole site down.
@@ -174,7 +188,22 @@ func RateLimit(cfg RateLimitConfig) Middleware {
 	}
 	keyFunc := cfg.KeyFunc
 	if keyFunc == nil {
-		keyFunc = func(req *Request) string { return req.ClientIP() }
+		// 默认维度不能返回空串：中间件把空 key 定义为"调用方显式豁免"，若 ClientIP()
+		// 在某些部署下取不到地址（unix socket、被剥掉的 RemoteAddr、解析失败的转发头），
+		// 这些流量就会整体跳过限流——最需要保护的 unidentified 流量反而不受管。落到一个
+		// 共享兜底桶，至少仍受同一速率约束。自定义 KeyFunc 返回空串的豁免语义保持不变。
+		// The default dimension must never be empty: the middleware defines an empty
+		// key as "explicitly exempt", so if ClientIP() yields no address in some
+		// deployment (unix sockets, a stripped RemoteAddr, an unparseable forwarded
+		// header) that traffic skips limiting entirely — the unidentified flow, the one
+		// most in need of it, goes unmanaged. Falling back to one shared bucket keeps it
+		// under the same rate. A custom KeyFunc returning "" still means exempt.
+		keyFunc = func(req *Request) string {
+			if ip := req.ClientIP(); ip != "" {
+				return ip
+			}
+			return rateLimitUnknownKey
+		}
 	}
 	rl := newRateLimiter(cfg, burst, idle, keyFunc)
 
@@ -292,6 +321,23 @@ func (rl *rateLimiter) reap(sh *rateLimitShard, now time.Time) {
 // normalization — notably the MaxKeys default and floor — is directly unit-testable
 // instead of only observable through the middleware closure.
 func newRateLimiter(cfg RateLimitConfig, burst int, idle time.Duration, keyFunc func(*Request) string) *rateLimiter {
+	// 回收窗口必须不短于"从空桶补满"所需时间 burst/RPS，否则限流可被节奏化绕过：桶在仍
+	// 持有未用令牌时被删除，下次访问按新 key 重建为满桶，于是每个 idle 周期都白得一次完整
+	// burst。以 RPS=1、Burst=1000、IdleTimeout=1s 为例，每 2 秒打一轮 1000 请求即可长期
+	// 维持 ~500 RPS，而配置声称 1 RPS。取该下限后，被回收的桶必然已接近满，删除不再额外
+	// 放行。放在唯一构造口而非 RateLimit 里，是为了让任何构造路径都受同一保护。
+	// The reap window must be at least the empty-to-full refill time burst/RPS, or
+	// pacing defeats limiting: a bucket deleted while still holding unused tokens is
+	// rebuilt full on the next visit, granting a fresh whole burst every idle period.
+	// With RPS=1, Burst=1000 and IdleTimeout=1s, firing 1000 requests every 2 seconds
+	// sustains ~500 RPS while the config claims 1. With this floor a reaped bucket is
+	// necessarily near-full, so deleting it admits nothing extra. It lives in the single
+	// construction point so no path can skip the protection.
+	if cfg.RPS > 0 {
+		if refill := time.Duration(float64(burst) / cfg.RPS * float64(time.Second)); idle < refill {
+			idle = refill
+		}
+	}
 	maxKeys := cfg.MaxKeys
 	if maxKeys <= 0 {
 		maxKeys = defaultRateLimitMaxKeys

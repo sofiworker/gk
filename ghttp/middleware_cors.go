@@ -89,6 +89,9 @@ func CORS(cfg CORSConfig) Middleware {
 type corsCore struct {
 	cfg             CORSConfig
 	allowAllOrigins bool
+	// exactOrigins 是归一为小写的显式白名单（不含 "*"）。
+	// exactOrigins is the explicit allow-list lower-cased, without "*".
+	exactOrigins []string
 	// allowCredentials 是生效后的凭证开关。它可能与 cfg.AllowCredentials 不同:通配来源
 	// 与凭证并存时会被强制关闭,详见 newCORS。
 	// allowCredentials is the effective credentials switch. It may differ from
@@ -127,8 +130,14 @@ func newCORS(cfg CORSConfig) *corsCore {
 	for _, o := range cfg.AllowOrigins {
 		if o == "*" {
 			c.allowAllOrigins = true
-			break
+			continue
 		}
+		// Origin 只含 scheme://host[:port]，二者按 URL 语义大小写不敏感，故注册期一次
+		// 性归一，请求期直接比对（与 CSRF 的同源判定同一口径）。
+		// An Origin is only scheme://host[:port], both case-insensitive per URL
+		// semantics, so normalize once at registration and compare directly at request
+		// time — the same convention CSRF's same-origin check uses.
+		c.exactOrigins = append(c.exactOrigins, strings.ToLower(o))
 	}
 	// 通配来源 + 凭证是被规范禁止的组合,且"回显任意 Origin 并附 Allow-Credentials"比
 	// 规范禁止的写法更危险——它让任意站点都能带 cookie 读取响应,等于完全解除同源保护。
@@ -169,13 +178,26 @@ func (c *corsCore) apply(dst, src http.Header, method string) corsDecision {
 	// response without ACAO and later serve it to a legitimate cross-origin request
 	// (or vice versa), making CORS work intermittently. The reject branch varies by
 	// Origin too: what varies is the decision to omit the header.
-	dst.Add("Vary", "Origin")
+	// 幂等追加：中间件可能被链上多处复用（或调用方已自行声明），重复的 Vary 项虽合法，
+	// 却会让缓存键解析做无谓工作并被误读成"有多条不同策略"。
+	// Append idempotently: the middleware may run more than once in a chain (or the
+	// caller may have declared Vary itself); duplicate entries are legal but make
+	// cache-key parsing do pointless work and read as several different policies.
+	ensureVary(dst, "Origin")
 
+	// 精确白名单【优先】于通配：配了 `["*", "https://app.example"]` 且要带凭证时，若先
+	// 走通配分支就永远得到 `ACAO: *` + 无凭证，显式列出的那个来源反而享受不到本可安全
+	// 支持的凭证，等于白名单里写了却无效。精确命中是规范允许携带凭证的唯一形态。
+	// The explicit allow-list must win over the wildcard: with ["*",
+	// "https://app.example"] and credentials, checking the wildcard first always yields
+	// `ACAO: *` with no credentials, so the origin someone listed explicitly to get
+	// credentials never does — the entry is dead config. An exact match is the only form
+	// the spec permits credentials with.
 	switch {
+	case originAllowed(c.exactOrigins, origin):
+		dst.Set("Access-Control-Allow-Origin", origin)
 	case c.allowAllOrigins:
 		dst.Set("Access-Control-Allow-Origin", "*")
-	case originAllowed(c.cfg.AllowOrigins, origin):
-		dst.Set("Access-Control-Allow-Origin", origin)
 	default:
 		// 来源不在白名单：不写允许头，交由浏览器拦截；请求仍继续（服务端不阻断）。
 		// Origin not allowed: write no allow header, let the browser block; the
@@ -183,6 +205,11 @@ func (c *corsCore) apply(dst, src http.Header, method string) corsDecision {
 		return corsProceed
 	}
 
+	// allowCredentials 在 newCORS 里已对"通配 + 凭证"这一矛盾配置整体降级，故此处直接
+	// 采信其结果，不再于写出时二次判断。
+	// allowCredentials was already downgraded wholesale in newCORS for the
+	// contradictory "wildcard + credentials" configuration, so honour that result here
+	// rather than re-deciding at write time.
 	if c.allowCredentials {
 		dst.Set("Access-Control-Allow-Credentials", "true")
 	}
@@ -214,11 +241,14 @@ func (c *corsCore) apply(dst, src http.Header, method string) corsDecision {
 	return corsProceed
 }
 
-// originAllowed 报告 origin 是否在白名单内（精确匹配）。
-// originAllowed reports whether origin is in the allow-list (exact match).
+// originAllowed 报告 origin 是否命中已归一为小写的白名单。allowed 已在注册期 ToLower，
+// 这里只需归一请求侧的 origin。
+// originAllowed reports whether origin hits the allow-list, whose entries are already
+// lower-cased at registration; only the request-side origin is normalized here.
 func originAllowed(allowed []string, origin string) bool {
+	o := strings.ToLower(origin)
 	for _, a := range allowed {
-		if a == origin {
+		if a == o {
 			return true
 		}
 	}
