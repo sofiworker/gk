@@ -184,6 +184,30 @@ func validateRequestPath(path string, strict bool) error {
 		return nil
 	}
 
+	// 控制字符与 DEL 一律 400。path 是【解码后】的路径，因此 %00/%0a 这类转义正是从这里
+	// 落进内部逻辑的：
+	//   - %00 → 交给 os.DirFS 得到的是 EINVAL（非 ErrNotExist），静态层会误判成 500，
+	//     于是任何人循环请求即可稳定制造 5xx、刷爆错误率告警；
+	//   - %0a/%0d → 原样进访问日志与 panic 日志，凭空多出整行（日志注入），可伪造
+	//     "管理员登录"之类的记录。
+	// 两者都在【同一个入口】拦掉，下游就不必各自设防：RFC 3986 也不允许路径控制字符
+	// 以裸字节出现，合法请求永不受影响。
+	// Reject C0 control characters and DEL with a 400. path is the DECODED path, so
+	// escapes such as %00/%0a are exactly how control bytes reach internal logic:
+	//   - %00 reaches os.DirFS as EINVAL (not ErrNotExist), which the static layer
+	//     misreads as a 500, so anyone looping over such URLs manufactures stable 5xx
+	//     and floods error-rate alerts;
+	//   - %0a/%0d land verbatim in access logs and panic logs, forging whole extra
+	//     lines (log injection) such as a fake "admin login" record.
+	// Handling both at ONE entry point means no downstream layer needs its own guard;
+	// RFC 3986 forbids control characters in a path as bare bytes anyway, so legal
+	// requests are unaffected.
+	for i := 0; i < len(path); i++ {
+		if path[i] < 0x20 || path[i] == 0x7f {
+			return fmt.Errorf("%w: %q contains a control character", ErrInvalidRequestPath, path)
+		}
+	}
+
 	if !strict {
 		// 快速模式:无 '.' 直接放行;有 '.' 才细查是否存在 dot 段。
 		// Fast mode: no '.' → pass; only scan for a dot segment when '.' exists.

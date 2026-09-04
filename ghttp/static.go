@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"syscall"
 )
 
 // ===========================================================================
@@ -192,8 +193,12 @@ func serveStatic(resp *Response, req *Request, fsys fs.FS, cfg staticConfig) err
 		name = "." // 目录根 / directory root
 	}
 	if name != "." && !fs.ValidPath(name) {
-		http.Error(resp, "400 invalid path", http.StatusBadRequest)
-		return nil
+		// 返回错误而非自写响应：交给统一错误链，才能与其余 4xx 同形（JSON、含
+		// code），并触发 WithErrorHook；此前 http.Error 写的是 text/plain 裸文本。
+		// Return the error instead of writing a response: only the unified error chain
+		// gives the same shape as other 4xx (JSON with a code) and fires WithErrorHook;
+		// http.Error previously wrote bare text/plain.
+		return statusError(http.StatusBadRequest)
 	}
 
 	info, err := fs.Stat(fsys, name)
@@ -208,7 +213,7 @@ func serveStatic(resp *Response, req *Request, fsys fs.FS, cfg staticConfig) err
 			return nil
 		}
 		if cfg.browsable {
-			http.ServeFileFS(resp.ResponseWriter, req.Request, fsys, name)
+			http.ServeFileFS(resp, req.Request, fsys, name)
 			return nil
 		}
 		return staticMiss(resp, req, fsys, cfg)
@@ -217,8 +222,20 @@ func serveStatic(resp *Response, req *Request, fsys fs.FS, cfg staticConfig) err
 		return staticMiss(resp, req, fsys, cfg)
 
 	case err != nil:
-		http.Error(resp, "500 internal error", http.StatusInternalServerError)
-		return nil
+		// EINVAL / ENOTDIR / ELOOP 可由路径内容本身触发（客户端可达，例如含 NUL 的
+		// 名字），故归 400；其余（权限、坏盘等）是服务端故障，返回原始错误，由统一
+		// 错误链写脱敏 500 并把真实原因交给 onError/日志。全部记入 Written/Status/
+		// BytesOut，不再像原先那样静默绕过响应门。
+		// EINVAL / ENOTDIR / ELOOP can be triggered by the path itself (client-
+		// reachable, e.g. a name containing NUL), so they are 400; everything else
+		// (permissions, a failing disk) is a server fault: return the raw error and let
+		// the unified chain write a sanitized 500 while passing the real cause to
+		// onError/logs. Every branch now records Written/Status/BytesOut instead of
+		// silently bypassing the response gate.
+		if errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOTDIR) || errors.Is(err, syscall.ELOOP) {
+			return statusError(http.StatusBadRequest)
+		}
+		return err
 	}
 
 	// 普通文件：直接服务。
@@ -250,7 +267,7 @@ func serveStaticFile(resp *Response, req *Request, fsys fs.FS, name string, cfg 
 		// Appended idempotently via ensureVary: the Gzip middleware may have already
 		// declared it when both are mounted.
 		ensureVary(h, "Accept-Encoding")
-		http.ServeFileFS(resp.ResponseWriter, req.Request, fsys, vname)
+		http.ServeFileFS(resp, req.Request, fsys, vname)
 		return
 	}
 	if len(cfg.precompressed) > 0 {
@@ -259,7 +276,7 @@ func serveStaticFile(resp *Response, req *Request, fsys fs.FS, name string, cfg 
 		// Accept-Encoding, so Vary is still required.
 		ensureVary(resp.Header(), "Accept-Encoding")
 	}
-	http.ServeFileFS(resp.ResponseWriter, req.Request, fsys, name)
+	http.ServeFileFS(resp, req.Request, fsys, name)
 }
 
 // pickPrecompressed 选出可服务的预压缩变体:按配置优先级找到第一个"客户端接受 + 文件
@@ -343,8 +360,10 @@ func staticMiss(resp *Response, req *Request, fsys fs.FS, cfg staticConfig) erro
 			return nil
 		}
 	}
-	http.Error(resp, "404 not found", http.StatusNotFound)
-	return nil
+	// 与其他 404 同形（JSON + code + onError），不再自写 text/plain 裸文本。
+	// Same shape as every other 404 (JSON + code + onError) rather than bare
+	// text/plain written here.
+	return statusError(http.StatusNotFound)
 }
 
 // joinFSPath 拼接 fs.FS 路径（始终用 "/"，与 io/fs 契约一致）。dir 为 "." 时返回 elem。
