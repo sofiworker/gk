@@ -126,6 +126,15 @@ func newFieldBinder(ft reflect.Type) (*fieldBinder, bool) {
 		return b, true
 
 	case reflect.Array:
+		// `[0]T` 长度为零，注册期若按 arrayLen>0 走切片分支会请求期 MakeSlice panic。
+		// 与未导出内嵌指针同一策略：宁可在注册期报错，不要把合法定义打成稳定 500。
+		// A `[0]T` has zero length; if we let it through, the request path takes the
+		// slice branch (arrayLen>0 fails) and calls reflect.MakeSlice on an array type,
+		// panicking. Same policy as unexported embedded pointers: fail at registration
+		// rather than turning a legal definition into a stable 500.
+		if b.base.Len() == 0 {
+			return nil, false
+		}
 		elem, ok := newFieldBinder(b.base.Elem())
 		if !ok || elem.vk == vkSlice || elem.vk == vkMap {
 			return nil, false

@@ -107,13 +107,26 @@ func (p *BindPlan) collect(t reflect.Type, prefix []int, depth int) error {
 		}
 
 		if !tagged {
-			// 无 path/query/header tag:结构体(或结构体指针)递归展开,使公共参数可
-			// 抽成嵌入/嵌套结构体复用;其余字段静默跳过(form:/Upload 归请求体)。
+			// 无 path/query/header tag：结构体（或结构体指针）递归展开，使公共参数可
+			// 抽成嵌入/嵌套结构体复用；其余字段静默跳过（form:/Upload 归请求体）。
 			// No path/query/header tag: expand a struct (or struct pointer)
 			// recursively so shared params can be reused via embedded/nested
 			// structs; other fields are skipped silently (form:/Upload belong to
 			// the body).
 			if st, ok := structTypeOf(f.Type); ok && !implementsTextUnmarshaler(st) {
+				// 未导出内嵌【指针】在此拒绝：值形态的内嵌字段 reflect 仍可写
+				// （flagEmbedRO 非粘性），但指针内嵌请求期需沿途 v.Set(reflect.New(...))
+				// 分配，而 Set 对未导出字段 panic。与其让一个合法的 struct 定义把每条
+				// 带该 key 的请求打成 500，不如注册期就报错（同 encoding/json 立场）。
+				// Reject unexported embedded POINTERS here: reflect can still write a
+				// promoted field of an embedded value (flagEmbedRO is not sticky), but
+				// an embedded pointer must be allocated on the way with
+				// v.Set(reflect.New(...)), and Set panics on an unexported field. Better
+				// to fail at registration than to 500 every request carrying that key —
+				// the same stance encoding/json takes.
+				if !f.IsExported() && f.Type.Kind() == reflect.Pointer {
+					return fmt.Errorf("%w: embedded unexported pointer field %q cannot be bound; export it or embed the value instead", ErrInvalidParam, f.Name)
+				}
 				if err := p.collect(st, index, depth+1); err != nil {
 					return err
 				}
