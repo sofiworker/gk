@@ -1,9 +1,12 @@
 package ghttp
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -11,6 +14,23 @@ import (
 	"sync"
 	"sync/atomic"
 )
+
+type headResponseWriter struct{ http.ResponseWriter }
+
+func (w *headResponseWriter) Write(p []byte) (int, error)       { return len(p), nil }
+func (w *headResponseWriter) WriteString(s string) (int, error) { return len(s), nil }
+func (w *headResponseWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+func (w *headResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := w.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, errors.New("underlying ResponseWriter does not support Hijack")
+}
+func (w *headResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // mux 是 Server 内部的路由核心:按 method 持有路由树、池化每请求上下文,并在 ServeHTTP
 // 期把全局中间件链组装到统一分发器外层。它不导出——对外只有 Server 一个顶层类型,mux
@@ -65,6 +85,7 @@ type mux struct {
 	// Set true (strict mode): full validation of dot and empty segments, any
 	// illegal one yields 400.
 	strictPath bool
+	autoHEAD   bool
 
 	// --- 错误链配置(经 Option 写入,请求期只读) / error-chain config (Option-set, read-only at request time) ---
 
@@ -335,6 +356,9 @@ func (m *mux) resolve(req *Request) resolvedRoute {
 		return res
 	}
 	t := m.findTree(r.Method)
+	if t == nil && m.autoHEAD && r.Method == http.MethodHead {
+		t = m.findTree(http.MethodGet)
+	}
 	if t == nil {
 		return res // 该 method 无任何路由 / no route for this method
 	}
@@ -436,7 +460,22 @@ func (m *mux) dispatchTerminal(ctx context.Context, req *Request, resp *Response
 	// naturally through the global middleware chain so a user's Recovery middleware
 	// can catch it (with PanicInfo). Absent Recovery, safeChain's safety-net recover
 	// keeps the server from crashing.
+	if m.autoHEAD && req.Method == http.MethodHead {
+		orig := resp.ResponseWriter
+		resp.ResponseWriter = &headResponseWriter{ResponseWriter: orig}
+		defer func() { resp.ResponseWriter = orig }()
+	}
 	return res.handler.serve(ctx, req, resp)
+}
+
+func (m *mux) serveHEAD(h compiledHandler, ctx context.Context, req *Request, resp *Response) error {
+	if !m.autoHEAD || req.Method != http.MethodHead {
+		return m.serve(h, ctx, req, resp)
+	}
+	orig := resp.ResponseWriter
+	resp.ResponseWriter = &headResponseWriter{ResponseWriter: orig}
+	defer func() { resp.ResponseWriter = orig }()
+	return m.serve(h, ctx, req, resp)
 }
 
 // dispatchRaw 是无全局中间件时的零开销分发:直接借池化上下文匹配并执行,不构造链。
@@ -453,6 +492,9 @@ func (m *mux) dispatchRaw(w http.ResponseWriter, r *http.Request) {
 	}
 
 	t := m.findTree(r.Method)
+	if t == nil && m.autoHEAD && r.Method == http.MethodHead {
+		t = m.findTree(http.MethodGet)
+	}
 	if t == nil {
 		m.writeMissRaw(w, r, path, false)
 		return
@@ -478,7 +520,7 @@ func (m *mux) dispatchRaw(w http.ResponseWriter, r *http.Request) {
 
 	req.resp.reset()
 	req.resp.ResponseWriter = w
-	serr := m.serve(v.handler, r.Context(), req, &req.resp)
+	serr := m.serveHEAD(v.handler, r.Context(), req, &req.resp)
 
 	// 统一错误链出口:必须在 reset 之前调用,writeError 依据 resp.Written() 判断
 	// 是否已提交——已提交则只记录不改写,修复此前无条件 http.Error 的双写。
@@ -730,4 +772,11 @@ func (m *mux) RawHandle(method, path string, fn RawHandlerFunc) error {
 	}
 	m.noteRoute(m, method, path, routeDoc{raw: true})
 	return nil
+}
+
+// MustRawHandle registers a raw route and panics when registration fails.
+func (m *mux) MustRawHandle(method, path string, fn RawHandlerFunc) {
+	if err := m.RawHandle(method, path, fn); err != nil {
+		panic(err)
+	}
 }

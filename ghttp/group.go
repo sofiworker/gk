@@ -86,6 +86,13 @@ func (g *Group) RawHandle(method, path string, fn RawHandlerFunc) error {
 	return nil
 }
 
+// MustRawHandle registers a raw route and panics when registration fails.
+func (g *Group) MustRawHandle(method, path string, fn RawHandlerFunc) {
+	if err := g.RawHandle(method, path, fn); err != nil {
+		panic(err)
+	}
+}
+
 // snapshotMiddleware 返回 base 与 extra 拼接后的独立副本,避免共享底层数组导致后续
 // append 串扰(gin 快照语义的实现关键)。
 // snapshotMiddleware returns an independent copy of base concatenated with

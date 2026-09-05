@@ -152,6 +152,12 @@ func WithStrictPath(strict bool) Option {
 	return func(s *Server) { s.strictPath = strict }
 }
 
+// WithAutoHEAD makes registered GET routes also accept HEAD requests. The
+// default is false to preserve ghttp's Gin-style routing semantics.
+func WithAutoHEAD(enabled bool) Option {
+	return func(s *Server) { s.autoHEAD = enabled }
+}
+
 // WithStrictContentType 控制 body 入口是否在解码前校验请求 Content-Type 属于端点声明的
 // 可接受集合。默认 true(不符即 415);置 false 时跳过校验,直接把请求体交给解码器
 // (旧宽松行为)。可接受集合优先取解码器实现的 MultiContentTypeDecoder.ContentTypes()
