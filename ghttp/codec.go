@@ -167,8 +167,12 @@ func (jsonCodec) Decode(req *Request, v any) error {
 	// take the second, so the two disagree about what the request was (a smuggling-class
 	// confusion). One body should denote one value; trailing content is an error, not
 	// ignorable noise.
-	if dec.More() {
-		return fmt.Errorf("%w: unexpected trailing content after the JSON value", ErrInvalidInput)
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("%w: unexpected trailing content after the JSON value", ErrInvalidInput)
+		}
+		return decodeError(err)
 	}
 	return nil
 }

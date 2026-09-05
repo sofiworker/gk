@@ -1,6 +1,8 @@
 package ghttp
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"reflect"
 )
@@ -91,9 +93,14 @@ func (o jsonOutput[T]) encode(resp *Response, v T) error {
 		resp.WriteHeader(status)
 		return o.enc.Encode(resp, v)
 	}
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(v); err != nil {
+		return err
+	}
 	resp.Header().Set("Content-Type", "application/json; charset=utf-8")
 	resp.WriteHeader(status)
-	return jsonCodec{}.Encode(resp, v)
+	_, err := resp.Write(buf.Bytes())
+	return err
 }
 
 // JSON 返回一个 JSON 输出契约,默认状态码 200,可用 .Status(code) 覆盖、.WithEncoder 替换编码器。

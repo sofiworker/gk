@@ -135,6 +135,10 @@ type Response struct {
 // WriteHeader records the status code, marks the response committed, then
 // delegates to the underlying writer.
 func (r *Response) WriteHeader(code int) {
+	if code >= 100 && code < 200 {
+		r.ResponseWriter.WriteHeader(code)
+		return
+	}
 	if r.written {
 		return
 	}

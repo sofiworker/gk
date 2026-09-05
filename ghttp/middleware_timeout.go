@@ -71,7 +71,12 @@ func TimeoutWithMessage(d time.Duration, message string) Middleware {
 			// 请求会拿到已被 cancel 的 deadline context。
 			// Requests are pooled, so the mutation must be undone before returning;
 			// otherwise the next holder of this object gets a cancelled deadline.
-			defer func() { req.Request = orig }()
+			defer func() {
+				if req.MultipartForm != nil {
+					_ = req.MultipartForm.RemoveAll()
+				}
+				req.Request = orig
+			}()
 
 			err := next(ctx, req, resp)
 
