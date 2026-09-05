@@ -88,14 +88,12 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          # Keep below 1.27 so the go1.27-tagged files are excluded from the
-          # load and golangci-lint v1 (built with an older parser) can run.
-          go-version: "1.26.x"
+          go-version: "1.25.x"
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
-          version: v1.64.8
+          version: v2.4.0
           args: run ./...
 
       - name: Dependency policy
