@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
@@ -153,18 +152,19 @@ func TestHotReloadOnFileChange(t *testing.T) {
 	defer os.Unsetenv("APP_DATABASE_PASSWORD")
 
 	var cfg TestAppConfig
-	var wg sync.WaitGroup
-	var once sync.Once
-	wg.Add(1)
+	reloaded := make(chan struct{}, 1)
 
 	// 定义回调函数，当配置变更时，它会重新 unmarshal 并通知测试完成
 	reloadCallback := func(c Unmarshaler) {
 		fmt.Println("Hot reload callback triggered!")
 		err := c.Unmarshal(&cfg)
 		assert.NoError(err)
-		once.Do(func() {
-			wg.Done()
-		})
+		if cfg.App.Name == "ReloadedApp" && cfg.Database.Host == "reloaded_host" {
+			select {
+			case reloaded <- struct{}{}:
+			default:
+			}
+		}
 	}
 
 	// 创建加载器，并进行首次加载
@@ -189,8 +189,12 @@ func TestHotReloadOnFileChange(t *testing.T) {
 	err = os.WriteFile(configFilePath, []byte(newConfigContent), 0644)
 	assert.NoError(err)
 
-	// 等待回调函数执行完成
-	wg.Wait()
+	// 文件监视器可能先收到截断事件、再收到写入事件；等待目标配置实际完成加载。
+	select {
+	case <-reloaded:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for hot reload")
+	}
 
 	// 验证热加载后的配置
 	assert.Equal("ReloadedApp", cfg.App.Name, "App.Name should be reloaded from file")
