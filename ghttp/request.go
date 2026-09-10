@@ -181,6 +181,37 @@ func (r *Response) WriteString(s string) (int, error) {
 	return n, err
 }
 
+// ReadFrom 实现 io.ReaderFrom:底层 writer 支持时直通(如 net/http 对 TCP 连接的
+// sendfile 零拷贝),并把转发的字节数计入 bytesOut;不支持时回退缓冲拷贝,该路径经 Write
+// 计数。直通分支必须在首次写入前隐式提交 200,与 Write 的语义一致(如 ServeFileFS 先
+// WriteHeader 再 CopyN,但用户也可直接 io.Copy(resp, src))。
+// ReadFrom implements io.ReaderFrom: it passes through when the underlying writer
+// supports it (e.g. net/http's sendfile on a TCP connection), crediting bytesOut
+// with the forwarded count; otherwise it falls back to a buffered copy, which is
+// counted through Write. Like Write, the passthrough branch implicitly commits
+// 200 before the first write (ServeFileFS does WriteHeader before CopyN, but user
+// code may io.Copy(resp, src) directly).
+func (r *Response) ReadFrom(src io.Reader) (int64, error) {
+	if !r.written {
+		r.status = http.StatusOK
+		r.written = true
+	}
+	if rf, ok := r.ResponseWriter.(io.ReaderFrom); ok {
+		n, err := rf.ReadFrom(src)
+		r.bytesOut += int(n)
+		return n, err
+	}
+	return io.Copy(responseWriteOnly{r}, src)
+}
+
+// responseWriteOnly 屏蔽 Response 自身的 ReadFrom,让 io.Copy 回退分支走普通 Write
+// 循环——否则 io.Copy(r, src) 会命中 ReadFrom 而无限递归。
+// responseWriteOnly hides Response's own ReadFrom so io.Copy's fallback takes the
+// plain Write loop — otherwise io.Copy(r, src) would hit ReadFrom and recurse.
+type responseWriteOnly struct{ r *Response }
+
+func (w responseWriteOnly) Write(p []byte) (int, error) { return w.r.Write(p) }
+
 // Status 返回已写入的状态码;未写时返回 0。
 // Status returns the written status code, or 0 if nothing was written.
 func (r *Response) Status() int { return r.status }

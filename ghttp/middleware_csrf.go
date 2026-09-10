@@ -308,18 +308,28 @@ func csrfFormToken(req *Request, field string) string {
 	// multipart 体会先吃掉内存与临时文件（ParseMultipartForm 的 32 MiB 是【驻留内存】
 	// 上限，不是总大小上限），随后请求才因缺 token 被拒。攻击者因此能用"注定失败的请求"
 	// 消耗资源。声明长度超限时直接不解析：真要用表单字段带 token 的正常表单远小于此，
-	// 而 header 通道完全不受影响。
+	// 而 header 通道完全不受影响。chunked 体没有声明长度，故解析前用 MaxBytesReader
+	// 包上同一上限作为【总量】帽（已挂 LimitBody 时双层包装取两者较小值，行为不变）。
 	// Parsing the body only to find a token that may not exist, and doing so BEFORE the
 	// verdict: an oversized multipart body first eats memory and temp files
 	// (ParseMultipartForm's 32 MiB caps the IN-MEMORY portion, not the total), and only
 	// then is the request rejected for a missing token — so an attacker spends resources
 	// on requests that were always going to fail. Skip parsing beyond this declared
 	// length: real form-field tokens are far smaller, and the header path is untouched.
+	// A chunked body has no declared length, so wrap the body with MaxBytesReader at
+	// the same limit as the TOTAL cap before parsing (with LimitBody mounted, the
+	// double wrap takes the smaller bound, unchanged behavior).
 	if req.ContentLength > maxCSRFPreAuthBodyBytes {
 		return ""
 	}
 	switch mediaType(req.Header.Get("Content-Type")) {
 	case "application/x-www-form-urlencoded":
+		// 总量帽同样适用于 urlencoded：标准库只对 POST/PUT/PATCH 的 ParseForm 设 10 MiB
+		// 上限，其余不安全方法（DELETE 等）的读取没有上限，同一 DoS 面换个 method 即可绕过。
+		// The total cap applies to urlencoded too: the stdlib's 10 MiB ParseForm
+		// limit covers POST/PUT/PATCH only, and other unsafe methods (DELETE, …)
+		// read unbounded — the same DoS surface, bypassable by switching methods.
+		req.Body = http.MaxBytesReader(nil, req.Body, maxCSRFPreAuthBodyBytes)
 		if err := req.ParseForm(); err != nil {
 			return ""
 		}
@@ -332,6 +342,7 @@ func csrfFormToken(req *Request, field string) string {
 		// non-nil and empty, so a subsequent PostFormValue considers it parsed and
 		// never re-parses, always yielding "" — multipart submissions would forever
 		// be judged as missing their token.
+		req.Body = http.MaxBytesReader(nil, req.Body, maxCSRFPreAuthBodyBytes)
 		if err := req.ParseMultipartForm(defaultMaxMultipartMemory); err != nil {
 			return ""
 		}

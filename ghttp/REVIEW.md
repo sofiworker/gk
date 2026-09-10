@@ -518,3 +518,22 @@ S1' 与 M1'–M8' 已全部修复，另处理轻微项 L1/L5 与性能项 P1。`
 未处理项维持原判：L2/L3/L4/L6/L7/L8/L9（既定取舍或收益不抵改动面）、P2–P6（P5 泛型固有、P6 前三轮已知遗留）。
 
 变更文件：`error_chain.go`、`mux.go`、`server.go`、`body_decoders.go`、`bind_plan.go`、`gzip.go`、`middleware_ratelimit.go`、`static.go`、`codec.go`、`output.go`；测试新增 `review_round4_fixes_test.go`、重写 `autohead_test.go`，更新 `form_content_type_test.go`、`static_precompressed_test.go`；CHANGELOG 补 11 条 Fixed + 1 条 Performance。
+
+---
+
+# 第五轮修复记录（外部评审后）
+
+本评审由外部 review 探针实测驱动（`review/` 目录下的行为探针 + 跨进程压 + pprof 采集），覆盖此前未触及的 CSRF 预解析 chunked 面、`*Response` 缺 `io.ReaderFrom` 导致静态服务丢零拷贝、`AcceptsEncoding`/`ensureVary` 每请求分配、Ready 串行延迟、`Upload` 生命周期文档。`go test -race -count=1 ./ghttp/` 通过，`go vet`/`gofmt` 干净；路由命中热路径无回归（Static ~25ns、Param1 ~29ns，0 alloc）。
+
+| 编号 | 修复方式 | 测试 |
+|---|---|---|
+| C1 CSRF 预解析 chunked 面 | `middleware_csrf.go` 的 `csrfFormToken` 在 multipart 与 urlencoded 两路解析前都包 `http.MaxBytesReader(nil, req.Body, maxCSRFPreAuthBodyBytes)`（4 MiB 帽，与声明长度门一致）；已挂 `LimitBody` 时双层包装取较小值 | `review_round5_fixes_test.go`：`TestCSRFFormToken_MultipartCapSmall`（小表单带 token 正常取到）、`TestCSRFFormToken_MultipartCapChunked`（chunked 5 MiB multipart 返回空串且底层读取 ≤ 帽+1）、`TestCSRFFormToken_URLEncodedCapChunked`/`_URLEncodedCapSmall` |
+| C2 Response ReadFrom 零拷贝 | `request.go` 的 `*Response` 新增 `ReadFrom`：底层支持时直通（sendfile 零拷贝），`bytesOut` 计入转发字节；不支持时回退缓冲拷贝经 `Write` 计数；隐式 200 与 `Write` 语义一致。`gzipResponseWriter` 同步实现：透传分支直通底层、压缩分支回退缓冲拷贝 | `TestResponseReadFrom_Passthrough`/`_FallbackNoRecursion`/`_Implicit200`、`TestGzipResponseWriterReadFrom_Passthrough`/`_Compress`；`review/probe_behavior_test.go:TestProbe_ResponseLosesReaderFrom` 自动验证修复 |
+| L1 AcceptsEncoding 零分配 | `static.go` 的 `AcceptsEncoding`/`isZeroQuality` 改为按逗号/分号手工切分（`strings.IndexByte` + 子串），全程零分配；语义由既有 `TestAcceptsEncoding` 表驱动覆盖 | `TestAcceptsEncoding_ZeroAlloc`（7 种代表性输入，`AllocsPerRun` 全 0） |
+| L2 ensureVary 零分配 | `gzip.go` 的 `ensureVary` 直接遍历头映射并手工切逗号，避免 `h.Values` 的切片分配；大小写变体键同样识别 | `TestEnsureVary_ZeroAllocWhenPresent`、`TestEnsureVary_IdempotentAcrossCaseAndComma` |
+| P6 Ready 并行化 | `health.go` 的 `runChecks` 改为 `sync.WaitGroup` 并行运行，每项独立 `context.WithTimeout`；结果按注册序先落定长切片再建 map，避免并发写 map | `TestRunChecks_ParallelTiming`（3×100ms < 250ms）、`TestRunChecks_ParallelFailure`、`TestRunChecks_ParallelTimeout` |
+| D1 Upload 生命周期文档 | `upload.go` 的 `Upload` 类型注释补生命周期说明：超内存阈值的文件由 net/http 落为临时文件，请求处理结束后自动删除；`Open`/`Bytes`/`Save` 在响应写完后调用会失败；需要跨请求保留的文件必须在 handler 内立即 `Save` | 文档性修复；`review/probe_behavior_test.go:TestProbe_UploadInvalidAfterRequestCompletes` 已固化该行为 |
+
+未处理项维持原判：L3（RequestID 缺 X-Request-ID 时的 crypto/rand 成本，LB 提供即免）、L4（`WithTrustedProxies` CIDR 错误信息）、D3/D4/D5（既定取舍或收益不抵改动面）、P2（metrics countFor 分片锁竞争，实测在 8 worker 下无热点）。
+
+变更文件：`middleware_csrf.go`、`request.go`、`gzip.go`、`static.go`、`health.go`、`upload.go`；测试新增 `review_round5_fixes_test.go`；CHANGELOG 补 5 条 Fixed + 1 条 Performance。

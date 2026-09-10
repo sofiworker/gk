@@ -248,6 +248,35 @@ func (w *gzipResponseWriter) WriteString(s string) (int, error) {
 	return w.orig.Write([]byte(s))
 }
 
+// ReadFrom 在【透传】分支直通底层 writer 以保住 sendfile 零拷贝(静态大文件经 Gzip
+// 中间件挂载时若走缓冲拷贝,每请求多一次 32 KiB 分配与整文件用户态拷贝);压缩分支回退
+// 缓冲拷贝,字节经 gzip 流写出。字节计数由外层的 Response.ReadFrom 统一完成。
+// ReadFrom passes through to the underlying writer on the passthrough branch to
+// keep sendfile (large static files behind the Gzip middleware would otherwise pay
+// a 32 KiB buffer allocation and a full userspace copy per request); the
+// compression branch falls back to a buffered copy through the gzip stream. Byte
+// accounting is done once by the outer Response.ReadFrom.
+func (w *gzipResponseWriter) ReadFrom(src io.Reader) (int64, error) {
+	if !w.decided {
+		w.WriteHeader(http.StatusOK)
+	}
+	if w.compress {
+		return io.Copy(gzipWriteOnly{w}, src)
+	}
+	if rf, ok := w.orig.(io.ReaderFrom); ok {
+		return rf.ReadFrom(src)
+	}
+	return io.Copy(gzipWriteOnly{w}, src)
+}
+
+// gzipWriteOnly 屏蔽 gzipResponseWriter 自身的 ReadFrom,让 io.Copy 回退分支走 Write
+// 循环,避免 io.Copy(w, src) 无限递归。
+// gzipWriteOnly hides gzipResponseWriter's own ReadFrom so io.Copy's fallback uses
+// the Write loop, avoiding infinite recursion in io.Copy(w, src).
+type gzipWriteOnly struct{ w *gzipResponseWriter }
+
+func (g gzipWriteOnly) Write(p []byte) (int, error) { return g.w.Write(p) }
+
 // Flush 必须先定案再冲刷：未走过 Write/WriteHeader 时 decided=false、compress=false，
 // 直接 orig.Flush 会把不带 Content-Encoding 的 200 头提交出去，随后的 Write 又判定要压缩
 // 并写 gzip 字节 —— 客户端收到的是一段"没有 gzip 头的 gzip 体"，无法解码。
@@ -287,15 +316,35 @@ func (w *gzipResponseWriter) Unwrap() http.ResponseWriter { return w.orig }
 
 // ensureVary 幂等地把 value 追加进 Vary 头:已声明(含大小写变体、逗号合并列表)则不
 // 重复追加。Vary 语义是集合,重复项虽合法但会让下游缓存键解析做无谓工作,也易被误读。
+// 它跑在【每请求】的 gzip/静态预压缩热路径上,故直接遍历头映射并手工切逗号,避免
+// h.Values 的切片分配。
 // ensureVary appends value to the Vary header idempotently: if already declared
 // (case-insensitively, including within comma-joined lists) nothing is added.
 // Vary is a set; duplicates are legal but make downstream cache-key parsing do
-// pointless work and are easy to misread.
+// pointless work and are easy to misread. It runs on the per-request
+// gzip/static-precompression hot path, so it walks the header map directly and
+// splits commas by hand, avoiding h.Values' slice allocation.
 func ensureVary(h http.Header, value string) {
-	for _, existing := range h.Values("Vary") {
-		for _, item := range strings.Split(existing, ",") {
-			if strings.EqualFold(strings.TrimSpace(item), value) {
-				return
+	for k, vs := range h {
+		if !strings.EqualFold(k, "Vary") {
+			continue
+		}
+		for _, v := range vs {
+			rest := v
+			for {
+				item := rest
+				if i := strings.IndexByte(rest, ','); i >= 0 {
+					item = rest[:i]
+					rest = rest[i+1:]
+				} else {
+					rest = ""
+				}
+				if strings.EqualFold(strings.TrimSpace(item), value) {
+					return
+				}
+				if rest == "" {
+					break
+				}
 			}
 		}
 	}

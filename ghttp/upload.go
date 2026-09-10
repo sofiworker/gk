@@ -10,10 +10,22 @@ import (
 // Upload 承接一个 multipart 上传文件。它属于请求体:在 form 请求体结构体(经 FormBody[T]
 // 解码)里放 Upload 字段即绑定同名文件,放 []Upload 字段则绑定同名的全部文件
 // (如 <input multiple>)。字段名由 form: tag 指定。
+//
+// 【生命周期】Upload 仅在 handler 执行期内有效:超过内存阈值的文件由 net/http 落为
+// 临时文件,而该文件会在请求处理结束后被自动删除——响应写完后对 Open/Bytes/Save 的
+// 调用将失败(如 open ...: no such file or directory)。需要跨请求保留的文件必须在
+// handler 内立即 Save 到自有存储;不得把 Upload 存入全局变量或 goroutine 待稍后处理。
 // Upload receives one multipart uploaded file. It belongs to the request body:
 // include an Upload field in a form body struct (decoded via FormBody[T]) to bind
 // the file of the same name, or []Upload to bind all files under that name (e.g.
 // <input multiple>). The field name comes from the form: tag.
+//
+// LIFETIME: an Upload is only valid during the handler: files over the memory
+// threshold are spilled to temp files by net/http, and those are deleted once the
+// request finishes — calling Open/Bytes/Save after the response is written fails
+// (e.g. open ...: no such file or directory). To keep a file across requests, Save
+// it to your own storage inside the handler; never stash an Upload in a global or
+// a goroutine for later use.
 type Upload struct {
 	// Filename 是客户端声明的原始文件名(不可信,落盘前须净化)。
 	// Filename is the client-declared original file name (untrusted; sanitize

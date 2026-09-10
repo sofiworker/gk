@@ -333,9 +333,23 @@ func pickPrecompressed(req *Request, fsys fs.FS, name string, cfg staticConfig) 
 // drift on edges like `*` and q-values, producing inconsistencies such as "a
 // precompressed file is served for `*` but dynamic gzip declines to compress". One
 // implementation keeps them agreeing.
+// 解析按逗号手工切分:gzip 中间件与静态服务【每个请求】都调用本函数(分别为判定是否
+// 压缩、是否命中预压缩变体),strings.Split 每次调用都分配切片;token 与参数只取子串、
+// EqualFold 比较,全程零分配。
+// Parsing splits on commas by hand: both the gzip middleware and the static
+// service call this on EVERY request (to decide compression / pre-compressed
+// variants), and strings.Split allocates a slice per call; tokens and params are
+// substrings with EqualFold comparisons, so the whole function is allocation-free.
 func AcceptsEncoding(header, enc string) bool {
 	wildcard := 0 // 0=未见 / unseen, 1=接受 / accepts, -1=拒绝 / refuses
-	for _, part := range strings.Split(header, ",") {
+	for len(header) > 0 {
+		part := header
+		if i := strings.IndexByte(header, ','); i >= 0 {
+			part = header[:i]
+			header = header[i+1:]
+		} else {
+			header = ""
+		}
 		token, params, _ := strings.Cut(strings.TrimSpace(part), ";")
 		token = strings.TrimSpace(token)
 		if strings.EqualFold(token, enc) {
@@ -356,7 +370,14 @@ func AcceptsEncoding(header, enc string) bool {
 // isZeroQuality reports whether the parameter string declares q=0 (zero weight
 // meaning "not acceptable").
 func isZeroQuality(params string) bool {
-	for _, p := range strings.Split(params, ";") {
+	for len(params) > 0 {
+		p := params
+		if i := strings.IndexByte(params, ';'); i >= 0 {
+			p = params[:i]
+			params = params[i+1:]
+		} else {
+			params = ""
+		}
 		k, v, ok := strings.Cut(strings.TrimSpace(p), "=")
 		if !ok || !strings.EqualFold(strings.TrimSpace(k), "q") {
 			continue

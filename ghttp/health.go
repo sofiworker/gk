@@ -13,13 +13,13 @@ import (
 // ===========================================================================
 // 健康检查：为容器编排（K8s liveness/readiness probe）与负载均衡探测提供标准端点。
 //   - Health：存活探针，恒 200，表明进程在运行；
-//   - Ready：就绪探针，逐一运行注册的 Checker，任一失败即 503，表明暂不可接流量。
+//   - Ready：就绪探针，并行运行注册的 Checker，任一失败即 503，表明暂不可接流量。
 // 响应体为 JSON，便于运维观测各依赖项状态。
 // Health checks: standard endpoints for container orchestration (K8s liveness/
 // readiness probes) and load-balancer health polling.
 //   - Health: a liveness probe, always 200, signaling the process is running;
-//   - Ready: a readiness probe, running each registered Checker; any failure
-//     yields 503, signaling "not ready to receive traffic".
+//   - Ready: a readiness probe, running all registered Checkers concurrently; any
+//     failure yields 503, signaling "not ready to receive traffic".
 // The body is JSON for operational observability of each dependency's status.
 // ===========================================================================
 
@@ -110,35 +110,58 @@ func (r readyResult) body() map[string]any {
 	return map[string]any{"status": status, "checks": r.checks}
 }
 
-// runChecks 顺序运行所有检查项，收集结果；每项可选加 timeout。
-// runChecks runs all checks sequentially, collecting results; each may get a timeout.
+// runChecks 并行运行所有检查项，收集结果；每项可加 timeout。
+//
+// 就绪探针常挂在 K8s/LB 的快速失败路径上，且各依赖(数据库、缓存、下游服务)天然相互独立：
+// 串行探测把"单个依赖变慢"放大成"全部依赖逐个排队等超时"的总延迟——3 个 50ms 检查串行
+// 至少 150ms，并行则约 50ms。结果按注册序收集；先落定长切片再建 map，避免并发写 map。
+// runChecks runs all checks concurrently, collecting results; each may get a timeout.
+//
+// Readiness probes sit on the K8s/LB fast-fail path, and the dependencies (DB,
+// cache, downstream services) are naturally independent of each other: sequential
+// probing turns "one slow dependency" into "everything queues behind its timeout" —
+// three 50 ms checks serialize to 150 ms+, concurrent they take about 50 ms.
+// Results are gathered in registration order; they are staged in a fixed-size
+// slice before the map to avoid concurrent map writes.
 func runChecks(ctx context.Context, timeout time.Duration, checks []Checker, details bool) readyResult {
+	type staged struct {
+		name, state string
+	}
+	states := make([]staged, len(checks))
+	var wg sync.WaitGroup
+	wg.Add(len(checks))
+	for i, c := range checks {
+		go func() {
+			defer wg.Done()
+			cctx := ctx
+			var cancel context.CancelFunc
+			if timeout > 0 {
+				cctx, cancel = context.WithTimeout(ctx, timeout)
+				defer cancel()
+			}
+			err := c.Check(cctx)
+			switch {
+			case err == nil:
+				states[i] = staged{name: c.Name, state: "ok"}
+			case details:
+				// 即便开启细节，也必须压成单行并限长：错误文本可能来自下游（含换行的驱动
+				// 报错、超长 DSN），JSON 里塞整段堆栈既无益也放大响应体。
+				// Even with details on, collapse to one line and bound the length: text
+				// from a downstream (multi-line driver errors, long DSNs) adds nothing
+				// and inflates the response.
+				states[i] = staged{name: c.Name, state: truncateOneLine(err.Error(), maxHealthDetailLen)}
+			default:
+				states[i] = staged{name: c.Name, state: "fail"}
+			}
+		}()
+	}
+	wg.Wait()
 	res := readyResult{healthy: true, checks: make(map[string]string, len(checks))}
-	for _, c := range checks {
-		cctx := ctx
-		var cancel context.CancelFunc
-		if timeout > 0 {
-			cctx, cancel = context.WithTimeout(ctx, timeout)
-		}
-		err := c.Check(cctx)
-		if cancel != nil {
-			cancel()
-		}
-		switch {
-		case err == nil:
-			res.checks[c.Name] = "ok"
-		case details:
+	for _, s := range states {
+		if s.state != "ok" {
 			res.healthy = false
-			// 即便开启细节，也必须压成单行并限长：错误文本可能来自下游（含换行的驱动
-			// 报错、超长 DSN），JSON 里塞整段堆栈既无益也放大响应体。
-			// Even with details on, collapse to one line and bound the length: text from a
-			// downstream (multi-line driver errors, long DSNs) adds nothing and inflates
-			// the response.
-			res.checks[c.Name] = truncateOneLine(err.Error(), maxHealthDetailLen)
-		default:
-			res.healthy = false
-			res.checks[c.Name] = "fail"
 		}
+		res.checks[s.name] = s.state
 	}
 	return res
 }
