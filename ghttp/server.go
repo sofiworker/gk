@@ -410,6 +410,15 @@ func (s *Server) endRun(err error) error {
 	s.mu.Lock()
 	if s.state == stateRunning {
 		s.state = stateIdle
+		// serving 与 state 是同一"已启动"事实的两个投影(markStarted 同时置位),回退
+		// 必须成对:只退 state 会留下半僵尸——IsStarted()=false 却因 serving 仍为 true
+		// 而永久拒绝 RawHandle,换端口重试前想补注册路由都做不到。
+		// serving and state are two projections of the same "started" fact
+		// (markStarted sets both), so the rollback must be paired: resetting state
+		// alone leaves a half-zombie — IsStarted()=false yet RawHandle rejected
+		// forever because serving stayed true, so routes cannot even be added
+		// before retrying on another port.
+		s.mux.serving.Store(false)
 	}
 	s.mu.Unlock()
 	return err

@@ -316,31 +316,40 @@ func pickPrecompressed(req *Request, fsys fs.FS, name string, cfg staticConfig) 
 
 // AcceptsEncoding 报告 Accept-Encoding 头是否接受编码 enc。它按 token 切分并识别
 // "q=0" 表示的显式拒绝(如 "gzip;q=0"),避免把拒绝误读为接受；通配符 "*" 接受任意编码。
+// 具名 token 优先于通配符,与列表顺序无关(RFC 9110 §12.5.3:更具体的匹配优先)——
+// 否则 "*;q=0, gzip" 会因先扫到 `*` 被误判为拒绝,尽管 gzip 被显式列出接受。
 //
 // 它由静态服务与 gzip 中间件共享：两处若各写一套解析，就会在 `*`、q 值等边界上漂移，
 // 出现"预压缩文件按 * 命中、动态 gzip 却不压"这类不一致。单一实现保证两者同判。
 // AcceptsEncoding reports whether an Accept-Encoding header admits coding enc. It
 // splits on tokens and honors an explicit refusal expressed as "q=0" (e.g.
-// "gzip;q=0"), so a refusal is not misread as acceptance; the wildcard "*" admits any
-// encoding.
+// "gzip;q=0"), so a refusal is not misread as acceptance; the wildcard "*" admits
+// any encoding. A named token takes precedence over the wildcard regardless of
+// list order (RFC 9110 §12.5.3: the most specific match wins) — otherwise
+// "*;q=0, gzip" would be misjudged as a refusal because `*` is scanned first,
+// although gzip is explicitly listed as accepted.
 //
 // It is shared by the static service and the gzip middleware: two independent parsers
 // drift on edges like `*` and q-values, producing inconsistencies such as "a
 // precompressed file is served for `*` but dynamic gzip declines to compress". One
 // implementation keeps them agreeing.
 func AcceptsEncoding(header, enc string) bool {
+	wildcard := 0 // 0=未见 / unseen, 1=接受 / accepts, -1=拒绝 / refuses
 	for _, part := range strings.Split(header, ",") {
 		token, params, _ := strings.Cut(strings.TrimSpace(part), ";")
 		token = strings.TrimSpace(token)
-		if !strings.EqualFold(token, enc) && token != "*" {
-			continue
+		if strings.EqualFold(token, enc) {
+			return !isZeroQuality(params)
 		}
-		if isZeroQuality(params) {
-			return false
+		if token == "*" && wildcard == 0 {
+			if isZeroQuality(params) {
+				wildcard = -1
+			} else {
+				wildcard = 1
+			}
 		}
-		return true
 	}
-	return false
+	return wildcard == 1
 }
 
 // isZeroQuality 报告参数串是否声明 q=0(权重为零即"不接受")。

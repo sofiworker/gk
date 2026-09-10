@@ -1,6 +1,7 @@
 package ghttp
 
 import (
+	"bytes"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
@@ -167,12 +168,19 @@ func (jsonCodec) Decode(req *Request, v any) error {
 	// take the second, so the two disagree about what the request was (a smuggling-class
 	// confusion). One body should denote one value; trailing content is an error, not
 	// ignorable noise.
-	var extra any
-	if err := dec.Decode(&extra); err != io.EOF {
-		if err == nil {
-			return fmt.Errorf("%w: unexpected trailing content after the JSON value", ErrInvalidInput)
-		}
-		return decodeError(err)
+	//
+	// 用 Token() 而非 Decode(&extra) 探测:Token 只读【一个】令牌(越过空白后的首个
+	// 字节即可判定,`]`/`}` 这类顶层垃圾直接成为语法错),而 Decode 会把第二个值
+	// 【完整物化】进 any 后才报错——未挂 LimitBody 时,巨型第二值成了免费的 CPU/内存
+	// 放大点。(More() 不行:它专为数组/对象内部设计,对顶层尾随的 `]`/`}` 返回 false。)
+	// Probe with Token() rather than Decode(&extra): Token reads ONE token (the first
+	// post-whitespace byte decides, and top-level garbage like `]`/`}` is an immediate
+	// syntax error), whereas Decode fully MATERIALIZED the second value into an any
+	// before erroring — without LimitBody, a huge second value was a free CPU/memory
+	// amplification point. (More() does not work here: it is designed for inside
+	// arrays/objects and returns false for a trailing top-level `]`/`}`.)
+	if _, terr := dec.Token(); terr != io.EOF {
+		return fmt.Errorf("%w: unexpected trailing content after the JSON value", ErrInvalidInput)
 	}
 	return nil
 }
@@ -214,11 +222,14 @@ func (xmlCodec) Decode(req *Request, v any) error {
 	}
 	// 拒绝首个元素之后的内容：Decode 只读一个元素就返回，于是 `<User>…</User><User>…</User>`
 	// 会静默按第一个处理，与链路上另一个解析器可能取到的第二个不一致（请求混淆一类）。
-	// XML 没有 json.Decoder.More，需自行推进到下一个非字符令牌。
+	// XML 没有 json.Decoder.More，需自行推进令牌:仅【纯空白】CharData 可跳过(元素间
+	// 换行缩进是合法格式),非空白字符数据(`<a/>trailing`)与 JSON 侧一样属尾随垃圾。
 	// Reject content after the first element: Decode returns after one element, so
 	// `<User>…</User><User>…</User>` is silently handled as the first while another parser
 	// on the path may take the second (a request-confusion class). XML lacks
-	// json.Decoder.More, so advance to the next non-character token manually.
+	// json.Decoder.More, so advance tokens manually: only WHITESPACE-ONLY CharData is
+	// skipped (newlines/indentation between elements are legal formatting); non-blank
+	// character data (`<a/>trailing`) is trailing garbage, same stance as the JSON side.
 	for {
 		tok, terr := dec.Token()
 		if terr == io.EOF {
@@ -227,8 +238,10 @@ func (xmlCodec) Decode(req *Request, v any) error {
 		if terr != nil {
 			return decodeError(terr)
 		}
-		if _, isChar := tok.(xml.CharData); isChar {
-			continue
+		if cd, isChar := tok.(xml.CharData); isChar {
+			if len(bytes.TrimSpace(cd)) == 0 {
+				continue
+			}
 		}
 		return fmt.Errorf("%w: unexpected trailing content after the XML document", ErrInvalidInput)
 	}

@@ -149,11 +149,12 @@ func TestFormBody_StrictContentTypeRejectsNonForm(t *testing.T) {
 			wantBody:   `{"name":"alice","count":7}`,
 		},
 		{
-			// 缺省 Content-Type 仍放行(与 JSON 端点一致的既有契约:交给解码器处理)。
-			name:       "missing content type still passes",
+			// 缺省 Content-Type 显式 415:此前一路放行,ParseForm 对非表单 CT 不读体
+			// 也不报错,解出零值结构体 + 200,提交的数据被静默丢弃(fail-open)。
+			name:       "missing content type is rejected",
 			ct:         "",
 			body:       "name=alice&count=7",
-			wantStatus: http.StatusOK,
+			wantStatus: http.StatusUnsupportedMediaType,
 		},
 	}
 	for _, tc := range cases {

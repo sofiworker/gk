@@ -59,7 +59,7 @@ type ErrorRenderer interface {
 func classifyError(err error) (status int, code string) {
 	var sc StatusCoder
 	if errors.As(err, &sc) {
-		s := sc.HTTPStatus()
+		s := safeHTTPStatus(sc)
 		// 校验业务返回的状态码:非法值传给 WriteHeader 会 panic,而 writeError 运行在
 		// 所有 recover 之外(它本身就是 panic 的善后出口),那个 panic 会直接击穿
 		// ServeHTTP 并由 net/http 断连。一个实现不当的错误类型不该能打挂连接,故非法
@@ -106,6 +106,41 @@ func classifyError(err error) (status int, code string) {
 // permits 100–599; anything outside panics with "invalid WriteHeader code".
 func isValidHTTPStatus(status int) bool {
 	return status >= 100 && status <= 599
+}
+
+// safeHTTPStatus 在 recover 保护下调用业务实现的 HTTPStatus()。isValidHTTPStatus
+// 只能拦住【返回值】非法,拦不住【调用本身】panic:最典型的是 typed-nil StatusCoder
+// (`var e *MyErr; return e`——接口非 nil、内部指针 nil,方法体一解引用即 nil panic)。
+// 而 classifyError 由 writeError 调用,运行在所有 recover 之外,这个 panic 会击穿
+// ServeHTTP 并由 net/http 断连。panic 时返回 0(非法值),由调用方按既有路径回退 500。
+// safeHTTPStatus invokes the user-implemented HTTPStatus() under recover.
+// isValidHTTPStatus only guards an illegal RETURN VALUE, not a panicking CALL —
+// most typically a typed-nil StatusCoder (`var e *MyErr; return e`: non-nil
+// interface, nil pointer inside; the method body nil-panics on first
+// dereference). classifyError is called by writeError, which runs outside every
+// recover, so that panic would pierce ServeHTTP and drop the connection. On
+// panic this returns 0 (an illegal value), and the caller falls back to 500
+// through the existing path.
+func safeHTTPStatus(sc StatusCoder) (status int) {
+	defer func() {
+		if recover() != nil {
+			status = 0
+		}
+	}()
+	return sc.HTTPStatus()
+}
+
+// safeErrorMessage 在 recover 保护下取 err.Error(),供开启细节回传时使用;
+// panic 时报告失败,调用方保留脱敏通用文案。
+// safeErrorMessage fetches err.Error() under recover for the expose-details
+// path; on panic it reports failure and the caller keeps the sanitized text.
+func safeErrorMessage(err error) (msg string, ok bool) {
+	defer func() {
+		if recover() != nil {
+			msg, ok = "", false
+		}
+	}()
+	return err.Error(), true
 }
 
 // codeForStatus 为一个状态码返回稳定的 code 串（供 StatusCoder 路径与 miss 复用）。
@@ -296,7 +331,13 @@ func (m *mux) writeError(resp *Response, r *http.Request, err error) {
 
 	message := genericMessage(status)
 	if m.exposeErrorDetails {
-		message = err.Error()
+		// Error() 与 HTTPStatus() 同理受 recover 保护:typed-nil error 的 Error() 同样
+		// 会 nil panic,且此处运行在所有 recover 之外。panic 时保留通用文案。
+		// Error() is guarded like HTTPStatus(): a typed-nil error's Error() nil-panics
+		// too, and this runs outside every recover. On panic keep the generic text.
+		if detail, ok := safeErrorMessage(err); ok {
+			message = detail
+		}
 	}
 
 	renderer := m.errorRenderer

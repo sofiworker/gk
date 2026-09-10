@@ -1,12 +1,9 @@
 package ghttp
 
 import (
-	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -14,23 +11,6 @@ import (
 	"sync"
 	"sync/atomic"
 )
-
-type headResponseWriter struct{ http.ResponseWriter }
-
-func (w *headResponseWriter) Write(p []byte) (int, error)       { return len(p), nil }
-func (w *headResponseWriter) WriteString(s string) (int, error) { return len(s), nil }
-func (w *headResponseWriter) Flush() {
-	if f, ok := w.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
-}
-func (w *headResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	if h, ok := w.ResponseWriter.(http.Hijacker); ok {
-		return h.Hijack()
-	}
-	return nil, nil, errors.New("underlying ResponseWriter does not support Hijack")
-}
-func (w *headResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // mux 是 Server 内部的路由核心:按 method 持有路由树、池化每请求上下文,并在 ServeHTTP
 // 期把全局中间件链组装到统一分发器外层。它不导出——对外只有 Server 一个顶层类型,mux
@@ -356,22 +336,64 @@ func (m *mux) resolve(req *Request) resolvedRoute {
 		return res
 	}
 	t := m.findTree(r.Method)
-	if t == nil && m.autoHEAD && r.Method == http.MethodHead {
-		t = m.findTree(http.MethodGet)
-	}
-	if t == nil {
-		return res // 该 method 无任何路由 / no route for this method
-	}
-	v := t.root.getValue(path, &req.Params, &req.skipped)
-	if v.handler == nil {
+	if t != nil {
+		v := t.root.getValue(path, &req.Params, &req.skipped)
+		if v.handler != nil {
+			if v.fullPath != nil {
+				req.matchedRoute = *v.fullPath
+			}
+			res.handler = v.handler
+			return res
+		}
 		res.tsr = v.tsr
-		return res
 	}
-	if v.fullPath != nil {
-		req.matchedRoute = *v.fullPath
+	// autoHEAD 回退(冷路径):按路径回退到 GET 树,语义见 headFallback。
+	// autoHEAD fallback (cold path): per-path fallback to the GET tree; see
+	// headFallback for the semantics.
+	if m.autoHEAD && r.Method == http.MethodHead {
+		v, ok := m.headFallback(path, req)
+		if ok {
+			if v.fullPath != nil {
+				req.matchedRoute = *v.fullPath
+			}
+			res.handler = v.handler
+			res.tsr = false
+			return res
+		}
+		res.tsr = res.tsr || v.tsr
 	}
-	res.handler = v.handler
 	return res
+}
+
+// headFallback 是 autoHEAD 的按【路径】回退:HEAD 树未命中该 path 时改查 GET 树。
+// 按路径而非仅在整棵 HEAD 树缺失时回退——Health/Ready/Static/File 都注册 HEAD 路由,
+// 按树回退会在用户用了其中任何一个后对全站其余路径整体失效(HEAD /x → 405)。
+// 显式 HEAD 命中由调用方先行返回,优先级不变;回退命中的 GET handler 直接跑在原始
+// writer 上——net/http 对 HEAD 自动丢弃响应体并据写入字节计算 Content-Length、做
+// Content-Type 嗅探,自吞字节的包装层反而会把这两个头一起丢掉(违反 RFC 9110
+// §9.3.2:HEAD 的元数据应与 GET 一致)。
+// headFallback is autoHEAD's PER-PATH fallback: when the HEAD tree misses this
+// path, the GET tree is consulted. Per path rather than only when the whole HEAD
+// tree is missing — Health/Ready/Static/File all register HEAD routes, so the
+// per-tree fallback went dead for every other path once the user mounted any of
+// them (HEAD /x → 405). An explicit HEAD hit returns in the caller first, so
+// precedence is unchanged; a fallback GET handler runs on the original writer —
+// net/http discards a HEAD response body itself while still deriving
+// Content-Length and sniffing Content-Type from the written bytes, whereas a
+// byte-swallowing wrapper dropped both headers (violating RFC 9110 §9.3.2: HEAD
+// metadata should match GET).
+func (m *mux) headFallback(path string, req *Request) (nodeValue, bool) {
+	gt := m.findTree(http.MethodGet)
+	if gt == nil {
+		return nodeValue{}, false
+	}
+	// 失败的 HEAD 匹配可能已写入部分参数,清掉再按 GET 树匹配,防止两次匹配混叠。
+	// The failed HEAD match may have written partial params; clear them before
+	// matching the GET tree so the two matches cannot interleave.
+	req.Params.reset()
+	req.skipped = req.skipped[:0]
+	v := gt.root.getValue(path, &req.Params, &req.skipped)
+	return v, v.handler != nil
 }
 
 // safeChain 以最外层兜底 recover 执行全局链:未被任何 Recovery 中间件拦截的 panic
@@ -456,26 +478,17 @@ func (m *mux) dispatchTerminal(ctx context.Context, req *Request, resp *Response
 	// 命中:直接调用裸终端。此处【不】做 recover——panic 应自然冒泡穿过全局中间件链,
 	// 让用户装的 Recovery 中间件得以捕获(拿到 PanicInfo)。未装 Recovery 时,由 safeChain
 	// 的兜底 recover 防止服务崩溃。
+	// HEAD(含 autoHEAD 回退)不包装 writer:net/http 自动丢弃 HEAD 响应体并据写入
+	// 字节计算 Content-Length / 嗅探 Content-Type,包装吞字节反而丢这两个头(见 resolve)。
 	// Hit: call the bare terminal directly. NO recover here — a panic should bubble
 	// naturally through the global middleware chain so a user's Recovery middleware
 	// can catch it (with PanicInfo). Absent Recovery, safeChain's safety-net recover
 	// keeps the server from crashing.
-	if m.autoHEAD && req.Method == http.MethodHead {
-		orig := resp.ResponseWriter
-		resp.ResponseWriter = &headResponseWriter{ResponseWriter: orig}
-		defer func() { resp.ResponseWriter = orig }()
-	}
+	// HEAD (including the autoHEAD fallback) gets no writer wrapping: net/http
+	// drops a HEAD body itself while still deriving Content-Length / sniffing
+	// Content-Type from the written bytes; a swallowing wrapper lost both (see
+	// resolve).
 	return res.handler.serve(ctx, req, resp)
-}
-
-func (m *mux) serveHEAD(h compiledHandler, ctx context.Context, req *Request, resp *Response) error {
-	if !m.autoHEAD || req.Method != http.MethodHead {
-		return m.serve(h, ctx, req, resp)
-	}
-	orig := resp.ResponseWriter
-	resp.ResponseWriter = &headResponseWriter{ResponseWriter: orig}
-	defer func() { resp.ResponseWriter = orig }()
-	return m.serve(h, ctx, req, resp)
 }
 
 // dispatchRaw 是无全局中间件时的零开销分发:直接借池化上下文匹配并执行,不构造链。
@@ -485,28 +498,37 @@ func (m *mux) serveHEAD(h compiledHandler, ctx context.Context, req *Request, re
 // chain. Equivalent to dispatchChained + dispatchTerminal minus the chain's
 // indirection.
 func (m *mux) dispatchRaw(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path
-	if err := validateRequestPath(path, m.strictPath); err != nil {
-		m.writeErrorRaw(w, r, err)
-		return
-	}
-
-	t := m.findTree(r.Method)
-	if t == nil && m.autoHEAD && r.Method == http.MethodHead {
-		t = m.findTree(http.MethodGet)
-	}
-	if t == nil {
-		m.writeMissRaw(w, r, path, false)
-		return
-	}
-
 	req := m.pool.Get().(*Request)
 	// 与 dispatchChained 同理：借出与归还共用一个 reset()，清理清单只有一份。
 	// Same as dispatchChained: borrow and return share one reset(), one clearing list.
 	req.reset()
 	req.Request = r
 
-	v := t.root.getValue(path, &req.Params, &req.skipped)
+	path := r.URL.Path
+	if err := validateRequestPath(path, m.strictPath); err != nil {
+		req.reset()
+		m.pool.Put(req)
+		m.writeErrorRaw(w, r, err)
+		return
+	}
+
+	// 热路径内联主树匹配(避免 resolvedRoute 的按值搬运);miss 才进 autoHEAD 回退等
+	// 冷路径,其语义与 resolve 共享同一实现(headFallback),两条分发路径不会漂移。
+	// The hot path inlines the primary-tree match (avoiding by-value resolvedRoute
+	// copies); only a miss enters cold paths like the autoHEAD fallback, whose
+	// semantics share one implementation (headFallback) with resolve, so the two
+	// dispatch paths cannot drift.
+	var v nodeValue
+	if t := m.findTree(r.Method); t != nil {
+		v = t.root.getValue(path, &req.Params, &req.skipped)
+	}
+	if v.handler == nil && m.autoHEAD && r.Method == http.MethodHead {
+		if fv, ok := m.headFallback(path, req); ok {
+			v = fv
+		} else {
+			v.tsr = v.tsr || fv.tsr
+		}
+	}
 	if v.handler == nil {
 		tsr := v.tsr
 		req.reset()
@@ -520,7 +542,7 @@ func (m *mux) dispatchRaw(w http.ResponseWriter, r *http.Request) {
 
 	req.resp.reset()
 	req.resp.ResponseWriter = w
-	serr := m.serveHEAD(v.handler, r.Context(), req, &req.resp)
+	serr := m.serve(v.handler, r.Context(), req, &req.resp)
 
 	// 统一错误链出口:必须在 reset 之前调用,writeError 依据 resp.Written() 判断
 	// 是否已提交——已提交则只记录不改写,修复此前无条件 http.Error 的双写。
@@ -718,17 +740,34 @@ func isSafeRedirectTarget(target string) bool {
 
 // allowedMethods 返回所有能匹配 path 的其它 method,以 ", " 连接(按 trees 顺序);
 // 无则空串。仅在当前 method 已 miss 时调用,不在命中热路径上。
+// autoHEAD 开启且 GET 可匹配时补报 HEAD(除非已有显式 HEAD 树匹配):405 的 Allow 是
+// 对客户端的能力承诺,漏掉实际可服务的 HEAD 会让按 Allow 探测的客户端误判。
 // allowedMethods returns the other methods matching path, joined by ", " (tree
 // order); empty string if none. Called only after a miss, off the hit hot path.
+// With autoHEAD on and GET matching, HEAD is reported too (unless an explicit
+// HEAD tree already matches): the 405 Allow header is a capability promise, and
+// omitting a servable HEAD misleads clients probing via Allow.
 func (m *mux) allowedMethods(path string) string {
 	var b strings.Builder
+	headListed := false
+	getMatched := false
 	for _, t := range m.trees {
 		if t.hasPath(path) {
 			if b.Len() > 0 {
 				b.WriteString(", ")
 			}
 			b.WriteString(t.method)
+			switch t.method {
+			case http.MethodHead:
+				headListed = true
+			case http.MethodGet:
+				getMatched = true
+			}
 		}
+	}
+	if m.autoHEAD && getMatched && !headListed {
+		b.WriteString(", ")
+		b.WriteString(http.MethodHead)
 	}
 	return b.String()
 }

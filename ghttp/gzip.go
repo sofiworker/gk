@@ -168,6 +168,17 @@ type gzipResponseWriter struct {
 func (w *gzipResponseWriter) Header() http.Header { return w.orig.Header() }
 
 func (w *gzipResponseWriter) WriteHeader(status int) {
+	// 1xx informational(100/103 等)不是最终响应:透传且不定案,否则先 WriteHeader(103)
+	// 再 WriteHeader(201) 时 103 被当成最终决策提交,201 丢失,客户端收到隐式 200。
+	// 外层 Response 对 1xx 有同款特判,两层必须一致。
+	// A 1xx informational (100/103, …) is not the final response: pass it through
+	// without deciding, or WriteHeader(103) followed by WriteHeader(201) commits 103
+	// as the final decision, loses the 201, and the client sees an implicit 200. The
+	// outer Response has the same special case; the two layers must agree.
+	if status >= 100 && status < 200 {
+		w.orig.WriteHeader(status)
+		return
+	}
 	if w.decided {
 		return
 	}

@@ -3,6 +3,7 @@ package ghttp
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"strconv"
 	"sync"
 	"time"
@@ -43,11 +44,14 @@ type RateLimitConfig struct {
 	// becomes max(1, ceil(RPS)).
 	Burst int
 
-	// KeyFunc 决定限流维度。nil 时按 Request.ClientIP() 限流(遵循可信代理策略)。
+	// KeyFunc 决定限流维度。nil 时按 Request.ClientIP() 限流(遵循可信代理策略;
+	// IPv6 聚合到 /64 前缀,防单订户轮换地址绕过,见 rateLimitIPKey)。
 	// 返回空串表示该请求不受限流(如放行内部探针)。
 	// KeyFunc selects the limiting dimension. Nil limits by Request.ClientIP()
-	// (honoring the trusted-proxy policy). Returning an empty string exempts the
-	// request (e.g. letting internal probes through).
+	// (honoring the trusted-proxy policy; IPv6 aggregates to the /64 prefix so one
+	// subscriber cannot bypass by rotating addresses — see rateLimitIPKey).
+	// Returning an empty string exempts the request (e.g. letting internal probes
+	// through).
 	KeyFunc func(req *Request) string
 
 	// IdleTimeout 是桶的空闲回收时长:超过此时长未被访问的桶会被清理。<=0 时用
@@ -97,6 +101,36 @@ const defaultRateLimitIdle = 10 * time.Minute
 // rateLimitUnknownKey is the fallback bucket key when the default KeyFunc cannot
 // resolve a client address.
 const rateLimitUnknownKey = "__ghttp_unknown_client__"
+
+// rateLimitIPKey 把客户端 IP 归一成限流分桶键:IPv4 原样,IPv6 聚合到 /64 前缀。
+//
+// IPv6 下若每个地址独立一桶,单个家宽用户标配一个 /64(2^64 地址)即可轮换地址:每个
+// 新地址首请求必得新桶(满 burst)而放行,限流形同虚设;更糟的是轮换能快速打满
+// MaxKeys,触发"分片满则放行"的可用性兜底,让限流对攻击者整体失效、还把合法用户的
+// 桶 reap 掉。聚合到 /64(nginx/CDN 的通行做法,即运营商分配给单个订户的最小前缀)后,
+// 轮换地址仍落进同一个桶。IPv4 无此问题(单地址即分配单元),保持原样。
+// rateLimitIPKey normalizes a client IP into a limiter bucket key: IPv4 as-is,
+// IPv6 aggregated to its /64 prefix.
+//
+// With one bucket per IPv6 address, a single residential user holding the standard
+// /64 (2^64 addresses) defeats the limiter by rotating addresses: each fresh address
+// gets a fresh full-burst bucket and is admitted; worse, rotation quickly fills
+// MaxKeys and trips the "pass through when the shard is full" availability
+// fallback, disabling limiting for the attacker entirely while reaping legitimate
+// buckets. Aggregating to /64 (the nginx/CDN convention — the smallest prefix ISPs
+// delegate to one subscriber) keeps rotated addresses in one bucket. IPv4 has no
+// such issue (a single address is the allocation unit) and stays as-is.
+func rateLimitIPKey(ip string) string {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil || !addr.Is6() || addr.Is4In6() {
+		return ip
+	}
+	prefix, err := addr.Prefix(64)
+	if err != nil {
+		return ip
+	}
+	return prefix.String()
+}
 
 // tokenBucket 是一个 key 的桶状态。用 tokens + last 的惰性补充模型:不跑定时器,
 // 取令牌时按经过的时间一次性补足,因此空闲的桶不消耗任何 CPU。
@@ -200,7 +234,7 @@ func RateLimit(cfg RateLimitConfig) Middleware {
 		// under the same rate. A custom KeyFunc returning "" still means exempt.
 		keyFunc = func(req *Request) string {
 			if ip := req.ClientIP(); ip != "" {
-				return ip
+				return rateLimitIPKey(ip)
 			}
 			return rateLimitUnknownKey
 		}

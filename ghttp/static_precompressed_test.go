@@ -744,7 +744,11 @@ func TestAcceptsEncoding(t *testing.T) {
 		{"a token with the name as prefix does not match", "brx", "br", false},
 		{"gzipx does not match gzip", "gzipx", "gzip", false},
 		{"first matching token decides", "gzip;q=0, gzip", "gzip", false},
-		{"earlier wildcard refusal wins over a later listing", "*;q=0, gzip", "gzip", false},
+		// RFC 9110 §12.5.3:具名 token 优先于通配符,与列表顺序无关。此前按出现顺序先
+		// 命中 `*;q=0` 即误判拒绝,尽管 gzip 被显式列出接受。
+		{"a named listing wins over a wildcard refusal regardless of order", "*;q=0, gzip", "gzip", true},
+		{"a named refusal wins over a wildcard acceptance", "*, gzip;q=0", "gzip", false},
+		{"wildcard acceptance still admits unlisted codings", "*;q=0.5, br", "gzip", true},
 		{"non-q parameter does not refuse", "gzip;level=9", "gzip", true},
 	}
 	for _, c := range cases {

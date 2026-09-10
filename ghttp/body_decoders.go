@@ -17,6 +17,18 @@ import (
 // form; the rest spills to temp files (matches net/http's 32 MiB default).
 const defaultMaxMultipartMemory = 32 << 20
 
+// defaultMaxMultipartBytes 是 multipart 请求体的【总量】上限(内存 + 落盘临时文件)。
+// ParseMultipartForm 的参数只是内存阈值,不设总量帽时超出部分无限落盘。取内存阈值的
+// 2 倍:足够容纳"32MiB 文件 + 文本字段 + multipart 边界开销"的常规上传,更大的上传
+// 属于应显式声明的容量决策(挂 LimitBody 收紧,或用流式 upload 入口)。
+// defaultMaxMultipartBytes caps the TOTAL multipart body (memory + temp-file
+// spill). ParseMultipartForm's argument is only the in-memory threshold; without a
+// total cap the spill is unbounded. Twice the memory threshold comfortably fits a
+// "32 MiB file + text fields + multipart framing" upload; anything larger is a
+// capacity decision to declare explicitly (tighten via LimitBody, or use the
+// streaming upload entry).
+const defaultMaxMultipartBytes = 64 << 20
+
 // defaultMaxFormBytes 是 URL 编码表单体的读取上限，与 net/http 为
 // PostFormValue/ParseForm 设的 10 MiB 一致：POST/PUT/PATCH 走 ParseForm 时已被此上限
 // 保护，唯独其余方法（DELETE 等）由本包自行读体，若不设同一上限就等于“换个 method 参数
@@ -110,21 +122,70 @@ func (formCodec) Decode(req *Request, v any) error {
 	if req.Body == nil {
 		return fmt.Errorf("%w: empty body", ErrInvalidInput)
 	}
-	if mediaType(req.Header.Get("Content-Type")) == contentTypeMultipartForm {
+	// 按 media-type 分派;【缺失】CT 显式 415,不再默认按 urlencoded 解。此前空 CT 一路
+	// 放行(contentTypeIn 对空 CT 放行、ParseForm 对非表单 CT 不读体也不报错),结果是
+	// 零值结构体 + 200,提交的数据被静默丢弃——M9 的 fail-open 在"缺 CT"这个窄化形态上
+	// 残留;且 POST(ParseForm 空放行)与 DELETE(自读真解析)行为还不一致。
+	// 显式声明的【非表单】CT 不在此拒:严格模式(默认)下执行器已先 415,能走到这里的
+	// 只有 WithStrictContentType(false)——那是用户显式退出校验的既有契约,保留按
+	// urlencoded 解析的宽松行为。
+	// Dispatch on the media-type; a MISSING CT is an explicit 415 instead of
+	// defaulting to urlencoded. An empty CT used to pass all the way through
+	// (contentTypeIn admits it, and ParseForm silently skips a non-form CT without
+	// reading the body), yielding a zero-valued struct + 200 with the submitted data
+	// silently dropped — M9's fail-open surviving in the missing-CT corner; POST
+	// (ParseForm's silent pass) and DELETE (self-read, real parse) even disagreed.
+	// An explicitly declared NON-form CT is not rejected here: under strict mode
+	// (the default) the executor already 415s it, so this point is only reachable
+	// via WithStrictContentType(false) — the user's explicit opt-out contract, whose
+	// lenient parse-as-urlencoded behavior is preserved.
+	switch mediaType(req.Header.Get("Content-Type")) {
+	case contentTypeMultipartForm:
+		// 总量帽必须在 ParseMultipartForm 之前包上:32MiB 参数只限【驻留内存】,超出
+		// 部分落盘无上限——urlencoded 侧特意自设 10MiB 帽防"换 method 绕过限额",但
+		// 换个 Content-Type 就绕过了它;未挂 opt-in LimitBody 的表单端点可被单请求
+		// 写满磁盘。已挂 LimitBody 时双层包装取两者较小值,行为不变。
+		// The total cap must wrap BEFORE ParseMultipartForm: the 32 MiB argument
+		// bounds only the IN-MEMORY portion, and the spill to temp files is
+		// unbounded — the urlencoded side deliberately caps itself at 10 MiB against
+		// "switch the method to bypass the limit", yet switching the Content-Type
+		// bypassed that; a form endpoint without the opt-in LimitBody could have its
+		// disk filled by one request. With LimitBody mounted the double wrap takes
+		// the smaller bound, unchanged behavior.
+		req.Body = http.MaxBytesReader(nil, req.Body, defaultMaxMultipartBytes)
 		if err := req.ParseMultipartForm(defaultMaxMultipartMemory); err != nil {
-			return fmt.Errorf("%w: %v", ErrInvalidInput, err)
+			// decodeError 而非打平:超帽的 *http.MaxBytesError 须保链才能被错误链映射
+			// 成 413,`%w: %v` 会把它退化成 400(M2 修了 codec.go,此路径曾漏)。
+			// decodeError, not flattening: an over-cap *http.MaxBytesError must keep
+			// the chain to map to 413; `%w: %v` degraded it to 400 (M2 fixed
+			// codec.go, this path was missed).
+			return decodeError(err)
 		}
 		var files map[string][]*multipart.FileHeader
 		if req.MultipartForm != nil {
 			files = req.MultipartForm.File
 		}
 		return decodeFormStruct(req.MultipartForm.Value, files, v)
+	case contentTypeFormURLEncoded:
+		values, err := parseURLEncodedBody(req)
+		if err != nil {
+			return err
+		}
+		return decodeFormStruct(values, nil, v)
+	case "":
+		return fmt.Errorf("%w: form body requires a Content-Type, want %q",
+			ErrUnsupportedMediaType, strings.Join(formContentTypes, ", "))
+	default:
+		// 宽松模式下声明了其它 CT:沿用既有行为按 urlencoded 尝试(通常解出零值结构体),
+		// 见函数头注释的分派说明。
+		// Another CT declared under lenient mode: keep the existing try-as-urlencoded
+		// behavior (usually a zero-valued struct); see the dispatch note above.
+		values, err := parseURLEncodedBody(req)
+		if err != nil {
+			return err
+		}
+		return decodeFormStruct(values, nil, v)
 	}
-	values, err := parseURLEncodedBody(req)
-	if err != nil {
-		return err
-	}
-	return decodeFormStruct(values, nil, v)
 }
 
 // parseURLEncodedBody 解析 urlencoded 请求体并返回其字段值。
@@ -159,7 +220,12 @@ func parseURLEncodedBody(req *Request) (url.Values, error) {
 		// repeat call does not re-read the body) and lets the CSRF middleware and form
 		// decoding in one request share a single parse.
 		if err := req.ParseForm(); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+			// decodeError 保链:LimitBody 的 MaxBytesReader 在 ParseForm 读体时触发的
+			// *http.MaxBytesError 须映射 413,打平会退化 400。
+			// decodeError keeps the chain: an *http.MaxBytesError raised by LimitBody's
+			// MaxBytesReader inside ParseForm must map to 413; flattening degrades it
+			// to 400.
+			return nil, decodeError(err)
 		}
 		return req.PostForm, nil
 	}
@@ -179,7 +245,12 @@ func parseURLEncodedBody(req *Request) (url.Values, error) {
 	}
 	values, err := url.ParseQuery(string(raw))
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+		// 同走 decodeError:此处虽不会出 MaxBytesError,但保链让调用方仍可 errors.As
+		// 出具体解析错误类型,且与本文件其余错误出口口径一致。
+		// Also via decodeError: no MaxBytesError arises here, but keeping the chain
+		// lets callers still errors.As out the concrete parse error, consistent with
+		// the other error exits in this file.
+		return nil, decodeError(err)
 	}
 	return values, nil
 }
@@ -265,6 +336,19 @@ func (p *formPlan) collect(t reflect.Type, prefix []int, depth int) error {
 			// shared form fields can be reused via embedding; others are skipped.
 			if st, ok := structTypeOf(f.Type); ok && !implementsTextUnmarshaler(st) &&
 				st != uploadType {
+				// 与 BindPlan.collect 同款防护:未导出内嵌指针请求期需 v.Set(reflect.New)
+				// 沿途分配,Set 对未导出字段 panic → 每请求 500;注册期(此处即首次解码,
+				// 计划按类型缓存)一次性拒绝。两处 collect 必须对称,否则同一结构体形态
+				// params 侧被拒、form 侧却放行到 panic。
+				// Same guard as BindPlan.collect: an unexported embedded pointer needs
+				// v.Set(reflect.New(...)) on the way at request time, and Set panics on
+				// an unexported field → a 500 per request; reject once at plan build
+				// (the plan is cached per type). The two collects must stay symmetric,
+				// or the same struct shape is rejected on the params side yet passes to
+				// a panic on the form side.
+				if !f.IsExported() && f.Type.Kind() == reflect.Pointer {
+					return fmt.Errorf("%w: embedded unexported pointer field %q cannot be bound; export it or embed the value instead", ErrInvalidInput, f.Name)
+				}
 				if err := p.collect(st, index, depth+1); err != nil {
 					return err
 				}
@@ -274,6 +358,14 @@ func (p *formPlan) collect(t reflect.Type, prefix []int, depth int) error {
 		name := strings.SplitN(tag, ",", 2)[0]
 		if name == "-" {
 			continue
+		}
+		// 带 form tag 的未导出【匿名】字段同样在此拒绝:它通过了循环头的导出性筛
+		// (匿名放行仅为展开),但作为绑定目标 Set 必 panic(flagEmbedRO)。
+		// A form-tagged unexported ANONYMOUS field is rejected here too: it passed
+		// the loop's export filter (anonymous admitted only for expansion), but Set
+		// panics on it as a bind target (flagEmbedRO).
+		if !f.IsExported() {
+			return fmt.Errorf("%w: unexported field %q cannot carry a form tag; export it", ErrInvalidInput, f.Name)
 		}
 
 		switch f.Type {

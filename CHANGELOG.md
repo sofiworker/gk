@@ -75,6 +75,17 @@
 
 ### Fixed
 
+- ghttp：**typed-nil StatusCoder 不再击穿连接**。`classifyError` 直接调用用户实现的 `HTTPStatus()`，而 `writeError` 运行在所有 recover 之外——业务经典失误 `var e *MyErr; return e`（typed-nil：接口非 nil、内部指针 nil）会让方法体 nil 解引用 panic 并击穿 ServeHTTP、由 net/http 断连。此前 S4 只校验了返回值范围，没防方法调用本身 panic。现 `HTTPStatus()`/`Error()`（细节回传路径）都经带 recover 的 `safeHTTPStatus`/`safeErrorMessage` 调用，panic 回退 500/脱敏文案。
+- ghttp：**autoHEAD 四处缺陷**。① 回退条件从「整棵 HEAD 树缺失」改为**按路径**：Health/Ready/Static/File 都注册 HEAD 路由，旧逻辑在用户用了其中任何一个后对全站其余路径整体失效（HEAD /x → 405）。② 删除吞字节的 `headResponseWriter`：net/http 对 HEAD 自动丢体并据写入字节计算 Content-Length、做 Content-Type 嗅探，包装层吞字节反而让 HEAD 响应丢失这两个头（违反 RFC 9110 §9.3.2：HEAD 元数据应与 GET 一致）；显式 HEAD 路由同样不再被包装。③ 405 的 `Allow` 在 autoHEAD 开启且 GET 可匹配时补报 HEAD。④ 回退前清空失败 HEAD 匹配残留的路径参数，防两次匹配混叠。回退逻辑收敛为 `headFallback` 单一实现，链式与 raw 两条分发路径共享；命中热路径基准无回归（Static ~25ns、Param1 ~29ns，0 alloc）。
+- ghttp：**`Run` 监听失败后 Server 不再是半僵尸**。`markStarted` 同时置 `state=running` 与 `mux.serving=true`，但 `endRun` 失败回退只复位了前者——监听失败（端口占用、地址非法）后 `IsStarted()` 返回 false 却永久拒绝 `RawHandle`（`ErrRegistrationAfterStart`），换端口重试前连补注册路由都做不到。现两个状态源成对回退。
+- ghttp：**form/multipart 解码路径超限体退化 400 → 413**。上一轮只修了 `codec.go` 的 `decodeError`，form 路径三处仍用 `%w: %v` 打平错误链：LimitBody + chunked（无 Content-Length）超限表单体的 `*http.MaxBytesError` 无法被 `errors.As` 提取，客户端收 400 而非 413。现三处统一走 `decodeError`。
+- ghttp：**multipart 请求体设总量上限（64 MiB），堵住磁盘耗尽面**。`ParseMultipartForm(32MiB)` 的参数只限驻留内存，超出部分落盘**无上限**；urlencoded 路径特意自设 10 MiB 帽防「换 method 绕过限额」，但换 `Content-Type: multipart/form-data` 即绕过——未挂 LimitBody 的表单端点可被单请求写满磁盘。现解析前包 `MaxBytesReader`（超限 413）；已挂 LimitBody 时取两者较小值，行为不变。
+- ghttp：**表单端点缺 Content-Type 不再 fail-open**。空 CT 一路放行（严格校验放行 + `ParseForm` 对非表单 CT 不读体也不报错）导致零值结构体 + 200，提交的数据被静默丢弃；且 POST（空放行）与 DELETE（自读真解析）行为不一致。现缺失 CT 显式 415；`WithStrictContentType(false)` 下显式声明其它 CT 的宽松行为保留。
+- ghttp：**gzip 中间件不再把 1xx informational 当最终决策**。handler 先 `WriteHeader(103)` 再 `WriteHeader(201)` 时，gzip 包装层把 103 定案提交、201 被丢弃，客户端收到隐式 200。现 1xx 透传且不置 decided，与外层 `Response` 的同款特判对齐。
+- ghttp：**formPlan 与 bindPlan 注册期防护补齐对称**。formPlan.collect 缺 bindPlan 已有的「未导出内嵌指针拒绝」，`struct{ *inner }`（inner 未导出）注册通过、请求期 `v.Set(reflect.New)` panic → 每请求 500；带绑定 tag 的**未导出匿名字段**（导出性筛只放行匿名以便展开）在两个 plan 都会请求期 panic。现两处 collect 都在注册期（form 侧为计划编译期）报错。
+- ghttp：**限流默认 key 对 IPv6 聚合到 /64 前缀**。每 IPv6 地址独立一桶时，单个订户标配的 /64（2^64 地址）轮换地址即可绕过限流（每个新地址首请求必得满 burst 新桶），且轮换能快速打满 MaxKeys、触发「分片满则放行」的可用性兜底，让限流对攻击者整体失效并把合法用户的桶 reap 掉。现按 nginx/CDN 惯例聚合到 /64（IPv4 与 4-in-6 原样）；自定义 KeyFunc 不受影响。
+- ghttp：**`AcceptsEncoding` 具名 token 优先于通配符**（RFC 9110 §12.5.3）。此前按出现顺序首个匹配定案，`"*;q=0, gzip"` 先命中 `*` 被误判为拒绝，尽管 gzip 被显式列出接受；静态预压缩与动态 gzip 共用此判定，两者同时受益。
+- ghttp：**JSON/XML 尾随内容检测收紧**。① JSON 改用 `dec.Token()` 探测（原 `Decode(&extra)` 会把第二个值**完整物化**进 any 后才报错，未挂 LimitBody 时巨型第二值是免费的 CPU/内存放大点）。② XML 尾随 CharData 只放行纯空白（格式化换行合法），`<a/>trailing` 这类非空白字符数据与 JSON 侧一致按尾随垃圾拒绝。
 - ghttp：**绑定层两处反射 panic 改为注册期报错**。① 未导出内嵌【指针】结构体：值形态的内嵌提升字段 reflect 仍可写，但指针形态请求期需沿索引链 `v.Set(reflect.New(...))` 分配，而 Set 对未导出字段直接 panic——注册成功、请求即 500。② `[0]T` 零长度数组：`arrayLen==0` 使请求期落入切片分支，对数组类型调用 `reflect.MakeSlice` panic。两者都可被远程输入稳定触发（构造对应 query key 即制造 5xx 并污染错误率），策略与 `encoding/json` 一致：不支持的形态在注册期报错，而非静默丢字段或请求期崩溃。
 - ghttp：**`/metrics` 抓取不再持锁跨网络 I/O**。`writeHTTPMetrics` 原先在 `RLock` 下逐行写 ResponseWriter；慢抓取端（TCP 缓冲打满使 Write 陷入内核）会长时间持有读锁，此时任一未登记的 `(method, route)` 需在 `statsFor` 升级为写锁，写者排队后 Go RWMutex 的写者优先会挡住【后续所有读锁】（含已预热路由），一个慢消费者即可让全服务停摆。现拆为「锁内快照 + 锁外渲染」，输出字节序与标签转义不变。
 - ghttp：**静态文件服务经 `*Response` 写出，错误走统一错误链**。三处 `http.ServeFileFS(resp.ResponseWriter, ...)` 把裸 writer 交给标准库，`Written()/Status()/BytesOut()` 全为初始值：Metrics 与 Logger 把每个静态文件（含 206/304）记成「200 且 0 字节」，流量与体积统计失真；Timeout 也看不出响应已提交，会在文件后再补一段 504 JSON。同时静态层的 400/404/500 用 `http.Error` 写 text/plain，与其余错误的统一 JSON 体分裂。另修 stat 错误分类：所有非 `ErrNotExist` 一律 500，含客户端可达的 `EINVAL`（`os.DirFS` 对含 NUL 的名字即返回它），循环请求 `/assets/x%00y` 可稳定制造 5xx。
@@ -129,6 +140,10 @@
 - ghttp：修复 `Gzip` 中间件**不写 `Vary: Accept-Encoding`**——同一 URL 的响应体随 `Accept-Encoding` 而变（压缩/未压缩两种形态），缺了 Vary 时共享缓存可能把 gzip 响应喂给不支持的客户端，或把未压缩响应当作唯一形态缓存。现挂载后无条件声明（**不论本次请求是否接受 gzip**，两种形态都真实存在）；新增 `ensureVary` 幂等追加（大小写不敏感、识别逗号合并列表），静态预压缩路径改用同一实现，与 `Gzip` 中间件同挂时不再产生重复 Vary 声明。
 - ghttp：修正 `WSHandlerFunc` 文档与实现不符——原注释称"ctx 随请求取消而取消，可用于协调关闭"，但升级后连接已被 hijack、脱离 `http.Server` 管理，`Shutdown` 既不取消该 ctx 也不等待连接排空。注释改为如实说明该行为并给出优雅关闭建议（业务内监听外部信号）。
 - ghttp：修复 `BindPlan.needQuery` **写而不读**——注释声称"请求期据此跳过 URL.Query() 解析"，实际两个 typed 执行器仍无条件调用 `req.Query()`。现 `needQuery=false`（纯 path/header 端点）时跳过 `url.ParseQuery`，绑定行为不变（query 步存在时必有 `needQuery=true`，nil query 不会被读取）；同时删除从未被消费的 `needHeader` 字段（header 读取本就是轻量的 `Header.Get`，无需预解析）。
+
+### Performance
+
+- ghttp：**默认 JSON 输出的编码缓冲池化**。`jsonOutput.encode` 每请求新建 `bytes.Buffer` + `json.NewEncoder`，是 typed 命中热路径上最大的单项分配；现经 `sync.Pool` 复用（>64 KiB 的缓冲不回池，防峰值容量驻留）。`TypedGetParamsSmall` 516ns/208B/6allocs → ~450ns/96B/4allocs（−13% 时间、−54% 内存、−2 allocs）；路由命中热路径无回归（Static ~25ns、Param1 ~29ns，0 alloc）。
 
 ### Deprecated
 

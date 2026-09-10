@@ -150,6 +150,18 @@ func (p *BindPlan) collect(t reflect.Type, prefix []int, depth int) error {
 			continue
 		}
 
+		// 带 tag 的未导出【匿名】字段(如内嵌 `type inner string` + query tag)能通过上方
+		// 的导出性筛(那里只放行匿名以便展开),但它自身作为绑定目标时 Set 会 panic
+		// (flagEmbedRO)——每条带该 key 的请求 500。与内嵌指针同理,注册期拒绝。
+		// A TAGGED unexported ANONYMOUS field (e.g. an embedded `type inner string`
+		// with a query tag) passes the export filter above (which admits anonymous
+		// fields only for expansion), yet Set panics on it as a bind target
+		// (flagEmbedRO) — a 500 on every request carrying that key. Same stance as
+		// the embedded pointer: reject at registration.
+		if !f.IsExported() {
+			return fmt.Errorf("%w: unexported field %q cannot carry a binding tag; export it", ErrInvalidParam, f.Name)
+		}
+
 		binder, ok := newFieldBinder(f.Type)
 		if !ok {
 			return fmt.Errorf("%w: field %q unsupported bind type %s", ErrInvalidParam, f.Name, f.Type)

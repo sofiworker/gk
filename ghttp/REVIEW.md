@@ -389,3 +389,132 @@ R1–R4 已全部修复，`go test -race -count=1 ./ghttp/` 通过，`go vet`/`g
 R4 小项中其余三条（空 path 参数、CSRF 无状态取舍、health 串行/upload 大小）维持原判：属既定设计取舍或可接受的轻微项，未在本轮处理。
 
 变更文件：`mux.go`、`gzip.go`、`static.go`、`websocket.go`、`bind_plan.go`、`typed.go`；新增测试 `rewrite_middleware_test.go`、`gzip_test.go`、`bind_plan_needquery_test.go`；CHANGELOG 已补五条 Fixed 记录。
+
+---
+
+# 第四轮深度评审（聚焦新增代码与修复完整性）
+
+**方法**：以前三轮结论为去重基线，聚焦最近新增代码（autoHEAD、query_lazy、builder、TSR/错误链修复）与修复完整性复核；关键结论均写临时探针实测验证（探针已删除）。基线：`go vet` 干净，`go test -race -count=1 ./ghttp/` 通过。
+
+## 严重 🔴
+
+### S1'. classifyError 调用用户 `HTTPStatus()` 无 panic 防护 —— typed-nil StatusCoder 击穿 ServeHTTP【实测】
+
+**位置**: `error_chain.go:60-77`（`errors.As(err, &sc)` 后直接 `sc.HTTPStatus()`）+ `mux.go`（writeError 运行在 safeChain 的 recover **之外**）
+
+业务代码经典失误 `var e *MyErr; return e`（typed-nil：接口非 nil、内部指针 nil）→ `HTTPStatus()` nil 解引用 panic，发生在所有 recover 之后。实测：`PANIC 逃出 ServeHTTP: runtime error: invalid memory address or nil pointer dereference`。首轮 S4 只校验了 HTTPStatus 的**返回值**范围，没防**方法调用本身** panic——同一漏洞的另一半。
+
+**修复建议**: classifyError 里用带 `recover` 的小函数取状态码，panic 时回退 500。
+
+## 中等 🟡
+
+### M1'. autoHEAD 特性一组缺陷（新功能，四处问题）【实测】
+
+**位置**: `mux.go:359-361, 463-479, 495-497, 723-734`
+
+1. **存在任一显式 HEAD 路由时整体失效**：回退条件是 `t == nil`（整棵 HEAD 树缺失），而 `Health()`/`Ready()`/`Static()`/`File()` 都注册 HEAD 路由——用户一旦使用其中任何一个，autoHEAD 对全站其它路径立即失效。实测：注册 `HEAD /health` 后 `HEAD /x` → 405。应改为"HEAD 树中未命中该 path 时按 GET 回退"。
+2. **HEAD 响应丢失 Content-Length 与 Content-Type**：`headResponseWriter.Write` 吞掉 body，标准库因此无法计算 CL、无法做 CT 嗅探。实测：GET `CL=4, CT=text/html`，autoHEAD 的 HEAD `CL=-1, CT=""`——违反 RFC 9110 §9.3.2；标准库原生行为（handler 原样执行、net/http 自动丢体）是 `CL=18, CT=text/html`。正确做法是不吞字节（net/http 对 HEAD 自动丢体）。
+3. **405 的 Allow 不含 HEAD**：`allowedMethods` 只扫树，autoHEAD 开启且 GET 命中时 `POST /x` → `Allow: "GET"`。实测确认。
+4. **显式注册的 HEAD handler 的 Write 也被吞**：分发只判 `autoHEAD && method==HEAD`，不区分 fallback 与显式命中——显式 HEAD 路由本可依赖标准库计算 CL，也被剥夺（实测显式 HEAD `CL=-1`）。
+
+### M2'. Run 监听失败后 `mux.serving` 未复位，注册永久被拒【实测】
+
+**位置**: `server.go:371-385`（markStarted 同时置 `state=running` 与 `serving=true`）与 `server.go:406-416`（endRun 只回退 `state`）
+
+实测：`Run("非法地址")` 失败返回后再 `RawHandle` → `ErrRegistrationAfterStart`。两个状态源只回退了一个，Server 成半僵尸：IsStarted()=false 却不可注册。**修复**: endRun 回退 idle 时同步 `serving.Store(false)`。
+
+### M3'. form/multipart 解码路径 MaxBytesError 被打平，413 退化 400【实测】
+
+**位置**: `body_decoders.go:115, 162, 182`（`fmt.Errorf("%w: %v", ErrInvalidInput, err)`）
+
+M2 修复只覆盖 `codec.go` 的 `decodeError`，form 路径漏修：LimitBody + chunked 超限表单体 → `*http.MaxBytesError` 被 `%v` 打平 → 客户端收 400（实测）。**修复**: 三处改用 `decodeError(err)`。
+
+### M4'. gzip 中间件下 1xx informational 后最终状态码丢失【实测】
+
+**位置**: `gzip.go:170-181`（WriteHeader 首调即 `decided=true`）vs `request.go:137-141`（外层 Response 对 1xx 特判透传）
+
+handler 先 `WriteHeader(103)` 再 `WriteHeader(201)`：gzip 包装层把 103 当最终决策，201 被丢弃。实测：挂 gzip 后客户端收 200，不挂对照为 201。**修复**: `gzipResponseWriter.WriteHeader` 对 `status < 200` 透传且不置 `decided`。
+
+### M5'. multipart 请求体无总量上限 —— 磁盘耗尽面
+
+**位置**: `body_decoders.go:113-121`、`middleware_csrf.go:335`
+
+`ParseMultipartForm(32MiB)` 只限驻留内存，超出落盘无上限。urlencoded 路径特意自设 10MiB 帽防"换 method 绕过限额"，但换 `CT: multipart/form-data` 即绕过——未挂 LimitBody 的 FormBody 端点可被单请求写满磁盘。CSRF 的 4MiB 帽只查 ContentLength，chunked 也绕过。**修复**: multipart 解析前也包 MaxBytesReader 默认总量帽。
+
+### M6'. formPlan 与 bindPlan 注册期防护不对称 —— 请求期 reflect panic 500
+
+**位置**: `body_decoders.go:249-295`（formPlan.collect）缺 `bind_plan.go:143` 已有的"未导出内嵌指针拒绝"
+
+`struct{ *inner }`（inner 未导出、含 form 字段）注册通过，请求期 `v.Set(reflect.New(...))` panic → 每请求 500。同类：带 tag 的**未导出匿名字段**（跳过条件 `!IsExported() && !Anonymous` 放行匿名）两个 plan 都注册通过、请求期 panic。**修复**: 两处 collect 对称补齐注册期拒绝。
+
+### M7'. RateLimit 默认 IP 维度无 IPv6 前缀聚合，与"满额放行"组合成完整绕过
+
+**位置**: `middleware_ratelimit.go:201-206` + `252-262`
+
+IPv6 下每地址独立一桶：一个 /64 有 2^64 地址可轮换，每个新地址首请求必放行；轮换还可快速打满 MaxKeys（默认 10 万），之后所有新 key 直接放行——限流对攻击者整体失效并 reap 掉合法用户的桶。**修复**: 默认 KeyFunc 对 IPv6 归一到 /64（nginx/cloudflare 惯例）。
+
+### M8'. 表单端点空 Content-Type 仍 fail-open（M9 残留窄化版）
+
+**位置**: `codec.go:274-276` + `body_decoders.go:109-127`
+
+POST 空 CT：ParseForm 不读体不报错 → 零值结构体 + 200，数据静默丢弃；DELETE 空 CT 却走 readAllCapped+ParseQuery 真解析——同一契约两种行为。**修复**: form 契约对空 CT 显式 415，或统一走自读路径。
+
+## 轻微 🔵
+
+| # | 位置 | 问题 |
+|---|---|---|
+| L1 | `static.go:331-344` | `AcceptsEncoding("*;q=0, gzip", "gzip")` 返回 false【实测】——按出现顺序先命中 `*` 即定案，RFC 9110 语义是具体项优先于通配；另 `q=0.0000`（4 位小数，RFC 限 3 位）被判接受 |
+| L2 | `body_decoders.go:234-244` | formPlan 请求期才编译，编译错误（类型不支持/嵌套超深）包成 ErrInvalidInput → 服务端定义错误报成客户端 400，应注册期预编译或 500 |
+| L3 | `bind_plan.go:191-219` | `query:",omitempty"`（空名带选项）建出空名绑定步（可被 `?=v` 命中）；同字段并存 query+path+header tag 静默按 query 优先，无冲突报错 |
+| L4 | `bind_value.go:302-307, 293-301, 327-342` | ParseBool 不认 HTML checkbox 的 "on"；float 接受 NaN/Inf（可致后续 JSON 编码 500）；切片元素 TrimSpace 而标量不 trim |
+| L5 | `codec.go:170-175, 222-234` | JSON 尾随垃圾检测完整物化第二个值（应改 `dec.More()`，无 LimitBody 时是放大点）；XML 尾随 CharData 放行，与 JSON 策略不一致 |
+| L6 | `codec.go:252-257` | charset 参数剥弃：`charset=gbk` 按 UTF-8 解，建议文档标注仅支持 UTF-8 |
+| L7 | `basic_auth.go:127-129` | ConstantTimeCompare 长度不等立即返回 0，泄漏长度差异（业界普遍接受；可先 SHA-256 归一消除） |
+| L8 | `sse.go` | ID/Event/Comment 已剥 `\r\n`，但 NUL 等控制字符未过滤（低危） |
+| L9 | `error_chain.go:59-77` | errors.As 使链上任意深度 StatusCoder 恒压过外层 sentinel，行为自洽但优先序未文档化 |
+
+## 性能 ⚡
+
+基准现状：路由热路径零分配（static 24.6ns、param1 29.7ns、5 中间件命中 38.4ns），弱点集中在 typed 端点：
+
+| # | 位置 | 问题与量化 |
+|---|---|---|
+| P1 | `output.go:96-102` | 默认 JSON 输出每请求新建 bytes.Buffer + Encoder——GetParamsSmall 515ns/208B/6allocs 的最大单项，可 sync.Pool 池化 |
+| P2 | `metrics.go:61-70` | countFor 每请求拿一次分片 Mutex，status 码集合基本固定，高 RPS 下是竞争点 |
+| P3 | `codec.go:134` | json.NewDecoder 每请求 1 分配，可池化 |
+| P4 | `bind_value.go:186,190` | 每 TextUnmarshaler 字段每请求 2 分配（装箱 + []byte 拷贝），量小 |
+| P5 | `typed.go` | `&p`/`&b` 装箱逃逸是泛型执行器固有 1-2 alloc，无需处理 |
+| P6 | `health.go:115-127` | 检查项串行执行（前三轮已知遗留） |
+
+## 正面确认 ✅
+
+复核前三轮全部安全修复，以下实现完整且质量高：TSR 开放重定向防护、CORS 通配+凭证降级与全分支 Vary、CSRF null origin/带 scheme 同源/恒定时间比较、XFF 多行合并、BasicAuth dummy 比较、ErrAbortHandler 三处透传、Recovery 全部上抛错误链、Timeout 协作式设计、URL 重写后重新 resolve、gzip Vary/Range/池化 Reset、SSE 三种行终止符拆行、惰性 query 与 url.ParseQuery 语义对齐、限流 NaN 防护、endRun 与 Shutdown 竞态处理。`-race` 全绿。
+
+## 修复优先级
+
+P0: S1'（typed-nil 击穿连接）→ P1: M1'/M2'/M3'/M5' → P2: M4'/M6'/M7'/M8' → P3: 轻微项 + 性能项（output buffer 池化收益最大）。
+
+---
+
+# 第四轮修复记录
+
+S1' 与 M1'–M8' 已全部修复，另处理轻微项 L1/L5 与性能项 P1。`go test -race -count=1 ./ghttp/` 通过，`go vet`/`gofmt` 干净；路由命中热路径基准无回归（Static ~25ns、Param1 ~29ns，0 alloc），typed 热路径显著改善（见 P1）。
+
+| 编号 | 修复方式 | 测试 |
+|---|---|---|
+| S1' typed-nil StatusCoder | `error_chain.go` 新增 `safeHTTPStatus`/`safeErrorMessage`（recover 防护），`classifyError` 经其调用用户实现的 `HTTPStatus()`；panic 回退 500，细节回传路径的 `Error()` 同样防护 | `TestClassifyError_TypedNilStatusCoderFallsBackTo500`（typed-nil 业务错误 + 细节回传开启，断言 500 且 panic 不出 ServeHTTP） |
+| M1' autoHEAD 四缺陷 | ① 回退从「按树」改为「按路径」，抽出 `headFallback` 单一实现，`resolve`（链式路径）与 `dispatchRaw`（raw 路径，保留内联快路径避免 resolvedRoute 按值搬运的 ~4ns 回归）共享；② 整体删除吞字节的 `headResponseWriter`——net/http 对 HEAD 原生丢体并按写入字节算 Content-Length、做 CT 嗅探（RFC 9110 §9.3.2），包装层反而丢这两个头；③ `allowedMethods` 在 autoHEAD 开启且 GET 可匹配（且无显式 HEAD 树命中）时向 405 的 Allow 补报 HEAD；④ 回退前 `Params.reset()` + 清 skipped，防失败 HEAD 匹配的残留参数混叠 | `autohead_test.go` 重写为 5 个测试：真实服务器验证 HEAD 元数据与 GET 一致（CL=4、CT 非空、空体）、显式 HEAD 优先、存在显式 HEAD 路由时其余路径回退仍活、405 Allow 含 HEAD、参数路由回退无参数泄漏 |
+| M2' Run 失败半僵尸 | `server.go` `endRun` 回退 `stateRunning→stateIdle` 时同步 `mux.serving.Store(false)`（两个状态源成对投影） | `TestRunListenFailureAllowsReRegistration`（Run 失败后 RawHandle 不再报 ErrRegistrationAfterStart） |
+| M3' form 超限 400→413 | `body_decoders.go` 三处 `%w: %v` 打平改为 `decodeError(err)`，`*http.MaxBytesError` 可被 `errors.As` 提取映射 413 | `TestFormBodyOversizeChunkedReturns413`（LimitBody + chunked 表单体，真实服务器断言 413） |
+| M5' multipart 磁盘耗尽 | 新增 `defaultMaxMultipartBytes = 64 MiB`（2× 内存阈值的容量决策），multipart 分支解析前包 `MaxBytesReader`；已挂 LimitBody 时双层包装取较小值 | `TestFormBodyMultipartOversizeReturns413`（65 MiB multipart 体断言 `ErrRequestEntityTooLarge`） |
+| M8' 空 CT fail-open | `formCodec.Decode` 按 mediaType 分派：缺失 CT 显式 415（`ErrUnsupportedMediaType` + 期望列表）；`WithStrictContentType(false)` 下显式声明其它 CT 保留旧的按 urlencoded 解析行为 | `TestFormBodyMissingContentTypeReturns415`；`form_content_type_test.go` 原 fail-open 断言改为期望 415 |
+| M4' gzip 1xx 定案 | `gzip.go` `WriteHeader` 对 1xx 透传且不置 `decided`，与外层 `Response` 的同款特判对齐 | `TestGzip1xxInformationalKeepsFinalStatus`（103 后 201，断言最终状态 201 且 gzip 体完整） |
+| M6' 两 collect 防护不对称 | `formPlan.collect` 补「未导出内嵌指针拒绝」（与 `BindPlan.collect` 同款）；两处 collect 都新增「带绑定 tag 的未导出匿名字段」注册期拒绝（导出性筛只放行匿名以便展开，作为绑定目标 Set 必 panic） | `TestBindPlanRejectsTaggedUnexportedAnonymous`、`TestFormPlanRejectsUnexportedEmbeddedPointer` |
+| M7' IPv6 逐地址分桶 | 新增 `rateLimitIPKey`：IPv6 聚合 /64 前缀（nginx/CDN 惯例，单订户最小分配单元），IPv4 与 4-in-6 原样；默认 KeyFunc 接入，自定义 KeyFunc 不受影响；`RateLimitConfig.KeyFunc` 文档同步 | `TestRateLimitIPKeyAggregatesIPv6`（表驱动 6 例：IPv4/同 64 聚合/异 64 分桶/4-in-6/非法输入） |
+| L1 AcceptsEncoding 顺序 | 具名 token 优先于通配符（RFC 9110 §12.5.3），`*` 的判定延迟到扫完全表；`"*;q=0, gzip"` 现正确接受 gzip | `static_precompressed_test.go` 原固化错误行为的用例改正，新增 3 个具名 vs 通配组合用例 |
+| L5 尾随内容检测 | JSON 探测从 `Decode(&extra)`（完整物化第二值，CPU/内存放大点）改为 `dec.Token()`（读一个令牌即判定，顶层 `]`/`}` 垃圾直接语法错；`More()` 不可用——对顶层尾随 `]`/`}` 返回 false）；XML 尾随 CharData 只放行纯空白，非空白字符数据按尾随垃圾拒绝 | 既有 `TestJSONTrailingContent` 全部保持通过；`TestXMLTrailingCharDataRejected`（非空白拒绝/纯空白放行） |
+| P1 output 缓冲池化 | `output.go` 默认 JSON 路径的 `bytes.Buffer` 经 `sync.Pool` 复用，>64 KiB 不回池防峰值驻留；「先缓冲后提交」的错误链语义不变 | 既有 typed 全量测试覆盖；基准 `TypedGetParamsSmall` 516ns/208B/6allocs → ~450ns/96B/4allocs |
+
+未处理项维持原判：L2/L3/L4/L6/L7/L8/L9（既定取舍或收益不抵改动面）、P2–P6（P5 泛型固有、P6 前三轮已知遗留）。
+
+变更文件：`error_chain.go`、`mux.go`、`server.go`、`body_decoders.go`、`bind_plan.go`、`gzip.go`、`middleware_ratelimit.go`、`static.go`、`codec.go`、`output.go`；测试新增 `review_round4_fixes_test.go`、重写 `autohead_test.go`，更新 `form_content_type_test.go`、`static_precompressed_test.go`；CHANGELOG 补 11 条 Fixed + 1 条 Performance。
