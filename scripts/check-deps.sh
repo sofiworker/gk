@@ -9,7 +9,7 @@ set -euo pipefail
 # gcache 零第三方依赖（2026-08-22 修订）。
 
 MODULE="github.com/sofiworker/gk"
-CAPABILITY_FAMILIES=(gcache gconfig ghttp glog gnet gotel gresolver gsd gsql)
+CAPABILITY_FAMILIES=(gai gcache gconfig ghttp glog gnet gotel gresolver gsd gsql)
 BASE_RUNTIME_PRIMITIVES=(gpoller)
 DEPENDENCY_FREE_PACKAGES=(gcache)
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -14,6 +14,7 @@ A collection of Go libraries for building robust applications; packages are inde
 
 ## Modules
 
+- [gai](gai/README.en.md) - AI application components (scaffold; model and agent capabilities planned)
 - [gcache](gcache/README.en.md) - Caching (in-process implementation + injected backend contracts, dependency-free)
 - [gcompress](gcompress/README.en.md) - Compression
 - [gconfig](gconfig/README.en.md) - Configuration
