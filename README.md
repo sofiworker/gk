@@ -15,7 +15,7 @@
 
 ## 模块
 
-- [gai](gai/README.md) - AI 应用开发组件（包骨架；模型、智能体等能力规划中）
+- [gai](gai/README.md) - Agent SDK 核心定义与 UUID v7 工具（运行时待实现）
 - [gcache](gcache/README.md) - 缓存（进程内实现 + 注入式后端契约，零第三方依赖）
 - [gcompress](gcompress/README.md) - 压缩
 - [gconfig](gconfig/README.md) - 配置

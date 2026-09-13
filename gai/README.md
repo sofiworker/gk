@@ -1,44 +1,35 @@
-# gai：AI 应用开发组件
+# gai
 
-[English](README.en.md) | 中文
+[English](README.en.md)
 
-> **开发中，禁止直接用于生产开发。** 参见 [仓库开发状态](../DEVELOPMENT.md)。
+开发中，禁止直接用于生产开发，参见 [DEVELOPMENT.md](../DEVELOPMENT.md)。
 
-`gai` 定位为可组合的 Go AI 应用开发包族，覆盖模型调用、上下文构建与智能体运行。
-当前仅建立包骨架与能力规划，尚无可调用的导出 API；下表均为规划，目录按实现进度创建。
+当前提供 `gai/core` 数据结构与执行接口契约，按照 [Session / Turn 设计](../docs/superpowers/specs/2026-09-13-gai-session-turn-design.md) 从头重写，不兼容旧 API 或旧存储格式。
 
-## 能力规划
+- Session：Metadata、Turns、存储版本和时间。
+- Turn：Metadata、Messages、模型调用、工具执行（含审批）、可选摘要和状态。
+- Message：角色、多模态内容、结构化工具请求或结果。
+- ModelCall：请求模型、实际模型、重试关联、Usage 和时间。
 
-| 子包 | 职责 |
-| --- | --- |
-| `model` | 模型契约、消息、流式响应、工具调用、结构化输出与用量 |
-| `providers` | 具体模型服务接入与能力差异适配 |
-| `gateway` | 模型路由、限流、回退与预算治理 |
-| `prompt` | 提示词模板、变量、动态上下文与上下文预算 |
-| `agent` | Agent 配置、角色指令、执行循环与终止条件 |
-| `tool` | 工具注册、参数校验、授权与执行 |
-| `skill` | 技能元数据、发现、指令与资源按需加载 |
-| `session` | 会话历史、元数据与存储接口 |
-| `workflow` | 顺序、并行、条件分支与 Agent 交接 |
-| `checkpoint` | 运行状态、暂停与恢复 |
-| `sandbox` | 隔离执行契约、访问策略与执行后端 |
-| `adapters` | 与其他 gk 能力包或外部实现的显式拼接 |
+模型、Agent、Workspace、Scope 和 Sandbox 通过标识及版本引用，核心不包含厂商协议或凭据。`TurnNotification` 表示系统展示轮次，不能自动成为模型指令。调用结果通过消息 ID 引用历史，不重复保存消息正文。
 
-## 设计边界
+结构体本身不强制只追加、不提供 CAS，也不执行权限检查。当前未实现运行时、Store、流式执行、查询分页或状态更新日志。切片表示已提供的有序数据，本阶段不定义部分加载语义。
 
-- 根包保持精简，具体能力通过子包按需使用；优先定义小接口并通过函数选项配置。
-- `gai` 属于能力层；同族子包可单向依赖，禁止循环依赖。核心不直接依赖其他能力包，组合通过接口注入与 `gai/adapters/<实现名>` 完成。
-- 错误与重试等公共概念遵循仓库约定，复用 `gerr`、`gretry`；有副作用的工具不得无条件自动重试。
-- 提示词组装与 Prompt Injection 防护分开建模；角色指令不作为权限边界。
-- 会话历史、跨会话记忆与运行检查点分别建模；加载技能不自动授予工具权限。
-- 超时、goroutine 与普通子进程不构成安全沙箱；隔离保证由具体执行后端说明和落实。
+## 时间约定
 
-依赖约束见 [模块依赖分层原则](../docs/superpowers/specs/2026-08-07-gk-module-dependency-policy.md)。
+所有时间点使用 `int64` Unix 毫秒时间戳，通过 `time.Now().UnixMilli()` 生成；可选时间使用 `*int64`，`nil` 表示未设置，例如尚未结束或未配置到期时间。时间戳不用于消息排序或 CAS。
 
-## 实施顺序
+**破坏性变更**：时间字段从 `time.Time` / `*time.Time` 改为 `int64` / `*int64`，JSON 表达由时间字符串变为数字或 null。
 
-1. 模型契约与一个 Provider、提示词组装、工具调用、有界 Agent loop、内存会话和运行事件。
-2. 持久化会话、检查点、人工审批、Skills 与简单编排。
-3. 模型网关治理与沙箱后端。
+**破坏性变更**：`Turn.Summaries []Summary` 改为 `Turn.Summary *Summary`，nil 表示尚无摘要。
 
-新增行为随实现补充测试与使用示例；当前不承诺 API 兼容性。
+## Agent 核心
+
+`core.Agent` 是声明式配置，包含 Workspace、Scope、Sandbox、Prompt、Model 和 Tools。Tools 使用 `ToolRef` 引用工具，不保存可执行实例。没有工具时用于普通 Chat。
+
+- Workspace 和 Sandbox 通过 ID、Version 引用；未设置不代表允许宿主资源访问或无隔离执行。
+- Scope 描述精确资源范围和能力标识；空列表不授予能力，不隐式支持通配符。
+- Prompt 保存静态系统指令及有序 Skill/Resource 来源；来源指定 system 槽位并不自动获得信任。
+- Session 引用 Agent，Turn 记录采用的绑定；这些结构不执行权限判断或处理对话。
+
+具体字段和绑定规则见设计文档第 12 节。当前不包含 Agent 执行接口、模型请求协议或执行循环。

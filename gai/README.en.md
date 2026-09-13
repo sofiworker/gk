@@ -1,44 +1,35 @@
-# gai: AI Application Components
+# gai
 
-English | [中文](README.md)
+[中文](README.md)
 
-> **Under development. Do not use in production.** See [development status](../DEVELOPMENT.md).
+Under development; prohibited for production use. See [DEVELOPMENT.md](../DEVELOPMENT.md).
 
-`gai` is intended to be a composable Go package family for model invocation, context construction, and agent execution.
-Currently it contains only a package scaffold and capability plan, with no callable exported API. All packages below are planned; directories will be created as they are implemented.
+The `gai/core` package provides data structures and execution interface contracts. This is a fresh rewrite with no compatibility guarantees for previous APIs or storage formats.
 
-## Planned capabilities
+- Session: metadata, turns, storage version, and timestamps.
+- Turn: metadata, messages, model calls, tool executions with approvals, an optional summary, and status.
+- Message: role, multimodal content, structured tool requests or results.
+- ModelCall: requested and actual models, retry references, usage, and timing.
 
-| Package | Responsibility |
-| --- | --- |
-| `model` | Model contracts, messages, streaming, tool calls, structured output, and usage |
-| `providers` | Model service integrations and capability adaptation |
-| `gateway` | Model routing, rate limits, fallback, and budgets |
-| `prompt` | Templates, variables, dynamic context, and context budgets |
-| `agent` | Agent configuration, role instructions, execution loops, and termination |
-| `tool` | Registration, argument validation, authorization, and execution |
-| `skill` | Metadata, discovery, and on-demand loading of instructions and resources |
-| `session` | Conversation history, metadata, and storage contracts |
-| `workflow` | Sequential and parallel execution, branching, and agent handoffs |
-| `checkpoint` | Execution state, suspension, and resumption |
-| `sandbox` | Isolated execution contracts, access policies, and backends |
-| `adapters` | Explicit integration with other gk capabilities or external implementations |
+Models, agents, workspaces, scopes, and sandboxes use identifiers and version references. Core types contain no vendor protocols or credentials. `TurnNotification` represents presentation notifications, not automatic model instructions. Call results reference message IDs without duplicating message bodies.
 
-## Design boundaries
+Structs do not enforce append-only storage, CAS, or authorization. Runtime execution, stores, streaming, pagination, and state-update logs are not implemented. Slices contain ordered supplied data; partial-loading semantics are not defined at this stage.
 
-- Keep the root package minimal and expose capabilities through optional subpackages. Prefer small interfaces and functional options.
-- `gai` belongs to the capability layer. Dependencies within the family must remain acyclic. Core packages must not import other capability families; compose them through injected interfaces and `gai/adapters/<implementation>`.
-- Reuse repository error and retry concepts through `gerr` and `gretry`. Tools with side effects must not be retried unconditionally.
-- Model prompt construction separately from prompt injection defenses. Role instructions are not permission boundaries.
-- Separate conversation history, cross-session memory, and execution checkpoints. Loading a skill does not grant tool permissions.
-- Timeouts, goroutines, and ordinary subprocesses do not provide a security sandbox. Each execution backend must document and enforce its isolation guarantees.
+## Timestamps
 
-See the [module dependency policy](../docs/superpowers/specs/2026-08-07-gk-module-dependency-policy.md).
+All timestamps use `int64` Unix milliseconds, generated with `time.Now().UnixMilli()`. Optional timestamps use `*int64`; `nil` means unset, such as an unfinished execution or no expiration configured. Timestamps do not provide message ordering or CAS.
 
-## Implementation order
+**Breaking change:** timestamp fields change from `time.Time` / `*time.Time` to `int64` / `*int64`. JSON values change from time strings to numbers or null.
 
-1. Model contracts and one provider, prompt construction, tool calls, a bounded agent loop, in-memory sessions, and execution events.
-2. Persistent sessions, checkpoints, human approval, skills, and simple orchestration.
-3. Model gateway governance and sandbox backends.
+**Breaking change:** `Turn.Summaries []Summary` becomes `Turn.Summary *Summary`; nil indicates no summary.
 
-Tests and usage examples will accompany implemented behavior. API compatibility is not currently guaranteed.
+## Agent core
+
+`core.Agent` is declarative configuration containing Workspace, Scope, Sandbox, Prompt, Model, and Tools. Tools use `ToolRef` references rather than executable instances. An agent without tools serves ordinary chat.
+
+- Workspace and Sandbox use ID/version references. Missing values do not permit host resource access or unisolated execution.
+- Scope describes exact resources and capability identifiers. Empty lists grant no capabilities; wildcards are not implicit.
+- Prompt holds static system instructions and ordered Skill/Resource sources. Selecting a system slot does not establish source trust.
+- Sessions reference agents; turns record adopted bindings. These structs do not enforce permissions or execute conversations.
+
+Agent execution interfaces, model request protocols, and execution loops are not included.

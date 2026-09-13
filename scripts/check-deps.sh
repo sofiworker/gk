@@ -17,23 +17,44 @@ cd "$ROOT"
 
 fail=0
 for family in "${CAPABILITY_FAMILIES[@]}"; do
-  imports="$(go list -f '{{join .Imports "\n"}}' "./$family/..." 2>/dev/null || true)"
-  for imp in $imports; do
-    case "$imp" in
-      "$MODULE/$family" | "$MODULE/$family/"*) continue ;; # 自身/同族
-      "$MODULE/"*) ;;
-      *) continue ;;
+  # 按导入方区分适配层，不能把所有同族包都当作核心。
+  # Classify adapters by importer instead of treating every family package as core.
+  packages="$(go list -f '{{.ImportPath}} {{join .Imports " "}}' "./$family/...")"
+  while read -r source imports; do
+    case "$source" in
+      "$MODULE/$family/adapters/"*) continue ;;
     esac
-    for other in "${CAPABILITY_FAMILIES[@]}"; do
-      if [[ "$other" == "$family" ]]; then
-        continue
-      fi
-      if [[ "$imp" == "$MODULE/$other" || "$imp" == "$MODULE/$other/"* ]]; then
-        echo "dependency policy violation: $family imports capability package $imp"
+    for imp in $imports; do
+      # 共享契约不能反向依赖功能实现；根包只作文档入口。
+      # Shared contracts must not depend on features; the root is documentation-only.
+      if [[ "$family" == gai && "$imp" == "$MODULE/gai" ]]; then
+        echo "dependency policy violation: $source imports documentation-only gai root"
         fail=1
       fi
+      if [[ "$source" == "$MODULE/gai/core" && "$imp" == "$MODULE/gai/"* && "$imp" != "$MODULE/gai/core" ]]; then
+        echo "dependency policy violation: gai/core imports feature $imp"
+        fail=1
+      fi
+      case "$imp" in
+        "$MODULE/$family/adapters/"*)
+          echo "dependency policy violation: core $source imports adapter $imp"
+          fail=1
+          continue ;;
+        "$MODULE/$family" | "$MODULE/$family/"*) continue ;; # 自身/同族
+        "$MODULE/"*) ;;
+        *) continue ;;
+      esac
+      for other in "${CAPABILITY_FAMILIES[@]}"; do
+        if [[ "$other" == "$family" ]]; then
+          continue
+        fi
+        if [[ "$imp" == "$MODULE/$other" || "$imp" == "$MODULE/$other/"* ]]; then
+          echo "dependency policy violation: $family imports capability package $imp"
+          fail=1
+        fi
+      done
     done
-  done
+  done <<< "$packages"
 done
 
 # gcache 必须零第三方依赖（仅 stdlib + 自身）：它只定义接口与函数，

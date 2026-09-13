@@ -4,10 +4,29 @@
 
 ## [Unreleased]
 
+
+### Changed
+
+- gai：**破坏性变更**：按 Session → Turn → Message 重新定义核心类型，移除根包入口，不兼容旧 API 或存储格式；当前仅提供数据和工具契约，不包含运行时。
+
+
 ### Added
+
+- gai：新增 Agent 的 Workspace、Scope、Sandbox、Prompt 和工具引用定义，以及保留 BSD 许可证的 UUID v7 生成工具；包含设计文档、双语说明和 UUID 测试。
 
 - ghttp：**新增客户端子包 `ghttp/client`**（能力层同族子包，不 import server 父包，只共享 `ghttp/internal/*` 内核）——建立在标准库 `net/http` 之上的**编排层**：fluent 链（`client.New(...).R().SetQueryParam(...).SetResult(&v).Get(...)`）、洋葱中间件与 Hook、内置 JSON/XML/Text/Form 编解码器（按 Content-Type 可注册扩展）、multipart 上传、流式响应与落盘下载（`SetStreamResponse`/`SetOutputFile`）、SSE 消费（`SSE`/`ConsumeSSE`，含退避重连与 `Last-Event-ID` 续传）、`WithTrace` 的 httptrace 分阶段时序（`Response.Traces()`）、`RetryPolicy`（退避复用基础契约层 `gretry`）与 `gerr` 互操作（`(*Error).Kind()`/`AsGerr`）。**语义取舍**（与 resty/req 等库刻意不同）：非 2xx 默认返回 `*Error`（其中带得走完整响应，`WithAllowAllStatus` 可退回生态惯例）、响应体默认限长 32 MiB、不可重放的请求体在发出第一次请求前就返回 `ErrBodyNotReplayable`（不静默重发空 body）、对服务端响应格式零假设（无隐式 envelope，结构化错误体经 `WithErrorDecoder` 显式接入）。**标准库互操作是硬约束**：可注入 `*http.Client`/`http.RoundTripper`/`*net.Dialer`/`DialContext`/`http.CookieJar`/`CheckRedirect`，可把 Client 退化为 `http.RoundTripper`，也可经 `DoHTTP`/`HTTPRequest` 与标准库双向互转；默认克隆 `http.DefaultTransport`（不污染全局、不静默禁用 HTTP/2）。**泛型只做薄壳**：sink 模式 `client.GetInto(ctx, c, url, &dst)`（Go 1.18+，T 从 `*T` 自动推断，调用处零方括号）与返回式 `client.As[T](resp)`；方法级 `c.GetInto(...)`/`req.Into(ctx, &dst)`/`req.As[T]()` 位于 `//go:build go1.27` 文件中。
 - ghttp：严格解码内核（拒绝 JSON/XML 尾随内容、截断检测）、Content-Type 规范化、日志脱敏、SSE 线格式与 `StatusCoder` 契约下沉到 `ghttp/internal/*`，server 侧改为委托调用（导出 API 与行为不变，由既有测试守护）；`StatusCoder` 改为 `ghttp/internal/httperr.StatusCoder` 的类型别名，server 与 client 侧是同一个类型。
+
+
+
+
+
+
+
+
+
+
+
 - ghttp：**OpenAPI 3.1 文档生成**——`WithOpenAPI(OpenAPIInfo, opts...)` 开启后，注册期从 typed 入口的 params/body/output 类型收集契约，首次请求时构建一次 spec 并缓存字节，默认在 `/openapi.json` 暴露；配套 `WithOpenAPIRoute`（改路径，传 `""` 则只在内存构建不暴露端点）、`WithOpenAPIServers`、`WithOpenAPIErrorResponses`、`OpenAPIInfo`/`OpenAPIServer`/`OpenAPIOption` 与 `Server.SpecJSON()`（取字节，供写入构建产物或契约测试）。参数说明复用请求期**同一份 `BindPlan`**而非另写一遍规则，故文档与实际绑定行为不会漂移（由 `TestOpenAPI_ParametersMatchBindPlan` 守住）；spec 为手工序列化的**确定性字节**（同一路由表恒等，可做 diff review 与快照测试——若用 `map[string]any` + `json.Marshal`，Go 的 map 遍历顺序随机会让每次产出不同字节）。schema 遵循 `encoding/json` 语义（`json:"-"` 跳过、`omitempty` 不进 required、内嵌字段提升、不导出字段不出现），具名结构体提取为 `components/schemas` 并以 `$ref` 引用（自引用类型因此终止而非栈溢出），`time.Time`→`date-time`、`[]byte`→`byte`、指针→OpenAPI 3.1 的 `["T","null"]`；`NoContent` 输出声明 204 且不带 `content`，错误响应引用与错误链实际输出同形的 `Error` schema；tag 从分组前缀派生（跳过 `api` 与版本段）。未开启时不收集、不构建、不注册路由，spec 端点自身也不出现在 spec 里。
 - ghttp：**参数绑定能力对齐**——`path:`/`query:`/`header:` 与请求体表单 `form:` 收敛到同一套绑定引擎（新增 `bind_value.go`），能力完全对等。除标量外新增：`*T` 指针（`nil` 表示"未提供"，可与显式零值区分）、实现 `encoding.TextUnmarshaler` 的类型（`time.Time`/`net.IP` 等，判定**先于** Kind 以免被底层类型截获）、`[]byte`（取原始字节）、`[]T`/`[N]T` 列表（重复出现 `?a=1&a=2` 与逗号分隔 `?a=1,2` 可混用）、`map[string]T`/`map[string][]T`（query 用 `filter[key]=v`，header 用前缀族或 `*` 收全部头）；无 tag 的内嵌与嵌套结构体递归展开（公共参数可抽成可复用结构体，深度上限 8 层，自引用在注册期报错而非栈溢出），tag 值 `"-"` 显式跳过。缺省语义统一：指针/切片/映射保持 `nil`，嵌套结构体指针在整块参数缺省时不被分配，因此 handler 能区分"未提供"与"提供了零值"。元素解析失败整体报 400 而非静默丢弃坏元素；不支持的形态（切片的切片、映射的映射、非字符串键映射、`path:` 绑定映射）在**注册期**报错。
 - ghttp：**typed 入口矩阵补全**——新增 `DeleteNone`/`PostNone`/`PutNone`/`PatchNone`/`HeadNone`/`OptionsNone`、`HeadParams`/`OptionsParams`、`DeleteBody`/`DeleteParamsBody`。现七种 method（GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS）各有 `None` 与 `Params` 形态，可带请求体的四种（POST/PUT/PATCH/DELETE）另有 `Body` 与 `ParamsBody`；GET/HEAD/OPTIONS 不提供 `Body` 入口，因为按 RFC 9110 其请求体没有定义语义。`DeleteBody`/`DeleteParamsBody` 服务于批量删除（请求体带 id 列表）这一真实需求。
@@ -143,6 +162,11 @@
 - ghttp：修复 `Gzip` 中间件**不写 `Vary: Accept-Encoding`**——同一 URL 的响应体随 `Accept-Encoding` 而变（压缩/未压缩两种形态），缺了 Vary 时共享缓存可能把 gzip 响应喂给不支持的客户端，或把未压缩响应当作唯一形态缓存。现挂载后无条件声明（**不论本次请求是否接受 gzip**，两种形态都真实存在）；新增 `ensureVary` 幂等追加（大小写不敏感、识别逗号合并列表），静态预压缩路径改用同一实现，与 `Gzip` 中间件同挂时不再产生重复 Vary 声明。
 - ghttp：修正 `WSHandlerFunc` 文档与实现不符——原注释称"ctx 随请求取消而取消，可用于协调关闭"，但升级后连接已被 hijack、脱离 `http.Server` 管理，`Shutdown` 既不取消该 ctx 也不等待连接排空。注释改为如实说明该行为并给出优雅关闭建议（业务内监听外部信号）。
 - ghttp：修复 `BindPlan.needQuery` **写而不读**——注释声称"请求期据此跳过 URL.Query() 解析"，实际两个 typed 执行器仍无条件调用 `req.Query()`。现 `needQuery=false`（纯 path/header 端点）时跳过 `url.ParseQuery`，绑定行为不变（query 步存在时必有 `needQuery=true`，nil query 不会被读取）；同时删除从未被消费的 `needHeader` 字段（header 读取本就是轻量的 `Header.Get`，无需预解析）。
+- ghttp（**安全**）：CSRF 预解析对 **chunked** 表单体同样设总量帽。上一轮只按 `Content-Length` 设门（4 MiB），而 chunked 体无声明长度，`ParseMultipartForm` 的 32 MiB 参数只限驻留内存、超出部分落盘无上限——攻击者可用注定缺 token 的请求把临时目录写满。现对 multipart 与 urlencoded 两路解析前都包 `http.MaxBytesReader`（同一 4 MiB 帽），已挂 `LimitBody` 时双层包装取较小值，行为不变；超限返回空串，与声明长度超限的既有语义一致。
+- ghttp（**性能**）：`*Response` 实现 `io.ReaderFrom`，底层 writer 支持时直通（如 net/http 对 TCP 连接的 `sendfile` 零拷贝），字节计入 `BytesOut`；`gzipResponseWriter` 同步实现，透传分支直通底层、压缩分支回退缓冲拷贝。静态大文件服务（`Static`/`File`/`ServeFileFS`）经 `io.CopyN` 调用时不再退化为 32 KiB 用户态循环拷贝，避免每请求一次 32 KiB 缓冲分配与整文件用户态拷贝。
+- ghttp（**性能**）：`AcceptsEncoding` 与 `isZeroQuality` 改为按逗号/分号手工切分，全程零分配；`ensureVary` 直接遍历头映射并手工切逗号，避免 `h.Values` 的切片分配。两者跑在 gzip 中间件与静态预压缩的每请求热路径上，省下的分配在高 RPS 下可观。
+- ghttp（**性能**）：`ReadyWith` 的就绪检查改为**并行**运行。就绪探针常挂在 K8s/LB 的快速失败路径上，各依赖天然独立：串行把"单个依赖变慢"放大成"全部依赖逐个排队等超时"的总延迟（3 个 50 ms 检查串行 150 ms+，并行约 50 ms）。结果按注册序收集，先落定长切片再建 map 以避免并发写 map；每项仍独立 `context.WithTimeout`，任一失败 `healthy=false`。
+- ghttp（**文档**）：`Upload` 类型注释补生命周期说明——超内存阈值的文件由 net/http 落为临时文件，请求处理结束后自动删除；`Open`/`Bytes`/`Save` 在响应写完后调用会失败。需要跨请求保留的文件必须在 handler 内立即 `Save` 到自有存储，不得把 `Upload` 存入全局变量或 goroutine 待稍后处理。
 
 ### Performance
 
