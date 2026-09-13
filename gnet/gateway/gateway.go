@@ -101,8 +101,8 @@ func New(rules []Rule, opts ...Option) *Gateway {
 // Stop.
 func (g *Gateway) Run(ctx context.Context) error {
 	for _, rule := range g.rules {
-		switch {
-		case rule.Protocol == "" || rule.Protocol == "tcp":
+		switch rule.Protocol {
+		case "", "tcp":
 			ln, err := net.Listen("tcp", rule.Listen)
 			if err != nil {
 				g.closeAll()
@@ -113,7 +113,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 			g.mu.Unlock()
 			g.wg.Add(1)
 			go g.serveTCP(ctx, ln, rule.Upstream)
-		case rule.Protocol == "udp":
+		case "udp":
 			addr, err := net.ResolveUDPAddr("udp", rule.Listen)
 			if err != nil {
 				g.closeAll()

@@ -157,7 +157,7 @@ func (db *DB) TxContext(ctx context.Context, fn func(*Tx) error, opts ...TxOptio
 		opt(&txOpts)
 	}
 
-	txx, err := db.DB.BeginTxx(ctx, &txOpts.SQL)
+	txx, err := db.BeginTxx(ctx, &txOpts.SQL)
 	if err != nil {
 		return err
 	}

@@ -22,7 +22,7 @@ func TestHelpers(t *testing.T) {
 		t.Error("1 should not be empty")
 	}
 
-	var x int = 1
+	x := 1
 	if FastIndirect(reflect.ValueOf(&x)).Int() != 1 {
 		t.Error("FastIndirect failed")
 	}

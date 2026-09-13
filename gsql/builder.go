@@ -283,12 +283,12 @@ func (b *Builder) buildSelectSQL() (string, []interface{}, error) {
 
 	// LIMIT
 	if b.limit != nil {
-		sb.WriteString(fmt.Sprintf(" LIMIT %d", *b.limit))
+		fmt.Fprintf(&sb, " LIMIT %d", *b.limit)
 	}
 
 	// OFFSET
 	if b.offset != nil {
-		sb.WriteString(fmt.Sprintf(" OFFSET %d", *b.offset))
+		fmt.Fprintf(&sb, " OFFSET %d", *b.offset)
 	}
 
 	return sb.String(), whereArgs, nil
@@ -492,7 +492,7 @@ func (b *Builder) extractColumnsAndValues() ([]string, []interface{}, error) {
 
 	// Case 2: struct
 	v := reflect.ValueOf(b.values)
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		v = v.Elem()
 	}
 	if v.Kind() != reflect.Struct {

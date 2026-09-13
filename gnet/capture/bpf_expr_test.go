@@ -45,26 +45,26 @@ func parseTcpdumpDD(t *testing.T, out string) []bpf.Instruction {
 			t.Fatalf("bad line %q", line)
 		}
 		code, jt, jf, k := parts[0], uint8(parts[1]), uint8(parts[2]), parts[3]
-		switch {
-		case code == 0x28 || code == 0x20: // LD W ABS
+		switch code {
+		case 0x28, 0x20: // LD W ABS
 			insns = append(insns, bpf.LoadAbsolute{Size: 4, Off: k})
-		case code == 0x30: // LD B ABS
+		case 0x30: // LD B ABS
 			insns = append(insns, bpf.LoadAbsolute{Size: 1, Off: k})
-		case code == 0x48: // LD H IND
+		case 0x48: // LD H IND
 			insns = append(insns, bpf.LoadIndirect{Size: 2, Off: k})
-		case code == 0xb1: // LDX B MSH
+		case 0xb1: // LDX B MSH
 			insns = append(insns, bpf.LoadMemShift{Off: k})
-		case code == 0x54: // ALU AND K
+		case 0x54: // ALU AND K
 			insns = append(insns, bpf.ALUOpConstant{Op: bpf.ALUOpAnd, Val: k})
-		case code == 0x15:
+		case 0x15:
 			insns = append(insns, bpf.JumpIf{Cond: bpf.JumpEqual, Val: k, SkipTrue: jt, SkipFalse: jf})
-		case code == 0x35:
+		case 0x35:
 			insns = append(insns, bpf.JumpIf{Cond: bpf.JumpGreaterOrEqual, Val: k, SkipTrue: jt, SkipFalse: jf})
-		case code == 0x25:
+		case 0x25:
 			insns = append(insns, bpf.JumpIf{Cond: bpf.JumpGreaterThan, Val: k, SkipTrue: jt, SkipFalse: jf})
-		case code == 0x45:
+		case 0x45:
 			insns = append(insns, bpf.JumpIf{Cond: bpf.JumpBitsSet, Val: k, SkipTrue: jt, SkipFalse: jf})
-		case code == 0x06:
+		case 0x06:
 			insns = append(insns, bpf.RetConstant{Val: k})
 		default:
 			t.Fatalf("unsupported opcode %#x", code)

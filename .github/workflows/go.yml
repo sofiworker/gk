@@ -37,10 +37,10 @@ jobs:
         run: go test ./...
 
   preview:
-    # Go 1.27 generic methods are only active in the go1.27 build-tagged
-    # files; verify them with the preview toolchain. Replace go1.27rc2 with
-    # the stable version once Go 1.27 is released.
-    name: Go 1.27 preview (generic methods)
+    # Go 1.27 generic methods only exist in the go1.27 build-tagged files; verify them
+    # with the released 1.27 toolchain (the former go1.27rc2 pin is obsolete now that
+    # 1.27 is stable).
+    name: Go 1.27 (generic methods)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -52,13 +52,13 @@ jobs:
           go-version: "stable"
 
       - name: Toolchain
-        run: GOTOOLCHAIN=go1.27rc2 go version
+        run: GOTOOLCHAIN=go1.27.1 go version
 
       - name: Vet
-        run: GOTOOLCHAIN=go1.27rc2 go vet ./...
+        run: GOTOOLCHAIN=go1.27.1 go vet ./...
 
       - name: Test
-        run: GOTOOLCHAIN=go1.27rc2 go test ./...
+        run: GOTOOLCHAIN=go1.27.1 go test ./...
 
   fmt:
     # Files with //go:build go1.27 use generic-method syntax, so formatting must be
@@ -76,7 +76,7 @@ jobs:
 
       - name: Check formatting
         run: |
-          test -z "$(GOTOOLCHAIN=go1.27rc2 gofmt -l .)"
+          test -z "$(GOTOOLCHAIN=go1.27.1 gofmt -l .)"
 
   lint:
     name: golangci-lint
@@ -85,15 +85,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Lint runs on Go 1.27: the go1.27 build-tagged files (generic methods) are
+      # excluded from a 1.25 toolchain, so a 1.25 lint job would silently never
+      # cover them. golangci-lint must be >= v2.13.0 for Go 1.27 support — older
+      # versions fail to read unified export data and emit bogus typecheck errors.
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25.x"
+          go-version: "stable"
 
       - name: Lint
         uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.4.0
+          version: v2.13.2
           args: run ./...
 
       - name: Dependency policy

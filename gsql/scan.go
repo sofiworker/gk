@@ -29,7 +29,7 @@ func Scan(rows *sqlx.Rows, dest interface{}) error {
 	}
 	defer rows.Close()
 	v := reflect.ValueOf(dest)
-	if v.Kind() != reflect.Ptr || v.IsNil() {
+	if v.Kind() != reflect.Pointer || v.IsNil() {
 		return errors.New("gsql: destination must be a non-nil pointer")
 	}
 	slice, isSlice := isSlice(v)

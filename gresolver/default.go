@@ -164,7 +164,7 @@ func (r *DefaultResolver) exchange(ctx context.Context, msg *dnsmessage.Message)
 			return &DNSError{Op: "unpack", Server: ns, Err: err}
 		}
 
-		if response.Header.ID != msg.Header.ID {
+		if response.ID != msg.ID {
 			return &DNSError{Op: "verify", Server: ns, Err: ErrIDMismatch}
 		}
 

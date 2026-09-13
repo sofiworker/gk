@@ -83,7 +83,7 @@ func (d *postgresDialect) PlaceholderSQL(sql string) string {
 	i := 1
 	for _, r := range sql {
 		if r == '?' {
-			builder.WriteString(fmt.Sprintf("$%d", i))
+			fmt.Fprintf(&builder, "$%d", i)
 			i++
 		} else {
 			builder.WriteRune(r)

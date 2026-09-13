@@ -135,7 +135,7 @@ func (s *testDNSServer) serve() {
 
 		resp := dnsmessage.Message{
 			Header: dnsmessage.Header{
-				ID:                 req.Header.ID,
+				ID:                 req.ID,
 				Response:           true,
 				RecursionAvailable: true,
 			},

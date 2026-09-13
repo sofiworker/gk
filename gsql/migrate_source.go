@@ -65,7 +65,7 @@ func (p *DefaultStructParser) Parse(dialect Dialect, structs ...interface{}) (*M
 
 	for _, str := range structs {
 		t := reflect.TypeOf(str)
-		if t.Kind() == reflect.Ptr {
+		if t.Kind() == reflect.Pointer {
 			t = t.Elem()
 		}
 		if t.Kind() != reflect.Struct {
@@ -85,7 +85,7 @@ func (p *DefaultStructParser) Parse(dialect Dialect, structs ...interface{}) (*M
 
 	for _, str := range structs {
 		t := reflect.TypeOf(str)
-		if t.Kind() == reflect.Ptr {
+		if t.Kind() == reflect.Pointer {
 			t = t.Elem()
 		}
 		tableName := tableNames[t]

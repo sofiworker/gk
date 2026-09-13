@@ -237,7 +237,7 @@ func FastValueOf(i interface{}) reflect.Value {
 
 // FastIndirect 快速获取指针指向的实际值
 func FastIndirect(v reflect.Value) reflect.Value {
-	if v.Kind() != reflect.Ptr {
+	if v.Kind() != reflect.Pointer {
 		return v
 	}
 	return v.Elem()
@@ -258,7 +258,7 @@ func IsEmpty(v reflect.Value) bool {
 		return v.Uint() == 0
 	case reflect.Float32, reflect.Float64:
 		return v.Float() == 0
-	case reflect.Interface, reflect.Ptr:
+	case reflect.Interface, reflect.Pointer:
 		return v.IsNil()
 	}
 	return false
@@ -295,7 +295,7 @@ func CallMethod(target interface{}, method string, args ...interface{}) ([]refle
 	}
 
 	m, ok := defaultFieldCache.LookupMethod(receiver.Type(), method)
-	if !ok && receiver.Kind() != reflect.Ptr && receiver.CanAddr() {
+	if !ok && receiver.Kind() != reflect.Pointer && receiver.CanAddr() {
 		receiver = receiver.Addr()
 		m, ok = defaultFieldCache.LookupMethod(receiver.Type(), method)
 	}
@@ -344,7 +344,7 @@ func CallMethod(target interface{}, method string, args ...interface{}) ([]refle
 
 func isNilable(t reflect.Type) bool {
 	switch t.Kind() {
-	case reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice, reflect.Func, reflect.Chan:
+	case reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice, reflect.Func, reflect.Chan:
 		return true
 	default:
 		return false
@@ -355,7 +355,7 @@ func indirectStructType(t reflect.Type) reflect.Type {
 	if t == nil {
 		return nil
 	}
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	if t.Kind() != reflect.Struct {
@@ -374,7 +374,7 @@ func GetFieldValue(v reflect.Value, field string) (reflect.Value, bool) {
 	switch v.Kind() {
 	case reflect.Struct:
 		return defaultFieldCache.GetStructField(v, field)
-	case reflect.Ptr:
+	case reflect.Pointer:
 		if v.IsNil() {
 			return reflect.Value{}, false
 		}

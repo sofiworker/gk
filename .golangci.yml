@@ -1,14 +1,37 @@
+version: "2"
 run:
   timeout: 5m
   tests: true
-
 linters:
+  default: none
   enable:
     - errcheck
     - govet
     - ineffassign
     - staticcheck
     - unused
-
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
 issues:
-  exclude-use-default: true
+  # 默认 max-same-issues 为 3：同一文案的告警只报 3 条，一类问题在修掉前几条后看起来已经
+  # 清零，实际还有几十条藏在下一次运行里。设为 0 表示不按文案折叠，每次暴露完整清单。
+  # The default max-same-issues is 3: warnings with identical text are capped, so a class
+  # of problems looks cleared after fixing a few while dozens stay hidden until later
+  # runs. 0 disables that folding and always prints the full list.
+  max-same-issues: 0
