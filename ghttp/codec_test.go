@@ -113,7 +113,7 @@ func TestRequestDecoder_SingleSide(t *testing.T) {
 
 // TestCodec_ComposesBothSides 验证 JSONCodec 同时满足 RequestDecoder 与 ResponseEncoder。
 func TestCodec_ComposesBothSides(t *testing.T) {
-	var c Codec = JSONCodec()
+	var c = JSONCodec()
 	var _ RequestDecoder = c
 	var _ ResponseEncoder = c
 	_ = context.Background()

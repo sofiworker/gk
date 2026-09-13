@@ -94,12 +94,6 @@ func limit413RequestWithCL(body string) *http.Request {
 	return req
 }
 
-// limit413ChunkedReader 是不暴露长度的 Body,使 net/http 无从推断 Content-Length。
-type limit413ChunkedReader struct{ r io.Reader }
-
-func (c *limit413ChunkedReader) Read(p []byte) (int, error) { return c.r.Read(p) }
-func (c *limit413ChunkedReader) Close() error               { return nil }
-
 // limit413ChunkedRequest 用 http.ReadRequest 解析真实 chunked 裸报文。
 //
 // 用裸报文而非手工拼 httptest 请求:这样 ContentLength=-1 与 TransferEncoding 都由

@@ -702,14 +702,14 @@ func TestUse_AfterServingIsRejectedNotSilent(t *testing.T) {
 	}
 	// 首个请求折叠中间件链。
 	s.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/x", nil))
-	if !s.mux.chainBuilt.Load() {
+	if !s.chainBuilt.Load() {
 		t.Fatal("the first request must fold the chain")
 	}
 
 	// 此后追加的中间件不得被静默接受进 m.mws(那会造成"以为装上了"的假象)。
-	before := len(s.mux.mws)
+	before := len(s.mws)
 	s.Use(func(next Handler) Handler { return next })
-	if len(s.mux.mws) != before {
+	if len(s.mws) != before {
 		t.Error("middleware appended after serving must not be silently accepted")
 	}
 }

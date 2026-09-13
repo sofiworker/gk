@@ -58,7 +58,7 @@ func TestClassifyError_TypedNilStatusCoderFallsBackTo500(t *testing.T) {
 func TestRunListenFailureAllowsReRegistration(t *testing.T) {
 	s := New()
 	if err := s.RawHandle(http.MethodGet, "/a", func(_ context.Context, _ *Request, r *Response) error {
-		r.Write([]byte("a"))
+		_, _ = r.Write([]byte("a"))
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestRunListenFailureAllowsReRegistration(t *testing.T) {
 	// endRun used to reset state but not mux.serving, so this returned
 	// ErrRegistrationAfterStart, leaving a half-zombie server.
 	if err := s.RawHandle(http.MethodGet, "/b", func(_ context.Context, _ *Request, r *Response) error {
-		r.Write([]byte("b"))
+		_, _ = r.Write([]byte("b"))
 		return nil
 	}); err != nil {
 		t.Fatalf("registration after a failed Run should succeed, got: %v", err)
@@ -130,9 +130,9 @@ func TestFormBodyMultipartOversizeReturns413(t *testing.T) {
 	// A total beyond defaultMaxMultipartBytes (64 MiB).
 	chunk := bytes.Repeat([]byte("x"), 1<<20)
 	for i := 0; i < 65; i++ {
-		fw.Write(chunk)
+		_, _ = fw.Write(chunk)
 	}
-	w.WriteField("a", "v")
+	_ = w.WriteField("a", "v")
 	w.Close()
 
 	req := httptest.NewRequest(http.MethodPost, "/", &buf)
@@ -166,7 +166,7 @@ func TestGzip1xxInformationalKeepsFinalStatus(t *testing.T) {
 		r.WriteHeader(http.StatusEarlyHints) // 103
 		r.Header().Set("Content-Type", "application/json")
 		r.WriteHeader(http.StatusCreated) // 201:此前被 103 抢占丢失 / previously lost to the 103
-		r.Write([]byte(`{"ok":true}`))
+		_, _ = r.Write([]byte(`{"ok":true}`))
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -204,7 +204,7 @@ func TestBindPlanRejectsTaggedUnexportedAnonymous(t *testing.T) {
 	type P struct {
 		m6inner `query:"x"`
 	}
-	if _, err := buildBindPlan(reflect.TypeOf(P{})); err == nil {
+	if _, err := buildBindPlan(reflect.TypeOf(P{m6inner: "x"})); err == nil {
 		t.Fatal("a tagged unexported anonymous field must be rejected at registration")
 	}
 }

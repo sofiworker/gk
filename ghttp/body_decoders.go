@@ -395,7 +395,7 @@ func (p *formPlan) collect(t reflect.Type, prefix []int, depth int) error {
 // fields bind from files. A missing file leaves the zero value.
 func decodeFormStruct(values map[string][]string, files map[string][]*multipart.FileHeader, dst any) error {
 	rv := reflect.ValueOf(dst)
-	if rv.Kind() != reflect.Ptr || rv.Elem().Kind() != reflect.Struct {
+	if rv.Kind() != reflect.Pointer || rv.Elem().Kind() != reflect.Struct {
 		return fmt.Errorf("%w: decodeFormStruct target must be a pointer to struct, got %T", ErrInvalidInput, dst)
 	}
 	sv := rv.Elem()

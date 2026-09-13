@@ -28,8 +28,8 @@ func probe(t *testing.T, reg func(*Server), method, target string) (int, string,
 	// 包装:捕获命中时的参数(通过在注册的 handler 内回填,见 echoParams)。
 	// Params are captured by the registered handler via echoParams.
 	capturedParams = got
+	defer func() { capturedParams = nil }()
 	m.ServeHTTP(rec, req)
-	capturedParams = nil
 	return rec.Code, rec.Body.String(), got
 }
 

@@ -33,21 +33,31 @@ func (e bizStatusErr) HTTPStatus() int { return e.status }
 func newErrChainServer(t *testing.T, opts ...Option) *Server {
 	t.Helper()
 	s := New(opts...)
-	GetParams(s, "/u/{id}", JSON[errChainOut](), func(_ context.Context, _ errChainPath) (errChainOut, error) {
+	if err := GetParams(s, "/u/{id}", JSON[errChainOut](), func(_ context.Context, _ errChainPath) (errChainOut, error) {
 		return errChainOut{}, bizStatusErr{status: http.StatusNotFound, detail: "user 42 missing in table users"}
-	})
-	GetParams(s, "/conflict/{id}", JSON[errChainOut](), func(_ context.Context, _ errChainPath) (errChainOut, error) {
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := GetParams(s, "/conflict/{id}", JSON[errChainOut](), func(_ context.Context, _ errChainPath) (errChainOut, error) {
 		return errChainOut{}, bizStatusErr{status: http.StatusConflict, detail: "row already exists: secret"}
-	})
-	GetParams(s, "/sentinel/{id}", JSON[errChainOut](), func(_ context.Context, _ errChainPath) (errChainOut, error) {
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := GetParams(s, "/sentinel/{id}", JSON[errChainOut](), func(_ context.Context, _ errChainPath) (errChainOut, error) {
 		return errChainOut{}, ErrInvalidInput
-	})
-	PostBody(s, "/create", JSONBody[errChainBody](), JSON[errChainOut](), func(_ context.Context, _ errChainBody) (errChainOut, error) {
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := PostBody(s, "/create", JSONBody[errChainBody](), JSON[errChainOut](), func(_ context.Context, _ errChainBody) (errChainOut, error) {
 		return errChainOut{OK: true}, nil
-	})
-	s.RawHandle(http.MethodGet, "/boom", func(_ context.Context, _ *Request, _ *Response) error {
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RawHandle(http.MethodGet, "/boom", func(_ context.Context, _ *Request, _ *Response) error {
 		panic("kaboom internal secret")
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	return s
 }
 
@@ -165,9 +175,11 @@ func TestErrorChainStrictContentType(t *testing.T) {
 
 	// 宽松:错误 CT 也放行解码
 	lenient := New(WithStrictContentType(false))
-	PostBody(lenient, "/create", JSONBody[errChainBody](), JSON[errChainOut](), func(_ context.Context, _ errChainBody) (errChainOut, error) {
+	if err := PostBody(lenient, "/create", JSONBody[errChainBody](), JSON[errChainOut](), func(_ context.Context, _ errChainBody) (errChainOut, error) {
 		return errChainOut{OK: true}, nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if w := doReq(lenient, "POST", "/create", "text/plain", `{"name":"x"}`); w.Code != http.StatusOK {
 		t.Errorf("lenient: got %d want 200 (body=%s)", w.Code, w.Body.String())
 	}
@@ -180,9 +192,11 @@ func TestErrorChainCustomRenderer(t *testing.T) {
 		resp.WriteHeader(status)
 		_, _ = resp.WriteString("ERR:" + code)
 	})))
-	GetParams(s, "/u/{id}", JSON[errChainOut](), func(_ context.Context, _ errChainPath) (errChainOut, error) {
+	if err := GetParams(s, "/u/{id}", JSON[errChainOut](), func(_ context.Context, _ errChainPath) (errChainOut, error) {
 		return errChainOut{}, ErrInvalidInput
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	w := doReq(s, "GET", "/u/1", "", "")
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status got %d want 400", w.Code)
@@ -206,9 +220,11 @@ func TestErrorChainErrorHook(t *testing.T) {
 		gotStatus = status
 		gotErr = err
 	}))
-	GetParams(s, "/u/{id}", JSON[errChainOut](), func(_ context.Context, _ errChainPath) (errChainOut, error) {
+	if err := GetParams(s, "/u/{id}", JSON[errChainOut](), func(_ context.Context, _ errChainPath) (errChainOut, error) {
 		return errChainOut{}, ErrInvalidInput
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	_ = doReq(s, "GET", "/u/1", "", "")
 	if gotStatus != http.StatusBadRequest {
 		t.Errorf("hook status got %d want 400", gotStatus)
@@ -232,9 +248,11 @@ func TestCustomNotFoundMethodNotAllowed(t *testing.T) {
 			return nil
 		}),
 	)
-	PostBody(s, "/create", JSONBody[errChainBody](), JSON[errChainOut](), func(_ context.Context, _ errChainBody) (errChainOut, error) {
+	if err := PostBody(s, "/create", JSONBody[errChainBody](), JSON[errChainOut](), func(_ context.Context, _ errChainBody) (errChainOut, error) {
 		return errChainOut{OK: true}, nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if w := doReq(s, "GET", "/nope", "", ""); w.Code != http.StatusNotFound || strings.TrimSpace(w.Body.String()) != "custom-404" {
 		t.Errorf("custom 404: code=%d body=%q", w.Code, w.Body.String())
 	}

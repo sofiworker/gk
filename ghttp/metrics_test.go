@@ -16,11 +16,15 @@ func TestMetricsMiddlewareRecordsHit(t *testing.T) {
 	m := NewMetrics()
 	s := New()
 	s.Use(m.Middleware())
-	s.RawHandle(http.MethodGet, "/hello", func(_ context.Context, _ *Request, resp *Response) error {
+	if err := s.RawHandle(http.MethodGet, "/hello", func(_ context.Context, _ *Request, resp *Response) error {
 		_, _ = resp.WriteString("hi")
 		return nil
-	})
-	s.RawHandle(http.MethodGet, "/metrics", m.Handler())
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RawHandle(http.MethodGet, "/metrics", m.Handler()); err != nil {
+		t.Fatal(err)
+	}
 
 	// 发几个请求累积指标
 	for i := 0; i < 3; i++ {
@@ -50,10 +54,14 @@ func TestMetricsMiddlewareRecordsError(t *testing.T) {
 	m := NewMetrics()
 	s := New()
 	s.Use(m.Middleware())
-	s.RawHandle(http.MethodGet, "/err", func(_ context.Context, _ *Request, _ *Response) error {
+	if err := s.RawHandle(http.MethodGet, "/err", func(_ context.Context, _ *Request, _ *Response) error {
 		return statusError(http.StatusTeapot)
-	})
-	s.RawHandle(http.MethodGet, "/metrics", m.Handler())
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RawHandle(http.MethodGet, "/metrics", m.Handler()); err != nil {
+		t.Fatal(err)
+	}
 
 	r := httptest.NewRequest(http.MethodGet, "/err", nil)
 	w := httptest.NewRecorder()
@@ -86,7 +94,9 @@ func TestMetricsMissRoute(t *testing.T) {
 	m := NewMetrics()
 	s := New()
 	s.Use(m.Middleware())
-	s.RawHandle(http.MethodGet, "/metrics", m.Handler())
+	if err := s.RawHandle(http.MethodGet, "/metrics", m.Handler()); err != nil {
+		t.Fatal(err)
+	}
 	r := httptest.NewRequest(http.MethodGet, "/nope", nil)
 	s.ServeHTTP(httptest.NewRecorder(), r)
 	r = httptest.NewRequest(http.MethodGet, "/metrics", nil)
@@ -102,12 +112,14 @@ func TestMetricsMissRoute(t *testing.T) {
 func TestGzipCompresses(t *testing.T) {
 	s := New()
 	s.Use(Gzip())
-	s.RawHandle(http.MethodGet, "/body", func(_ context.Context, _ *Request, resp *Response) error {
+	if err := s.RawHandle(http.MethodGet, "/body", func(_ context.Context, _ *Request, resp *Response) error {
 		resp.Header().Set("Content-Type", "application/json")
 		payload := strings.Repeat("x", 500)
 		_, _ = resp.WriteString(`{"data":"` + payload + `"}`)
 		return nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	r := httptest.NewRequest(http.MethodGet, "/body", nil)
 	r.Header.Set("Accept-Encoding", "gzip")
@@ -133,11 +145,13 @@ func TestGzipCompresses(t *testing.T) {
 func TestGzipSkipsWhenNotRequested(t *testing.T) {
 	s := New()
 	s.Use(Gzip())
-	s.RawHandle(http.MethodGet, "/body", func(_ context.Context, _ *Request, resp *Response) error {
+	if err := s.RawHandle(http.MethodGet, "/body", func(_ context.Context, _ *Request, resp *Response) error {
 		resp.Header().Set("Content-Type", "application/json")
 		_, _ = resp.WriteString("hello")
 		return nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	r := httptest.NewRequest(http.MethodGet, "/body", nil)
 	// 不带 Accept-Encoding
 	w := httptest.NewRecorder()
@@ -150,11 +164,13 @@ func TestGzipSkipsWhenNotRequested(t *testing.T) {
 func TestGzipSkipsNonCompressibleCT(t *testing.T) {
 	s := New()
 	s.Use(Gzip(WithGzipContentTypes("application/json"))) // 仅 JSON 可压
-	s.RawHandle(http.MethodGet, "/img", func(_ context.Context, _ *Request, resp *Response) error {
+	if err := s.RawHandle(http.MethodGet, "/img", func(_ context.Context, _ *Request, resp *Response) error {
 		resp.Header().Set("Content-Type", "image/png")
 		_, _ = resp.WriteString("pngbytes")
 		return nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	r := httptest.NewRequest(http.MethodGet, "/img", nil)
 	r.Header.Set("Accept-Encoding", "gzip")
 	w := httptest.NewRecorder()
@@ -167,10 +183,12 @@ func TestGzipSkipsNonCompressibleCT(t *testing.T) {
 func TestGzipHandles204(t *testing.T) {
 	s := New()
 	s.Use(Gzip())
-	s.RawHandle(http.MethodGet, "/nodata", func(_ context.Context, _ *Request, resp *Response) error {
+	if err := s.RawHandle(http.MethodGet, "/nodata", func(_ context.Context, _ *Request, resp *Response) error {
 		resp.WriteHeader(http.StatusNoContent)
 		return nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	r := httptest.NewRequest(http.MethodGet, "/nodata", nil)
 	r.Header.Set("Accept-Encoding", "gzip")
 	w := httptest.NewRecorder()
@@ -183,9 +201,11 @@ func TestGzipHandles204(t *testing.T) {
 func TestGzipErrorResponseUncompressed(t *testing.T) {
 	s := New()
 	s.Use(Gzip())
-	s.RawHandle(http.MethodGet, "/err", func(_ context.Context, _ *Request, _ *Response) error {
+	if err := s.RawHandle(http.MethodGet, "/err", func(_ context.Context, _ *Request, _ *Response) error {
 		return statusError(http.StatusTeapot)
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	r := httptest.NewRequest(http.MethodGet, "/err", nil)
 	r.Header.Set("Accept-Encoding", "gzip")
 	w := httptest.NewRecorder()
@@ -202,12 +222,14 @@ func TestGzipErrorResponseUncompressed(t *testing.T) {
 func TestGzipAlreadyEncodedPassthrough(t *testing.T) {
 	s := New()
 	s.Use(Gzip())
-	s.RawHandle(http.MethodGet, "/encoded", func(_ context.Context, _ *Request, resp *Response) error {
+	if err := s.RawHandle(http.MethodGet, "/encoded", func(_ context.Context, _ *Request, resp *Response) error {
 		resp.Header().Set("Content-Encoding", "br")
 		resp.Header().Set("Content-Type", "text/plain")
 		_, _ = resp.WriteString("brotlied")
 		return nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	r := httptest.NewRequest(http.MethodGet, "/encoded", nil)
 	r.Header.Set("Accept-Encoding", "gzip")
 	w := httptest.NewRecorder()
@@ -220,11 +242,13 @@ func TestGzipAlreadyEncodedPassthrough(t *testing.T) {
 func TestGzipQZero(t *testing.T) {
 	s := New()
 	s.Use(Gzip())
-	s.RawHandle(http.MethodGet, "/body", func(_ context.Context, _ *Request, resp *Response) error {
+	if err := s.RawHandle(http.MethodGet, "/body", func(_ context.Context, _ *Request, resp *Response) error {
 		resp.Header().Set("Content-Type", "text/plain")
 		_, _ = resp.WriteString("text")
 		return nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	r := httptest.NewRequest(http.MethodGet, "/body", nil)
 	r.Header.Set("Accept-Encoding", "gzip;q=0")
 	w := httptest.NewRecorder()
@@ -237,12 +261,14 @@ func TestGzipQZero(t *testing.T) {
 func TestGzipContentLengthRemoved(t *testing.T) {
 	s := New()
 	s.Use(Gzip())
-	s.RawHandle(http.MethodGet, "/body", func(_ context.Context, _ *Request, resp *Response) error {
+	if err := s.RawHandle(http.MethodGet, "/body", func(_ context.Context, _ *Request, resp *Response) error {
 		resp.Header().Set("Content-Type", "text/plain")
 		resp.Header().Set("Content-Length", "100")
 		_, _ = resp.WriteString("hello world")
 		return nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	r := httptest.NewRequest(http.MethodGet, "/body", nil)
 	r.Header.Set("Accept-Encoding", "gzip")
 	w := httptest.NewRecorder()

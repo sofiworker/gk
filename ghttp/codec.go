@@ -1,14 +1,14 @@
 package ghttp
 
 import (
-	"bytes"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
+
+	"github.com/sofiworker/gk/ghttp/internal/codec"
 )
 
 // decodeError 把请求体解码期的底层错误收敛为框架错误:MaxBytesReader 触发的
@@ -37,6 +37,9 @@ import (
 // Classification matches only the *http.MaxBytesError type, never error text: the
 // text varies across standard-library versions, the type is a stable contract.
 func decodeError(err error) error {
+	if err == nil {
+		return nil
+	}
 	var maxBytes *http.MaxBytesError
 	if errors.As(err, &maxBytes) {
 		return fmt.Errorf("%w: %w", ErrRequestEntityTooLarge, err)
@@ -124,65 +127,10 @@ type jsonCodec struct{}
 func (jsonCodec) ContentType() string { return "application/json" }
 
 func (jsonCodec) Decode(req *Request, v any) error {
-	if req.Body == nil {
-		return fmt.Errorf("%w: empty body", ErrInvalidInput)
-	}
-	// 用 errors.Is 而非 == 比较 io.EOF:标准库允许把 EOF 包装返回(自定义 io.Reader、
-	// http.MaxBytesReader 等中间层都可能这么做),== 会漏判而把"空体"当成解码失败。
-	// Compare io.EOF with errors.Is rather than ==: the standard library permits a
-	// wrapped EOF (custom io.Readers and intermediate layers do wrap it), and == would
-	// miss it and report an empty body as a decode failure.
-	dec := json.NewDecoder(req.Body)
-	err := dec.Decode(v)
-	if err != nil {
-		if errors.Is(err, io.EOF) {
-			// 空请求体：v 保持零值。这通常【不是】错误——本框架不内置校验，是否必填由业务
-			// 判断。但“客户端声明了 body 而实际一个字节都没到”是另一回事：那是传输被截断
-			// （连接中断、半写请求），把它当成功会让 handler 拿着【全零结构体】继续执行——
-			// 一次注册表单变成“用户名=空、密码=空”仍然 200。故仅在明确声明了正长度时报错，
-			// 长度未知（chunked / -1）或为 0 时保持宽容。
-			// An empty body leaves v at its zero value, which usually is NOT an error: this
-			// framework has no built-in validation, so requiredness is the business's call.
-			// But "the client declared a body while not one byte arrived" is different — that
-			// is a truncated transfer (dropped connection, half-written request), and calling
-			// it success lets the handler proceed with an ALL-ZERO struct: a signup request
-			// becomes "empty username, empty password" and still returns 200. So report it
-			// only when a positive length was declared, staying lenient when the length is
-			// unknown (chunked / -1) or zero.
-			if req.ContentLength > 0 {
-				return fmt.Errorf("%w: body of %d bytes ended before any JSON value", ErrInvalidInput, req.ContentLength)
-			}
-			return nil
-		}
-		return decodeError(err)
-	}
-	// 拒绝首个 JSON 值之后的任何内容。Decoder 是流式的,只读掉第一个值就返回,于是
-	// `{"a":1} GARBAGE` 与 `{"a":1}{"a":2}` 都会静默成功。后者尤其危险:请求体里有两个
-	// 对象,本端按第一个处理,而链路上另一个按同样宽松规则解析的组件可能取到第二个,
-	// 造成两端对"这次请求是什么"理解不一致(请求走私一类的混淆)。一个请求体只应表示
-	// 一个值,多出来的内容是错误而非可忽略的噪声。
-	// Reject anything after the first JSON value. The Decoder streams and returns as soon
-	// as it has read one value, so `{"a":1} GARBAGE` and `{"a":1}{"a":2}` both succeed
-	// silently. The latter is especially dangerous: the body holds two objects, this end
-	// acts on the first, and another component along the path parsing just as loosely may
-	// take the second, so the two disagree about what the request was (a smuggling-class
-	// confusion). One body should denote one value; trailing content is an error, not
-	// ignorable noise.
-	//
-	// 用 Token() 而非 Decode(&extra) 探测:Token 只读【一个】令牌(越过空白后的首个
-	// 字节即可判定,`]`/`}` 这类顶层垃圾直接成为语法错),而 Decode 会把第二个值
-	// 【完整物化】进 any 后才报错——未挂 LimitBody 时,巨型第二值成了免费的 CPU/内存
-	// 放大点。(More() 不行:它专为数组/对象内部设计,对顶层尾随的 `]`/`}` 返回 false。)
-	// Probe with Token() rather than Decode(&extra): Token reads ONE token (the first
-	// post-whitespace byte decides, and top-level garbage like `]`/`}` is an immediate
-	// syntax error), whereas Decode fully MATERIALIZED the second value into an any
-	// before erroring — without LimitBody, a huge second value was a free CPU/memory
-	// amplification point. (More() does not work here: it is designed for inside
-	// arrays/objects and returns false for a trailing top-level `]`/`}`.)
-	if _, terr := dec.Token(); terr != io.EOF {
-		return fmt.Errorf("%w: unexpected trailing content after the JSON value", ErrInvalidInput)
-	}
-	return nil
+	// 严格解码内核（拒绝尾随内容、判截断、流式）与 client 侧共用，见 internal/codec。
+	// The strict decoding kernel (trailing-content rejection, truncation detection,
+	// streaming) is shared with the client; see internal/codec.
+	return decodeError(codec.DecodeJSON(req.Body, v, req.ContentLength))
 }
 
 func (jsonCodec) Encode(resp *Response, v any) error {
@@ -203,49 +151,7 @@ type xmlCodec struct{}
 func (xmlCodec) ContentType() string { return "application/xml" }
 
 func (xmlCodec) Decode(req *Request, v any) error {
-	if req.Body == nil {
-		return fmt.Errorf("%w: empty body", ErrInvalidInput)
-	}
-	dec := xml.NewDecoder(req.Body)
-	err := dec.Decode(v)
-	if err != nil {
-		// 与 JSON 同一立场：声明了正长度却读到 EOF 属于截断，不能当空 body 成功。
-		// Same stance as JSON: a declared positive length that yields EOF is truncation,
-		// not a successful empty body.
-		if errors.Is(err, io.EOF) {
-			if req.ContentLength > 0 {
-				return fmt.Errorf("%w: body of %d bytes ended before any XML element", ErrInvalidInput, req.ContentLength)
-			}
-			return nil
-		}
-		return decodeError(err)
-	}
-	// 拒绝首个元素之后的内容：Decode 只读一个元素就返回，于是 `<User>…</User><User>…</User>`
-	// 会静默按第一个处理，与链路上另一个解析器可能取到的第二个不一致（请求混淆一类）。
-	// XML 没有 json.Decoder.More，需自行推进令牌:仅【纯空白】CharData 可跳过(元素间
-	// 换行缩进是合法格式),非空白字符数据(`<a/>trailing`)与 JSON 侧一样属尾随垃圾。
-	// Reject content after the first element: Decode returns after one element, so
-	// `<User>…</User><User>…</User>` is silently handled as the first while another parser
-	// on the path may take the second (a request-confusion class). XML lacks
-	// json.Decoder.More, so advance tokens manually: only WHITESPACE-ONLY CharData is
-	// skipped (newlines/indentation between elements are legal formatting); non-blank
-	// character data (`<a/>trailing`) is trailing garbage, same stance as the JSON side.
-	for {
-		tok, terr := dec.Token()
-		if terr == io.EOF {
-			break
-		}
-		if terr != nil {
-			return decodeError(terr)
-		}
-		if cd, isChar := tok.(xml.CharData); isChar {
-			if len(bytes.TrimSpace(cd)) == 0 {
-				continue
-			}
-		}
-		return fmt.Errorf("%w: unexpected trailing content after the XML document", ErrInvalidInput)
-	}
-	return nil
+	return decodeError(codec.DecodeXML(req.Body, v, req.ContentLength))
 }
 
 func (xmlCodec) Encode(resp *Response, v any) error {
@@ -262,12 +168,7 @@ func XMLCodec() Codec { return xmlCodec{} }
 // mediaType extracts the media-type part of a Content-Type header (up to the
 // first ';', trimmed and lowercased). It does no full RFC parse — a 415 decision
 // only needs the base type; parameters (charset/boundary) are irrelevant.
-func mediaType(contentType string) string {
-	if i := strings.IndexByte(contentType, ';'); i >= 0 {
-		contentType = contentType[:i]
-	}
-	return strings.ToLower(strings.TrimSpace(contentType))
-}
+func mediaType(contentType string) string { return codec.MediaType(contentType) }
 
 // contentTypeIn 报告请求 Content-Type 是否属于 want 集合(按 media-type 比对)。请求无
 // Content-Type 时放行(交给解码器处理空体/宽松场景，避免对无体请求误判)，want 为空集时不校验。
@@ -284,18 +185,7 @@ func mediaType(contentType string) string {
 // acceptedContentTypes), so only the request side is normalized here rather than
 // reprocessing the endpoint's declaration on every request. The set holds at most a
 // few entries, so a linear compare beats a map lookup and allocates nothing.
-func contentTypeIn(got string, want []string) bool {
-	if got == "" || len(want) == 0 {
-		return true
-	}
-	mt := mediaType(got)
-	for _, w := range want {
-		if mt == w {
-			return true
-		}
-	}
-	return false
-}
+func contentTypeIn(got string, want []string) bool { return codec.ContentTypeIn(got, want) }
 
 // unsupportedMediaTypeError 构造一个 415 错误,报出实际收到的与端点可接受的 media-type。
 // 它只在校验已判定失败的冷路径上调用,故此处的字符串拼接分配不落在命中热路径上。

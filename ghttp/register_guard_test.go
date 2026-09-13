@@ -89,10 +89,10 @@ func TestRegister_AfterServingIsRefused(t *testing.T) {
 	// Wait until Serve has reached the running state, then require the guard to refuse
 	// the registration rather than letting it appear to succeed.
 	deadline := time.Now().Add(3 * time.Second)
-	for !s.mux.serving.Load() && time.Now().Before(deadline) {
+	for !s.serving.Load() && time.Now().Before(deadline) {
 		time.Sleep(2 * time.Millisecond)
 	}
-	if !s.mux.serving.Load() {
+	if !s.serving.Load() {
 		t.Fatal("Serve never marked the server as running")
 	}
 	err = s.RawHandle("GET", "/late", func(_ context.Context, _ *Request, _ *Response) error { return nil })

@@ -274,6 +274,28 @@ A batch of verified fixes changed observable behavior. Only items needing caller
 
 New exported API: `PanicValueOf(err) (any, bool)`, `ErrRequestTimeout`, `RateLimitConfig.MaxKeys`, `CSRFConfig.UseHostPrefixedCookie`, `CSRFHostCookiePrefix`, `MultiContentTypeDecoder`.
 
+## HTTP client (ghttp/client)
+
+`ghttp` also ships a client: the [`client`](client/README.en.md) subpackage, an **orchestration layer** over the standard library's `net/http` (middleware, codecs, error mapping, retries, observability) that does **not** implement a transport of its own.
+
+It does not import this (server) package, so a program using only the client never links the server framework. What the two share lives in `ghttp/internal/*`: the strict JSON/XML decoding kernel, Content-Type normalization, log sanitization, the SSE wire format, and the `StatusCoder` contract.
+
+```go
+c := client.New(
+    client.WithBaseURL("https://api.example.com"),
+    client.WithRetry(client.RetryPolicy{MaxRetries: 3}),
+)
+
+var user User
+resp, err := c.R().SetQueryParam("id", 1).SetResult(&user).Get("/users")
+```
+
+It mirrors the server: the same `WithXxx` option style, the same onion middleware shape, the same strict decoding kernel, and the same `StatusCoder` contract (alias-exported through `ghttp/internal/httperr`, so both sides share one type).
+
+Client-specific stances (deliberately unlike resty/req — see [client/README.en.md](client/README.en.md)): **non-2xx is an error by default**, **response bodies are capped at 32 MiB by default**, **an unreplayable request body is refused before retrying**, and **zero assumptions are made about the server's response shape**. Standard-library interop is a hard constraint: inject `*http.Client`/`http.RoundTripper`/`*net.Dialer`/`DialContext`/`http.CookieJar`/`CheckRedirect`, or degrade the Client into an `http.RoundTripper`.
+
+Generic entries are a thin shell (sink mode, T inferred from `*T`): `client.GetInto(ctx, c, url, &dst)` (Go 1.18+), plus method forms in `//go:build go1.27` files — `c.GetInto(ctx, url, &dst)` and the fluent terminators `c.R().SetQueryParam(...).GetInto(ctx, url, &dst)` (same family: `PostInto`/`PutInto`/`PatchInto`/`DeleteInto`/`HeadInto`/`OptionsInto`/`DoInto`; `req.Into(ctx, &dst)` remains for when method/URL were configured separately).
+
 ## Status
 
 pre-v1.0.0, under development, not for direct production use; see `DEVELOPMENT.md` at the repository root.

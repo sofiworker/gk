@@ -689,7 +689,9 @@ func (m *mux) writeErrorRaw(w http.ResponseWriter, r *http.Request, err error) {
 // Returning false means the target was unsafe and nothing was written, so the
 // caller should fall through to normal miss handling.
 func redirectTrailingSlash(w http.ResponseWriter, r *http.Request, path string) bool {
-	target := path
+	// 两个分支都会重新赋值,故这里只声明不初始化。
+	// Both branches reassign, so declare without an initializer.
+	var target string
 	if len(path) > 1 && path[len(path)-1] == '/' {
 		target = path[:len(path)-1]
 	} else {

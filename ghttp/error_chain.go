@@ -3,6 +3,8 @@ package ghttp
 import (
 	"errors"
 	"net/http"
+
+	"github.com/sofiworker/gk/ghttp/internal/httperr"
 )
 
 // ===========================================================================
@@ -34,13 +36,19 @@ func statusError(status int) error { return statusErr(status) }
 
 // StatusCoder 让业务错误自带 HTTP 状态码。实现它即参与错误链的状态映射,
 // 优先级高于框架哨兵映射(可精确控制 404/409/422 等)。
+//
+// 它是 ghttp/internal/httperr.StatusCoder 的类型别名,因此 client 侧的响应错误与本侧
+// 业务错误是【同一个类型】:用户在 server 侧写的 StatusCoder 断言代码在 client 侧原样可用,
+// 而两个包之间不产生 import 依赖。
 // StatusCoder lets a business error carry its own HTTP status. Implementing it
 // participates in the error chain's status mapping with priority over sentinel
 // mapping (for precise 404/409/422, etc.).
-type StatusCoder interface {
-	error
-	HTTPStatus() int
-}
+//
+// It is a type alias of ghttp/internal/httperr.StatusCoder, so a client response
+// error and a server business error are the SAME type: assertion code written against
+// StatusCoder on the server works unchanged on the client, with no import dependency
+// between the two packages.
+type StatusCoder = httperr.StatusCoder
 
 // ErrorRenderer 把一个已分类的错误写成响应体。默认实现输出
 // {"error":{"code","message"}} 的 JSON。用户可经 WithErrorRenderer 替换

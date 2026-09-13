@@ -33,7 +33,7 @@ func TestFormBody_URLEncoded(t *testing.T) {
 	m := New()
 	if err := PostBody(m, "/form", FormBody[formBodyReq](), JSON[formBodyResult](),
 		func(_ context.Context, b formBodyReq) (formBodyResult, error) {
-			return formBodyResult{Name: b.Name, Age: b.Age, Score: b.Score, Admin: b.Admin}, nil
+			return formBodyResult(b), nil
 		}); err != nil {
 		t.Fatal(err)
 	}

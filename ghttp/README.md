@@ -17,6 +17,7 @@
 - [生命周期与错误处理](#生命周期与错误处理)
 - [中间件模型](#中间件模型)
 - [功能清单与开关](#功能清单与开关)
+- [HTTP 客户端（ghttp/client）](#http-客户端ghttpclient)
 - [已知差异与权衡](#已知差异与权衡)
 - [迁移指南](#迁移指南)
 
@@ -563,6 +564,28 @@ ghttp.ServeWS(m, "/ws/echo", nil, func(ctx context.Context, req *ghttp.Request, 
 - `WSUpgrader` 选项：`WithWSCheckOrigin`（跨源校验，默认 gorilla 安全同源策略）、`WithWSReadBufferSize` / `WithWSWriteBufferSize`、`WithWSSubprotocols`、`WithWSHandshakeTimeout`、`WithWSCompression`。
 - 底层 `ResponseWriter` 不支持 `Hijack`（被不透传的中间件包裹等）时返回 `ErrNotHijackable`。
 - 完整示例见 [`examples/realtime`](../examples/realtime)。
+
+## HTTP 客户端（ghttp/client）
+
+`ghttp` 同时提供客户端：子包 [`client`](client/README.md)，建立在标准库 `net/http` 之上的**编排层**（中间件、编解码、错误映射、重试、可观测性），**不自研传输层**。
+
+它不 import 本包（server），因此只用客户端的程序不会链入服务端框架；两者共享的是 `ghttp/internal/*` 里的内核（严格 JSON/XML 解码、Content-Type 规范化、日志脱敏、SSE 线格式、`StatusCoder` 契约）。
+
+```go
+c := client.New(
+    client.WithBaseURL("https://api.example.com"),
+    client.WithRetry(client.RetryPolicy{MaxRetries: 3}),
+)
+
+var user User
+resp, err := c.R().SetQueryParam("id", 1).SetResult(&user).Get("/users")
+```
+
+与 server 侧对称：同一套 `WithXxx` 选项风格、同一形状的洋葱中间件、同一份严格解码内核、同一个 `StatusCoder` 契约（经 `ghttp/internal/httperr` 的类型别名，两侧是同一个类型）。
+
+客户端特有的取舍（与 resty/req 等库不同，详见 [client/README.md](client/README.md)）：**非 2xx 默认算错误**、**响应体默认限长 32 MiB**、**不可重放的请求体在重试前直接拒绝**、**对服务端响应格式零假设**。标准库互操作是硬约束：可注入 `*http.Client`/`http.RoundTripper`/`*net.Dialer`/`DialContext`/`http.CookieJar`/`CheckRedirect`，也可把 Client 退化成 `http.RoundTripper`。
+
+泛型入口只做薄壳（sink 模式，T 从 `*T` 自动推断）：`client.GetInto(ctx, c, url, &dst)`（Go 1.18+），以及 `//go:build go1.27` 里的方法版 `c.GetInto(ctx, url, &dst)` 与 fluent 快捷终结方法 `c.R().SetQueryParam(...).GetInto(ctx, url, &dst)`（同族 `PostInto`/`PutInto`/`PatchInto`/`DeleteInto`/`HeadInto`/`OptionsInto`/`DoInto`；`req.Into(ctx, &dst)` 保留给 method/URL 已另行配置的场景）。
 
 ## 已知差异与权衡
 

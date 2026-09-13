@@ -288,20 +288,6 @@ var githubRoutes = []routeSpec{
 	{"GET", "/people/{user}/receivers"},
 }
 
-// buildGithubMux 把 githubRoutes 全部注册进一个 Mux;注册失败即 fatal。
-// buildGithubMux registers every githubRoutes entry into a Mux; a registration
-// error is fatal.
-func buildGithubMux(t testing.TB) *Server {
-	t.Helper()
-	m := New()
-	for _, r := range githubRoutes {
-		if err := m.RawHandle(r.method, r.pattern, captureHandler(r.pattern, nil)); err != nil {
-			t.Fatalf("register %s %s: %v", r.method, r.pattern, err)
-		}
-	}
-	return m
-}
-
 // concretePath 把模板路径实例化成一条可请求的具体路径:{name} → "x{i}",
 // {name...} → "x{i}/y{i}/z{i}"(多段)。返回具体路径与期望的参数键值。
 // concretePath instantiates a template path into a concrete requestable path:

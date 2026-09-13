@@ -32,7 +32,7 @@ func newFormServer(t *testing.T, method string, opts ...Option) *Server {
 	t.Helper()
 	s := New(opts...)
 	h := func(_ context.Context, b ctFormBody) (ctFormOut, error) {
-		return ctFormOut{Name: b.Name, Count: b.Count}, nil
+		return ctFormOut(b), nil
 	}
 	var err error
 	switch method {
@@ -203,7 +203,7 @@ func TestFormBody_RejectionReportsUnsupportedMediaType(t *testing.T) {
 	}))
 	if err := PostBody(s, "/form", FormBody[ctFormBody](), JSON[ctFormOut](),
 		func(_ context.Context, b ctFormBody) (ctFormOut, error) {
-			return ctFormOut{Name: b.Name, Count: b.Count}, nil
+			return ctFormOut(b), nil
 		}); err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestFormBody_DeclaredContentTypeCodecsUnaffected(t *testing.T) {
 			s := New()
 			if err := PostBody(s, "/x", tc.in, JSON[ctFormOut](),
 				func(_ context.Context, b ctFormBody) (ctFormOut, error) {
-					return ctFormOut{Name: b.Name, Count: b.Count}, nil
+					return ctFormOut(b), nil
 				}); err != nil {
 				t.Fatal(err)
 			}
@@ -342,7 +342,7 @@ func TestFormBody_DeleteBodySurvivesEarlierParseForm(t *testing.T) {
 	})
 	if err := DeleteBody(s, "/form", FormBody[ctFormBody](), JSON[ctFormOut](),
 		func(_ context.Context, b ctFormBody) (ctFormOut, error) {
-			return ctFormOut{Name: b.Name, Count: b.Count}, nil
+			return ctFormOut(b), nil
 		}); err != nil {
 		t.Fatal(err)
 	}

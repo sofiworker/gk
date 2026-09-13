@@ -134,7 +134,7 @@ func New(opts ...Option) *Server {
 // route misses and preflight). Call before registering routes and before serving
 // (gin's constraint). Returns itself for chaining.
 func (s *Server) Use(mws ...Middleware) *Server {
-	s.mux.use(mws...)
+	s.use(mws...)
 	return s
 }
 
@@ -374,7 +374,7 @@ func (s *Server) markStarted() error {
 	switch s.state {
 	case stateIdle:
 		s.state = stateRunning
-		s.mux.serving.Store(true)
+		s.serving.Store(true)
 		return nil
 	case stateRunning:
 		return ErrServerStarted
@@ -418,7 +418,7 @@ func (s *Server) endRun(err error) error {
 		// alone leaves a half-zombie — IsStarted()=false yet RawHandle rejected
 		// forever because serving stayed true, so routes cannot even be added
 		// before retrying on another port.
-		s.mux.serving.Store(false)
+		s.serving.Store(false)
 	}
 	s.mu.Unlock()
 	return err

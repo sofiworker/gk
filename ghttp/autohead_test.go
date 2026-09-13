@@ -20,7 +20,7 @@ func TestAutoHEADFallsBackToGET(t *testing.T) {
 	s := New(WithAutoHEAD(true))
 	if err := s.RawHandle(http.MethodGet, "/x", func(_ context.Context, _ *Request, r *Response) error {
 		r.Header().Set("X-Test", "yes")
-		r.Write([]byte("body"))
+		_, _ = r.Write([]byte("body"))
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -49,7 +49,7 @@ func TestAutoHEADFallsBackToGET(t *testing.T) {
 
 func TestAutoHEADExplicitRouteWins(t *testing.T) {
 	s := New(WithAutoHEAD(true))
-	get := func(_ context.Context, _ *Request, r *Response) error { r.Write([]byte("get")); return nil }
+	get := func(_ context.Context, _ *Request, r *Response) error { _, _ = r.Write([]byte("get")); return nil }
 	head := func(_ context.Context, _ *Request, r *Response) error { r.Header().Set("X-Explicit", "1"); return nil }
 	if err := s.RawHandle(http.MethodGet, "/x", get); err != nil {
 		t.Fatal(err)
@@ -80,7 +80,7 @@ func TestAutoHEADSurvivesExplicitHEADRoutes(t *testing.T) {
 	}
 	if err := s.RawHandle(http.MethodGet, "/x", func(_ context.Context, _ *Request, r *Response) error {
 		r.Header().Set("X-Test", "yes")
-		r.Write([]byte("body"))
+		_, _ = r.Write([]byte("body"))
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -100,7 +100,7 @@ func TestAutoHEADSurvivesExplicitHEADRoutes(t *testing.T) {
 func TestAutoHEADAllowHeaderIncludesHEAD(t *testing.T) {
 	s := New(WithAutoHEAD(true))
 	if err := s.RawHandle(http.MethodGet, "/x", func(_ context.Context, _ *Request, r *Response) error {
-		r.Write([]byte("ok"))
+		_, _ = r.Write([]byte("ok"))
 		return nil
 	}); err != nil {
 		t.Fatal(err)

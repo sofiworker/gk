@@ -23,12 +23,24 @@ func TestMatchedRoute(t *testing.T) {
 	h := obsRawHandler(func(req *Request, resp *Response) {
 		resp.Header().Set("X-Route", req.MatchedRoute())
 	})
-	s.RawHandle(http.MethodGet, "/static/path", h)
-	s.RawHandle(http.MethodGet, "/users/{id}", h)
-	s.RawHandle(http.MethodGet, "/users/{id}/posts/{pid}", h)
-	s.RawHandle(http.MethodGet, "/files/{path...}", h)
-	s.RawHandle(http.MethodGet, "/a/b", h)
-	s.RawHandle(http.MethodGet, "/a/{x}", h)
+	if err := s.RawHandle(http.MethodGet, "/static/path", h); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RawHandle(http.MethodGet, "/users/{id}", h); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RawHandle(http.MethodGet, "/users/{id}/posts/{pid}", h); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RawHandle(http.MethodGet, "/files/{path...}", h); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RawHandle(http.MethodGet, "/a/b", h); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RawHandle(http.MethodGet, "/a/{x}", h); err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct{ path, want string }{
 		{"/static/path", "/static/path"},
@@ -64,7 +76,9 @@ func TestMatchedRouteWithGlobalMiddleware(t *testing.T) {
 			return err
 		}
 	})
-	s.RawHandle(http.MethodGet, "/users/{id}", obsRawHandler(func(req *Request, resp *Response) {}))
+	if err := s.RawHandle(http.MethodGet, "/users/{id}", obsRawHandler(func(req *Request, resp *Response) {})); err != nil {
+		t.Fatal(err)
+	}
 	r := httptest.NewRequest(http.MethodGet, "/users/9", nil)
 	s.ServeHTTP(httptest.NewRecorder(), r)
 	if seenInMW != "/users/:id" {
@@ -83,7 +97,9 @@ func TestMatchedRouteMissEmpty(t *testing.T) {
 			return err
 		}
 	})
-	s.RawHandle(http.MethodGet, "/exists", obsRawHandler(func(req *Request, resp *Response) {}))
+	if err := s.RawHandle(http.MethodGet, "/exists", obsRawHandler(func(req *Request, resp *Response) {})); err != nil {
+		t.Fatal(err)
+	}
 	s.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/nope", nil))
 	if seen != "" {
 		t.Errorf("miss MatchedRoute got %q want empty", seen)
@@ -92,11 +108,14 @@ func TestMatchedRouteMissEmpty(t *testing.T) {
 
 // TestClientIP 覆盖可信代理模型的关键分支。
 func TestClientIP(t *testing.T) {
-	handler := func(s *Server) {
-		s.RawHandle(http.MethodGet, "/ip", obsRawHandler(func(req *Request, resp *Response) {
+	handler := func(tb testing.TB, s *Server) {
+		tb.Helper()
+		if err := s.RawHandle(http.MethodGet, "/ip", obsRawHandler(func(req *Request, resp *Response) {
 			resp.Header().Set("X-ClientIP", req.ClientIP())
 			resp.Header().Set("X-RemoteIP", req.RemoteIP())
-		}))
+		})); err != nil {
+			tb.Fatal(err)
+		}
 	}
 	call := func(s *Server, remote string, headers map[string]string) (clientIP, remoteIP string) {
 		r := httptest.NewRequest(http.MethodGet, "/ip", nil)
@@ -111,7 +130,7 @@ func TestClientIP(t *testing.T) {
 
 	t.Run("no trusted proxy ignores XFF", func(t *testing.T) {
 		s := New()
-		handler(s)
+		handler(t, s)
 		ip, _ := call(s, "10.0.0.5:1234", map[string]string{"X-Forwarded-For": "1.2.3.4"})
 		if ip != "10.0.0.5" {
 			t.Errorf("got %q want 10.0.0.5", ip)
@@ -119,7 +138,7 @@ func TestClientIP(t *testing.T) {
 	})
 	t.Run("trusted peer walks XFF", func(t *testing.T) {
 		s := New(WithTrustedProxies("10.0.0.0/8"))
-		handler(s)
+		handler(t, s)
 		ip, _ := call(s, "10.0.0.5:1234", map[string]string{"X-Forwarded-For": "203.0.113.7, 10.0.0.9"})
 		if ip != "203.0.113.7" {
 			t.Errorf("got %q want 203.0.113.7", ip)
@@ -127,7 +146,7 @@ func TestClientIP(t *testing.T) {
 	})
 	t.Run("untrusted peer ignores XFF", func(t *testing.T) {
 		s := New(WithTrustedProxies("10.0.0.0/8"))
-		handler(s)
+		handler(t, s)
 		ip, _ := call(s, "8.8.8.8:1234", map[string]string{"X-Forwarded-For": "203.0.113.7"})
 		if ip != "8.8.8.8" {
 			t.Errorf("got %q want 8.8.8.8", ip)
@@ -135,7 +154,7 @@ func TestClientIP(t *testing.T) {
 	})
 	t.Run("custom forwarded header", func(t *testing.T) {
 		s := New(WithTrustedProxies("10.0.0.0/8"), WithForwardedHeaders("X-Real-IP"))
-		handler(s)
+		handler(t, s)
 		ip, _ := call(s, "10.0.0.5:1234", map[string]string{"X-Real-IP": "203.0.113.99"})
 		if ip != "203.0.113.99" {
 			t.Errorf("got %q want 203.0.113.99", ip)
@@ -143,7 +162,7 @@ func TestClientIP(t *testing.T) {
 	})
 	t.Run("bare trusted ip and portless remote", func(t *testing.T) {
 		s := New(WithTrustedProxies("192.168.1.1"))
-		handler(s)
+		handler(t, s)
 		ip, remoteIP := call(s, "192.168.1.1", map[string]string{"X-Forwarded-For": "203.0.113.1"})
 		if ip != "203.0.113.1" {
 			t.Errorf("clientIP got %q want 203.0.113.1", ip)
@@ -183,9 +202,11 @@ func TestAccessLogFields(t *testing.T) {
 	var got AccessLog
 	s := New(WithTrustedProxies("10.0.0.0/8"))
 	s.Use(LoggerWith(func(a AccessLog) { got = a }))
-	s.RawHandle(http.MethodGet, "/users/{id}", obsRawHandler(func(req *Request, resp *Response) {
+	if err := s.RawHandle(http.MethodGet, "/users/{id}", obsRawHandler(func(req *Request, resp *Response) {
 		_, _ = resp.WriteString("hello-body")
-	}))
+	})); err != nil {
+		t.Fatal(err)
+	}
 	r := httptest.NewRequest(http.MethodGet, "/users/42", nil)
 	r.RemoteAddr = "10.0.0.5:1111"
 	r.Header.Set("X-Forwarded-For", "203.0.113.7")
@@ -217,17 +238,21 @@ func TestAccessLogFields(t *testing.T) {
 // TestResponseBytesOut 验证 BytesOut 累计多次写入。
 func TestResponseBytesOut(t *testing.T) {
 	s := New()
-	s.RawHandle(http.MethodGet, "/multi", obsRawHandler(func(req *Request, resp *Response) {
+	if err := s.RawHandle(http.MethodGet, "/multi", obsRawHandler(func(req *Request, resp *Response) {
 		_, _ = resp.Write([]byte("abc"))
 		_, _ = resp.WriteString("de")
-	}))
+	})); err != nil {
+		t.Fatal(err)
+	}
 	var logged AccessLog
 	s2 := New()
 	s2.Use(LoggerWith(func(a AccessLog) { logged = a }))
-	s2.RawHandle(http.MethodGet, "/multi", obsRawHandler(func(req *Request, resp *Response) {
+	if err := s2.RawHandle(http.MethodGet, "/multi", obsRawHandler(func(req *Request, resp *Response) {
 		_, _ = resp.Write([]byte("abc"))
 		_, _ = resp.WriteString("de")
-	}))
+	})); err != nil {
+		t.Fatal(err)
+	}
 	s2.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/multi", nil))
 	if logged.BytesOut != 5 {
 		t.Errorf("BytesOut got %d want 5", logged.BytesOut)
@@ -241,10 +266,18 @@ func TestMatchedRouteAfterSplit(t *testing.T) {
 		resp.Header().Set("X-Route", req.MatchedRoute())
 	})
 	// 故意制造节点分裂:共享前缀 /api/v1/user 与 /api/v1/users
-	s.RawHandle(http.MethodGet, "/api/v1/users", h)
-	s.RawHandle(http.MethodGet, "/api/v1/user", h)
-	s.RawHandle(http.MethodGet, "/api/v2/{id}", h)
-	s.RawHandle(http.MethodGet, "/api", h)
+	if err := s.RawHandle(http.MethodGet, "/api/v1/users", h); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RawHandle(http.MethodGet, "/api/v1/user", h); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RawHandle(http.MethodGet, "/api/v2/{id}", h); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RawHandle(http.MethodGet, "/api", h); err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct{ path, want string }{
 		{"/api/v1/users", "/api/v1/users"},

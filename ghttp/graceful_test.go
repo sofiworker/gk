@@ -21,11 +21,13 @@ func basicAuthHeader(user, pass string) string {
 func TestBasicAuth(t *testing.T) {
 	s := New()
 	s.Use(BasicAuth("My Realm", map[string]string{"alice": "secret", "bob": "pw"}))
-	s.RawHandle(http.MethodGet, "/private", func(ctx context.Context, req *Request, resp *Response) error {
+	if err := s.RawHandle(http.MethodGet, "/private", func(ctx context.Context, req *Request, resp *Response) error {
 		resp.Header().Set("X-User", BasicAuthUser(ctx))
 		resp.WriteHeader(http.StatusOK)
 		return nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
 		name       string
@@ -68,10 +70,12 @@ func TestBasicAuth(t *testing.T) {
 func TestBasicAuthSchemeCaseInsensitive(t *testing.T) {
 	s := New()
 	s.Use(BasicAuth("R", map[string]string{"u": "p"}))
-	s.RawHandle(http.MethodGet, "/x", func(_ context.Context, _ *Request, resp *Response) error {
+	if err := s.RawHandle(http.MethodGet, "/x", func(_ context.Context, _ *Request, resp *Response) error {
 		resp.WriteHeader(200)
 		return nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	r := httptest.NewRequest(http.MethodGet, "/x", nil)
 	// scheme 名大小写不敏感（RFC 7617）
 	r.Header.Set("Authorization", "basic "+base64.StdEncoding.EncodeToString([]byte("u:p")))
@@ -85,10 +89,12 @@ func TestBasicAuthSchemeCaseInsensitive(t *testing.T) {
 func TestBasicAuthEmptyRealmDefault(t *testing.T) {
 	s := New()
 	s.Use(BasicAuth("", map[string]string{"u": "p"}))
-	s.RawHandle(http.MethodGet, "/x", func(_ context.Context, _ *Request, resp *Response) error {
+	if err := s.RawHandle(http.MethodGet, "/x", func(_ context.Context, _ *Request, resp *Response) error {
 		resp.WriteHeader(200)
 		return nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	r := httptest.NewRequest(http.MethodGet, "/x", nil)
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
@@ -137,11 +143,15 @@ func TestRunGracefulSignalDrains(t *testing.T) {
 	gate, checker := NewReadinessGate("test")
 	gate.Set(true, nil)
 	s := New()
-	Ready(s, "/readyz", time.Second, checker) // 挂就绪探针，便于验证摘流
-	s.RawHandle(http.MethodGet, "/ping", func(_ context.Context, _ *Request, resp *Response) error {
+	if err := Ready(s, "/readyz", time.Second, checker); err != nil { // 挂就绪探针，便于验证摘流
+		t.Fatal(err)
+	}
+	if err := s.RawHandle(http.MethodGet, "/ping", func(_ context.Context, _ *Request, resp *Response) error {
 		resp.WriteHeader(200)
 		return nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	done := make(chan error, 1)
 	go func() {

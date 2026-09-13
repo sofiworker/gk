@@ -216,7 +216,7 @@ func appendSSEField(dst []byte, field, value string) []byte {
 // per-message error channel, so silently dropping the illegal bytes stays usable and
 // preserves the field's meaning.
 func stripSSELineBreaks(s string) string {
-	if strings.IndexAny(s, "\r\n") < 0 {
+	if !strings.ContainsAny(s, "\r\n") {
 		return s
 	}
 	var b strings.Builder

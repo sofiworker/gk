@@ -225,7 +225,7 @@ func TestResponseReadFrom_Implicit200(t *testing.T) {
 	// Write's semantics.
 	rec := newReadFromRecorder()
 	resp := &Response{ResponseWriter: rec}
-	io.Copy(resp, io.LimitReader(strings.NewReader("abc"), 3))
+	_, _ = io.Copy(resp, io.LimitReader(strings.NewReader("abc"), 3))
 	if resp.status != http.StatusOK {
 		t.Fatalf("implicit status = %d, want 200", resp.status)
 	}
@@ -358,8 +358,17 @@ func TestEnsureVary_IdempotentAcrossCaseAndComma(t *testing.T) {
 	// textproto canonicalization.
 	h2 := http.Header{"vary": {"Accept-Encoding"}}
 	ensureVary(h2, "accept-encoding")
-	if got := h2["vary"]; len(got) != 1 {
-		t.Fatalf("case-variant key: got %v, want single entry", got)
+	// 键刻意用非规范大小写,因此不能按规范键索引(那会查不到),只能遍历映射取回条目数。
+	// The key is deliberately non-canonical, so it cannot be read through the
+	// canonical key (that lookup would miss); walk the map instead.
+	var entries int
+	for k, vs := range h2 {
+		if strings.EqualFold(k, "vary") {
+			entries = len(vs)
+		}
+	}
+	if entries != 1 {
+		t.Fatalf("case-variant key: got %v, want single entry", h2)
 	}
 }
 
