@@ -3,6 +3,10 @@
 日期：2026-09-13
 状态：全新设计，待实现。
 
+后续修订：Agent 与环境的关系以 [Sandbox 设计第 13 节](2026-09-17-gai-sandbox-design.md#13-与现有-gai-定义的关系) 为准。原 Workspace、Scope、Sandbox 三项并列绑定已按该设计收敛：Agent 保留行为定义，Session 关联环境，Turn 记录实际环境及授权版本，工作目录作为执行配置。
+
+模型上下文构建、Session 交互与主动压缩的后续提案见 [Context 设计草案](2026-09-18-gai-context-design.md)。该草案尚未实现，跨轮次压缩记录与本文件的 Turn.Summary 分开。
+
 实现方式：gai 按本设计整体重写，不做旧实现迁移，不承诺旧 API 或旧存储格式兼容。
 
 ## 1. 核心结构
@@ -29,14 +33,12 @@ Metadata 表达会话或轮次的描述与配置信息；模型调用和工具�
 
 Session 是用户与 Chat、Agent 或 Workflow 持续交互的一段会话，包含多个 Turn。Session 不是一次模型调用，也不是带连接和 goroutine 的执行器。
 
-Session.Metadata 包含会话相关信息，例如标题、选用的 Agent、模型选择、Workspace、Scope、Sandbox 的绑定及业务扩展属性。这些信息统一归入 Metadata。
+Session.Metadata 包含会话相关信息，例如标题、选用的 Agent、模型选择、Environment 环境绑定及业务扩展属性。这些信息统一归入 Metadata。
 
 Metadata 应使用有含义的字段表达 SDK 必须理解的信息，并允许业务扩展；不是把所有运行事实都放进任意 map。
 
 - 模型选择描述后续执行所使用的选择意图，不代表全部历史使用的模型。
-- Workspace 指明工作资源及执行环境的绑定。
-- Scope 指明可访问资源和能力的范围。
-- Sandbox 指明执行隔离要求。
+- Environment 保存环境实例 ID、文件版本、策略版本及工作目录；实际资源访问由 Sandbox 检查。
 - 这些绑定不能由模型消息自行授权或扩大。
 
 Session 不直接保存 Message。会话消息历史通过 Turns 中的 Messages 按顺序读取，不维护另一份 Session.Messages。
@@ -162,17 +164,13 @@ Workflow 节点属于本轮执行过程，不为了每个节点新建用户 Turn
 
 ## 12. Agent 核心定义
 
-Agent 是可复用的声明式配置，描述工作环境、访问范围、提示词和可用工具。配置本身不执行 Turn。Chat 使用不配置工具的 Agent；不增加独立 Chat 类型。
+Agent 是可复用的声明式配置，描述提示词和可用工具。配置本身不执行 Turn。Chat 使用不配置工具的 Agent；不增加独立 Chat 类型。
 
 ```text
 Agent
   ├── ID / Version / Name
-  ├── Workspace：工作资源环境引用
-  ├── Scope：资源和能力范围
-  ├── Sandbox：执行隔离策略引用
   ├── Prompt：系统指令和有序来源
-  ├── Model：通用模型选择
-  └── Tools：工具引用列表
+  └── Tools：可复用工具实现列表
 ```
 
 ### 12.1 字段与边界
@@ -181,22 +179,16 @@ Agent
 | --- | --- | --- |
 | ID、Version | 供会话引用、供本轮记录的 Agent 身份和版本 | 注册及执行前必须确定 |
 | Name | 展示名称 | 可以不设置 |
-| Workspace | 工作环境的 ID 和版本，不是进程 cwd | 未绑定工作环境，不隐式使用宿主目录 |
-| Scope | 资源范围、能力标识、是否允许委派 | 不授予资源访问、工具执行或委派能力 |
-| Sandbox | 执行隔离策略的 ID 和版本 | 未指定，不表示允许无隔离执行 |
 | Prompt | 静态系统指令及按序解析的来源 | 不额外注入 Agent 指令 |
-| Model | 通用模型选择标识 | 由本轮显式选择或会话选择补足；最终缺失时拒绝模型调用 |
-| Tools | 已注册工具的 ID 和版本引用 | 普通 Chat，不执行模型提出的工具请求 |
+| Tools | 可复用的 Tool 实现 | 普通 Chat，不执行模型提出的工具请求 |
 
-Agent 全部字段都是配置数据，不直接持有 Tool 实现或模型 client。现有 Tool 接口表示工具实现，两者通过 ToolRef 关联；具体解析和执行在后续设计中定义。
+Agent 持有 Tool 实现，不持有模型 client 或每次执行的环境。gai/tool.New 直接构建 Set，固定工具描述与版本并按模型可见名称分发，校验及授权通过后才执行。Agent 不保证直接序列化。
 
-### 12.2 Scope
+### 12.2 环境与授权
 
-Scope.Resources 使用 Kind、ID、Mode 表达精确资源范围；Mode 为 read、write 或 read_write。资源写权限不等于执行权限。
+Agent 不持有环境实例或环境选择。工作目录是执行配置，资源范围由 Sandbox 的有效绑定和能力确定，权限规则与资源或能力关联。委派策略由 Runtime 管理，删除 Scope 数据结构不意味着允许任意委派。
 
-Scope.Capabilities 使用明确的能力标识，例如应用注册的某个工具 ID。工具必须同时出现在 Agent.Tools 且被有效范围允许，才具有被执行的资格。空列表不代表允许全部，当前不定义通配符、路径匹配或复杂策略语言。
-
-Scope.AllowDelegation 表示允许请求委派；子 Agent 仍不得突破父执行的有效资源和能力范围。Scope 是约束声明，实际授权要结合可信调用身份及会话限制。
+Tool.Execute 显式接收 ToolContext，由 Runtime 按调用注入文件、网络及资源申请接口。工具引用只是行为声明，不直接授予资源访问权限。进程内的自定义 Go 工具仍属于可信宿主代码。
 
 ### 12.3 Prompt
 
@@ -208,16 +200,16 @@ Slot 表达希望注入 system 或 context 的位置。system 来源必须由可
 
 ### 12.4 与 Session 和 Turn 的关系
 
-Session.Metadata.Agent 引用 Agent 的 ID 和 Version，不复制 Agent 实例。Session.Metadata 中的 Workspace、Scope、Sandbox 表达会话绑定；Turn.Metadata 记录本轮实际采用的绑定。
+Session.Metadata.Agent 引用 Agent 的 ID 和 Version，不复制 Agent 实例。Session.Metadata.Environment 表达环境关联；Turn.Metadata.Environment 记录本轮实际采用的环境及版本。
 
-资源绑定不能靠一个字段覆盖规则绕过边界：会话若选择不同 Workspace，必须经过可信授权；有效 Scope 必须同时满足 Agent 与会话限制；Sandbox 必须满足双方的隔离要求，无法兼容则拒绝执行。未设置的会话绑定可采用 Agent 配置，不能解释为解除约束。
+环境绑定由可信 Runtime 解析，标识或版本本身不授予权限。默认一个 Session 对应独立 Sandbox；切换 Agent 可以复用原环境，但工具必须继续遵守当前资源授权。
 
-模型选择按本轮显式选择、会话选择、Agent.Model 的顺序确定。模型选择不是权限判断，实际调用模型仍在每次 ModelCall 中记录。
+Agent 不持有模型选择或模型客户端。模型选择按本轮显式选择、会话选择的顺序确定，两者均未指定时拒绝模型调用；本轮确定的选择记录在 Turn.Metadata.Model。运行时负责解析模型选择并持有模型客户端。模型选择不是权限判断，实际调用模型仍在每次 ModelCall 中记录。
 
 开始 Turn 后，不因外部修改 Agent 配置而静默改变当前执行。对外发布的 Agent 版本应对应稳定定义，运行中的绑定在后续执行实现中固定。
 
 ### 12.5 本阶段交付范围
 
-本阶段交付 Agent、Prompt、Scope、WorkspaceRef、SandboxRef、ToolRef 的数据定义和关系说明。ModelRequest、ModelResponse、模型流协议、运行时、存储和工具循环不属于本节定义。
+本阶段交付 Agent、Prompt、EnvironmentBinding、ToolContext、Tool 的数据定义和关系说明。ModelRequest、ModelResponse、模型流协议、运行时、存储和工具循环不属于本节定义。
 
-类型检查只能验证字段类型。权限、配置解析、版本稳定性和执行边界必须在实现相应行为时再提供测试，不能宣称这些结构已经执行了策略。
+core 类型本身只表达契约。gai/tool 已实现工具集构建、描述固定、参数检查、授权入口及执行分发，并提供函数适配和 Sandbox 注入测试；gai/runtime 已实现非流式 Session/Turn 执行、默认独立内存环境、调用事实记录及取消；gai/session/memory 提供 CAS、操作去重和提交日志。磁盘持久化、审批等待恢复、进程重启恢复与动态工具发现仍未实现。

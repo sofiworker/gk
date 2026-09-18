@@ -14,7 +14,16 @@ import (
 type Tool interface {
 	Definition() ToolDefinition
 	Validate(context.Context, json.RawMessage) error
-	Execute(context.Context, ToolCall) (ToolOutput, error)
+	Execute(context.Context, ToolContext, ToolCall) (ToolOutput, error)
+}
+
+// ToolContext 由可信运行时按调用构造；能力可以为空，不包含环境管理权限。
+// ToolContext is constructed per call by the trusted runtime; capabilities may be nil and exclude environment administration.
+type ToolContext struct {
+	Call      Call
+	Files     Files
+	Network   Network
+	Resources Requester
 }
 
 // ToolDefinition 是交给模型的描述，Name 在同一 Agent 内唯一。
@@ -50,15 +59,14 @@ type ToolExecution struct {
 	EndedAt         *int64 // Unix 毫秒，nil 表示未设置；Unix milliseconds, nil means unset.
 }
 
-// Approval 绑定工具、参数及资源摘要；决定不是扩大 Scope 的授权。
-// Approval binds tool, argument, and resource digests; a decision does not authorize expanding scope.
+// Approval 绑定工具、参数及资源摘要；决定不扩大环境授权。
+// Approval binds tool, argument, and resource digests without expanding environment authorization.
 type Approval struct {
 	ID              string
 	Tool            Binding
 	ArgumentsDigest string
 	ResourcesDigest string
-	Scope           Binding
-	Sandbox         Binding
+	Environment     EnvironmentBinding
 	RequestedAt     int64  // Unix 毫秒；Unix milliseconds.
 	ExpiresAt       *int64 // Unix 毫秒，nil 表示未设置；Unix milliseconds, nil means unset.
 	Decision        ApprovalDecision

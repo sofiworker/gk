@@ -20,14 +20,12 @@ type Session struct {
 // SessionMetadata 保存会话信息和后续执行的选择，不代表历史执行事实。
 // SessionMetadata holds conversation information and future selections, not historical execution facts.
 type SessionMetadata struct {
-	Title     string
-	Agent     Binding
-	Model     ModelSelection
-	Workspace Binding
-	Scope     Binding
-	Sandbox   Binding
-	Parent    *TurnRef
-	Extra     map[string]json.RawMessage
+	Title       string
+	Agent       Binding
+	Model       ModelSelection
+	Environment EnvironmentBinding
+	Parent      *TurnRef
+	Extra       map[string]json.RawMessage
 }
 
 // Binding 只引用配置或资源版本，不携带凭据或授予访问权限。

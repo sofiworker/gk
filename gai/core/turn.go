@@ -5,17 +5,19 @@ import "encoding/json"
 // Turn 归属于外层 Session；Messages 按追加顺序保存完整消息。
 // Turn belongs to its enclosing Session; Messages retain complete messages in append order.
 type Turn struct {
-	ID         string
-	Kind       TurnKind
-	Metadata   TurnMetadata
-	Messages   []Message
-	ModelCalls []ModelCall
-	ToolCalls  []ToolExecution
-	Summary    *Summary // nil 表示尚无摘要；nil means no summary is available.
-	Status     TurnStatus
-	Error      *Failure
-	StartedAt  int64  // Unix 毫秒；Unix milliseconds.
-	EndedAt    *int64 // Unix 毫秒，nil 表示未设置；Unix milliseconds, nil means unset.
+	ID          string
+	Kind        TurnKind
+	Metadata    TurnMetadata
+	Messages    []Message
+	ModelCalls  []ModelCall
+	ToolCalls   []ToolExecution
+	Contexts    []ContextSnapshot
+	Compactions []CompactionRecord
+	Summary     *Summary // nil 表示尚无摘要；nil means no summary is available.
+	Status      TurnStatus
+	Error       *Failure
+	StartedAt   int64  // Unix 毫秒；Unix milliseconds.
+	EndedAt     *int64 // Unix 毫秒，nil 表示未设置；Unix milliseconds, nil means unset.
 }
 
 type TurnKind string
@@ -40,9 +42,7 @@ const (
 type TurnMetadata struct {
 	Agent          Binding
 	Model          ModelSelection
-	Workspace      Binding
-	Scope          Binding
-	Sandbox        Binding
+	Environment    EnvironmentBinding
 	RetryOf        *TurnRef
 	RetryMessageID string
 	Extra          map[string]json.RawMessage

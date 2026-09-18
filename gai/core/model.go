@@ -11,19 +11,33 @@ type ModelSelection struct {
 // 输出消息通过 ID 关联，避免在调用与对话历史中各保存一份正文。
 // Output messages are referenced by ID to avoid duplicating bodies in calls and conversation history.
 type ModelCall struct {
-	ID               string
-	RetryOf          string
-	RequestedModel   ModelSelection
-	ActualModel      Binding
-	RequestID        string
-	OutputMessageIDs []string
-	Usage            Usage
-	Status           CallStatus
-	Error            *Failure
-	StartedAt        int64  // Unix 毫秒；Unix milliseconds.
-	FirstContentAt   *int64 // Unix 毫秒，nil 表示未设置；Unix milliseconds, nil means unset.
-	EndedAt          *int64 // Unix 毫秒，nil 表示未设置；Unix milliseconds, nil means unset.
+	ContextSnapshotID string
+	ID                string
+	RetryOf           string
+	RequestedModel    ModelSelection
+	ActualModel       Binding
+	RequestID         string
+	OutputMessageIDs  []string
+	Usage             Usage
+	FinishReason      FinishReason
+	Status            CallStatus
+	Error             *Failure
+	StartedAt         int64  // Unix 毫秒；Unix milliseconds.
+	FirstContentAt    *int64 // Unix 毫秒，nil 表示未设置；Unix milliseconds, nil means unset.
+	EndedAt           *int64 // Unix 毫秒，nil 表示未设置；Unix milliseconds, nil means unset.
 }
+
+// FinishReason 表达归一化后的生成结束原因，不保存厂商原始枚举。
+// FinishReason expresses normalized generation completion without vendor-specific enums.
+type FinishReason string
+
+const (
+	FinishStop     FinishReason = "stop"
+	FinishTools    FinishReason = "tool_calls"
+	FinishLength   FinishReason = "length"
+	FinishFiltered FinishReason = "filtered"
+	FinishUnknown  FinishReason = "unknown"
+)
 
 type CallStatus string
 
