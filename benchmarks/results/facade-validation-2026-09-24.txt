@@ -1,0 +1,341 @@
+=== RUN   TestFacadeMatrixContracts
+=== RUN   TestFacadeMatrixContracts/Params_Short/v1
+=== RUN   TestFacadeMatrixContracts/Params_Short/v2
+=== RUN   TestFacadeMatrixContracts/Params_Short/DecodeWith
+=== RUN   TestFacadeMatrixContracts/Params_Short/Gin
+=== RUN   TestFacadeMatrixContracts/Params_Short/Echo
+=== RUN   TestFacadeMatrixContracts/Params_Short/ServeMux
+=== RUN   TestFacadeMatrixContracts/Params_BothLong_1K/v1
+=== RUN   TestFacadeMatrixContracts/Params_BothLong_1K/v2
+=== RUN   TestFacadeMatrixContracts/Params_BothLong_1K/DecodeWith
+=== RUN   TestFacadeMatrixContracts/Params_BothLong_1K/Gin
+=== RUN   TestFacadeMatrixContracts/Params_BothLong_1K/Echo
+=== RUN   TestFacadeMatrixContracts/Params_BothLong_1K/ServeMux
+=== RUN   TestFacadeMatrixContracts/Params_BothLong_4K/v1
+=== RUN   TestFacadeMatrixContracts/Params_BothLong_4K/v2
+=== RUN   TestFacadeMatrixContracts/Params_BothLong_4K/DecodeWith
+=== RUN   TestFacadeMatrixContracts/Params_BothLong_4K/Gin
+=== RUN   TestFacadeMatrixContracts/Params_BothLong_4K/Echo
+=== RUN   TestFacadeMatrixContracts/Params_BothLong_4K/ServeMux
+=== RUN   TestFacadeMatrixContracts/Params_PathLong/v1
+=== RUN   TestFacadeMatrixContracts/Params_PathLong/v2
+=== RUN   TestFacadeMatrixContracts/Params_PathLong/DecodeWith
+=== RUN   TestFacadeMatrixContracts/Params_PathLong/Gin
+=== RUN   TestFacadeMatrixContracts/Params_PathLong/Echo
+=== RUN   TestFacadeMatrixContracts/Params_PathLong/ServeMux
+=== RUN   TestFacadeMatrixContracts/Params_QueryLong/v1
+=== RUN   TestFacadeMatrixContracts/Params_QueryLong/v2
+=== RUN   TestFacadeMatrixContracts/Params_QueryLong/DecodeWith
+=== RUN   TestFacadeMatrixContracts/Params_QueryLong/Gin
+=== RUN   TestFacadeMatrixContracts/Params_QueryLong/Echo
+=== RUN   TestFacadeMatrixContracts/Params_QueryLong/ServeMux
+=== RUN   TestFacadeMatrixContracts/Params_24Keys/v1
+=== RUN   TestFacadeMatrixContracts/Params_24Keys/v2
+=== RUN   TestFacadeMatrixContracts/Params_24Keys/DecodeWith
+=== RUN   TestFacadeMatrixContracts/Params_24Keys/Gin
+=== RUN   TestFacadeMatrixContracts/Params_24Keys/Echo
+=== RUN   TestFacadeMatrixContracts/Params_24Keys/ServeMux
+=== RUN   TestFacadeMatrixContracts/Params_25Keys/v1
+=== RUN   TestFacadeMatrixContracts/Params_25Keys/v2
+=== RUN   TestFacadeMatrixContracts/Params_25Keys/DecodeWith
+=== RUN   TestFacadeMatrixContracts/Params_25Keys/Gin
+=== RUN   TestFacadeMatrixContracts/Params_25Keys/Echo
+=== RUN   TestFacadeMatrixContracts/Params_25Keys/ServeMux
+=== RUN   TestFacadeMatrixContracts/POST_JSON/v1
+=== RUN   TestFacadeMatrixContracts/POST_JSON/v2
+=== RUN   TestFacadeMatrixContracts/POST_JSON/DecodeWith
+=== RUN   TestFacadeMatrixContracts/POST_JSON/Gin
+=== RUN   TestFacadeMatrixContracts/POST_JSON/Echo
+=== RUN   TestFacadeMatrixContracts/POST_JSON/ServeMux
+=== RUN   TestFacadeMatrixContracts/POST_Form/v1
+=== RUN   TestFacadeMatrixContracts/POST_Form/v2
+=== RUN   TestFacadeMatrixContracts/POST_Form/DecodeWith
+=== RUN   TestFacadeMatrixContracts/POST_Form/Gin
+=== RUN   TestFacadeMatrixContracts/POST_Form/Echo
+=== RUN   TestFacadeMatrixContracts/POST_Form/ServeMux
+=== RUN   TestFacadeMatrixContracts/PUT_JSON/v1
+=== RUN   TestFacadeMatrixContracts/PUT_JSON/v2
+=== RUN   TestFacadeMatrixContracts/PUT_JSON/DecodeWith
+=== RUN   TestFacadeMatrixContracts/PUT_JSON/Gin
+=== RUN   TestFacadeMatrixContracts/PUT_JSON/Echo
+=== RUN   TestFacadeMatrixContracts/PUT_JSON/ServeMux
+=== RUN   TestFacadeMatrixContracts/PUT_Form/v1
+=== RUN   TestFacadeMatrixContracts/PUT_Form/v2
+=== RUN   TestFacadeMatrixContracts/PUT_Form/DecodeWith
+=== RUN   TestFacadeMatrixContracts/PUT_Form/Gin
+=== RUN   TestFacadeMatrixContracts/PUT_Form/Echo
+=== RUN   TestFacadeMatrixContracts/PUT_Form/ServeMux
+=== RUN   TestFacadeMatrixContracts/PATCH_JSON/v1
+=== RUN   TestFacadeMatrixContracts/PATCH_JSON/v2
+=== RUN   TestFacadeMatrixContracts/PATCH_JSON/DecodeWith
+=== RUN   TestFacadeMatrixContracts/PATCH_JSON/Gin
+=== RUN   TestFacadeMatrixContracts/PATCH_JSON/Echo
+=== RUN   TestFacadeMatrixContracts/PATCH_JSON/ServeMux
+=== RUN   TestFacadeMatrixContracts/PATCH_Form/v1
+=== RUN   TestFacadeMatrixContracts/PATCH_Form/v2
+=== RUN   TestFacadeMatrixContracts/PATCH_Form/DecodeWith
+=== RUN   TestFacadeMatrixContracts/PATCH_Form/Gin
+=== RUN   TestFacadeMatrixContracts/PATCH_Form/Echo
+=== RUN   TestFacadeMatrixContracts/PATCH_Form/ServeMux
+=== RUN   TestFacadeMatrixContracts/DELETE_JSON/v1
+=== RUN   TestFacadeMatrixContracts/DELETE_JSON/v2
+=== RUN   TestFacadeMatrixContracts/DELETE_JSON/DecodeWith
+=== RUN   TestFacadeMatrixContracts/DELETE_JSON/Gin
+=== RUN   TestFacadeMatrixContracts/DELETE_JSON/Echo
+=== RUN   TestFacadeMatrixContracts/DELETE_JSON/ServeMux
+=== RUN   TestFacadeMatrixContracts/DELETE_Form/v1
+=== RUN   TestFacadeMatrixContracts/DELETE_Form/v2
+=== RUN   TestFacadeMatrixContracts/DELETE_Form/DecodeWith
+=== RUN   TestFacadeMatrixContracts/DELETE_Form/Gin
+=== RUN   TestFacadeMatrixContracts/DELETE_Form/Echo
+=== RUN   TestFacadeMatrixContracts/DELETE_Form/ServeMux
+=== RUN   TestFacadeMatrixContracts/POST_JSON_64KiB/v1
+=== RUN   TestFacadeMatrixContracts/POST_JSON_64KiB/v2
+=== RUN   TestFacadeMatrixContracts/POST_JSON_64KiB/DecodeWith
+=== RUN   TestFacadeMatrixContracts/POST_JSON_64KiB/Gin
+=== RUN   TestFacadeMatrixContracts/POST_JSON_64KiB/Echo
+=== RUN   TestFacadeMatrixContracts/POST_JSON_64KiB/ServeMux
+=== RUN   TestFacadeMatrixContracts/POST_JSON_1024KiB/v1
+=== RUN   TestFacadeMatrixContracts/POST_JSON_1024KiB/v2
+=== RUN   TestFacadeMatrixContracts/POST_JSON_1024KiB/DecodeWith
+=== RUN   TestFacadeMatrixContracts/POST_JSON_1024KiB/Gin
+=== RUN   TestFacadeMatrixContracts/POST_JSON_1024KiB/Echo
+=== RUN   TestFacadeMatrixContracts/POST_JSON_1024KiB/ServeMux
+=== RUN   TestFacadeMatrixContracts/POST_JSON_1024KiB_Echo/v1
+=== RUN   TestFacadeMatrixContracts/POST_JSON_1024KiB_Echo/v2
+=== RUN   TestFacadeMatrixContracts/POST_JSON_1024KiB_Echo/DecodeWith
+=== RUN   TestFacadeMatrixContracts/POST_JSON_1024KiB_Echo/Gin
+=== RUN   TestFacadeMatrixContracts/POST_JSON_1024KiB_Echo/Echo
+=== RUN   TestFacadeMatrixContracts/POST_JSON_1024KiB_Echo/ServeMux
+=== RUN   TestFacadeMatrixContracts/POST_File_32KiB/v1
+=== RUN   TestFacadeMatrixContracts/POST_File_32KiB/v2
+=== RUN   TestFacadeMatrixContracts/POST_File_32KiB/DecodeWith
+=== RUN   TestFacadeMatrixContracts/POST_File_32KiB/Gin
+=== RUN   TestFacadeMatrixContracts/POST_File_32KiB/Echo
+=== RUN   TestFacadeMatrixContracts/POST_File_32KiB/ServeMux
+=== RUN   TestFacadeMatrixContracts/POST_File_1024KiB/v1
+=== RUN   TestFacadeMatrixContracts/POST_File_1024KiB/v2
+=== RUN   TestFacadeMatrixContracts/POST_File_1024KiB/DecodeWith
+=== RUN   TestFacadeMatrixContracts/POST_File_1024KiB/Gin
+=== RUN   TestFacadeMatrixContracts/POST_File_1024KiB/Echo
+=== RUN   TestFacadeMatrixContracts/POST_File_1024KiB/ServeMux
+=== RUN   TestFacadeMatrixContracts/POST_File_40960KiB/v1
+=== RUN   TestFacadeMatrixContracts/POST_File_40960KiB/v2
+=== RUN   TestFacadeMatrixContracts/POST_File_40960KiB/DecodeWith
+=== RUN   TestFacadeMatrixContracts/POST_File_40960KiB/Gin
+=== RUN   TestFacadeMatrixContracts/POST_File_40960KiB/Echo
+=== RUN   TestFacadeMatrixContracts/POST_File_40960KiB/ServeMux
+--- PASS: TestFacadeMatrixContracts (0.97s)
+    --- PASS: TestFacadeMatrixContracts/Params_Short/v1 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_Short/v2 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_Short/DecodeWith (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_Short/Gin (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_Short/Echo (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_Short/ServeMux (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_BothLong_1K/v1 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_BothLong_1K/v2 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_BothLong_1K/DecodeWith (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_BothLong_1K/Gin (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_BothLong_1K/Echo (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_BothLong_1K/ServeMux (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_BothLong_4K/v1 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_BothLong_4K/v2 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_BothLong_4K/DecodeWith (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_BothLong_4K/Gin (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_BothLong_4K/Echo (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_BothLong_4K/ServeMux (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_PathLong/v1 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_PathLong/v2 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_PathLong/DecodeWith (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_PathLong/Gin (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_PathLong/Echo (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_PathLong/ServeMux (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_QueryLong/v1 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_QueryLong/v2 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_QueryLong/DecodeWith (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_QueryLong/Gin (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_QueryLong/Echo (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_QueryLong/ServeMux (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_24Keys/v1 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_24Keys/v2 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_24Keys/DecodeWith (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_24Keys/Gin (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_24Keys/Echo (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_24Keys/ServeMux (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_25Keys/v1 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_25Keys/v2 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_25Keys/DecodeWith (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_25Keys/Gin (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_25Keys/Echo (0.00s)
+    --- PASS: TestFacadeMatrixContracts/Params_25Keys/ServeMux (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON/v1 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON/v2 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON/DecodeWith (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON/Gin (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON/Echo (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON/ServeMux (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_Form/v1 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_Form/v2 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_Form/DecodeWith (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_Form/Gin (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_Form/Echo (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_Form/ServeMux (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PUT_JSON/v1 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PUT_JSON/v2 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PUT_JSON/DecodeWith (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PUT_JSON/Gin (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PUT_JSON/Echo (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PUT_JSON/ServeMux (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PUT_Form/v1 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PUT_Form/v2 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PUT_Form/DecodeWith (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PUT_Form/Gin (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PUT_Form/Echo (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PUT_Form/ServeMux (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PATCH_JSON/v1 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PATCH_JSON/v2 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PATCH_JSON/DecodeWith (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PATCH_JSON/Gin (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PATCH_JSON/Echo (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PATCH_JSON/ServeMux (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PATCH_Form/v1 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PATCH_Form/v2 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PATCH_Form/DecodeWith (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PATCH_Form/Gin (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PATCH_Form/Echo (0.00s)
+    --- PASS: TestFacadeMatrixContracts/PATCH_Form/ServeMux (0.00s)
+    --- PASS: TestFacadeMatrixContracts/DELETE_JSON/v1 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/DELETE_JSON/v2 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/DELETE_JSON/DecodeWith (0.00s)
+    --- PASS: TestFacadeMatrixContracts/DELETE_JSON/Gin (0.00s)
+    --- PASS: TestFacadeMatrixContracts/DELETE_JSON/Echo (0.00s)
+    --- PASS: TestFacadeMatrixContracts/DELETE_JSON/ServeMux (0.00s)
+    --- PASS: TestFacadeMatrixContracts/DELETE_Form/v1 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/DELETE_Form/v2 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/DELETE_Form/DecodeWith (0.00s)
+    --- PASS: TestFacadeMatrixContracts/DELETE_Form/Gin (0.00s)
+    --- PASS: TestFacadeMatrixContracts/DELETE_Form/Echo (0.00s)
+    --- PASS: TestFacadeMatrixContracts/DELETE_Form/ServeMux (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON_64KiB/v1 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON_64KiB/v2 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON_64KiB/DecodeWith (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON_64KiB/Gin (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON_64KiB/Echo (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON_64KiB/ServeMux (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON_1024KiB/v1 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON_1024KiB/v2 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON_1024KiB/DecodeWith (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON_1024KiB/Gin (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON_1024KiB/Echo (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON_1024KiB/ServeMux (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON_1024KiB_Echo/v1 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON_1024KiB_Echo/v2 (0.01s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON_1024KiB_Echo/DecodeWith (0.01s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON_1024KiB_Echo/Gin (0.01s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON_1024KiB_Echo/Echo (0.01s)
+    --- PASS: TestFacadeMatrixContracts/POST_JSON_1024KiB_Echo/ServeMux (0.01s)
+    --- PASS: TestFacadeMatrixContracts/POST_File_32KiB/v1 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_File_32KiB/v2 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_File_32KiB/DecodeWith (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_File_32KiB/Gin (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_File_32KiB/Echo (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_File_32KiB/ServeMux (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_File_1024KiB/v1 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_File_1024KiB/v2 (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_File_1024KiB/DecodeWith (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_File_1024KiB/Gin (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_File_1024KiB/Echo (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_File_1024KiB/ServeMux (0.00s)
+    --- PASS: TestFacadeMatrixContracts/POST_File_40960KiB/v1 (0.27s)
+    --- PASS: TestFacadeMatrixContracts/POST_File_40960KiB/v2 (0.09s)
+    --- PASS: TestFacadeMatrixContracts/POST_File_40960KiB/DecodeWith (0.07s)
+    --- PASS: TestFacadeMatrixContracts/POST_File_40960KiB/Gin (0.08s)
+    --- PASS: TestFacadeMatrixContracts/POST_File_40960KiB/Echo (0.08s)
+    --- PASS: TestFacadeMatrixContracts/POST_File_40960KiB/ServeMux (0.08s)
+=== RUN   TestFacadeMatrixQueryEdges
+=== RUN   TestFacadeMatrixQueryEdges/v1/57
+=== RUN   TestFacadeMatrixQueryEdges/v2/57
+=== RUN   TestFacadeMatrixQueryEdges/DecodeWith/57
+=== RUN   TestFacadeMatrixQueryEdges/Gin/57
+=== RUN   TestFacadeMatrixQueryEdges/Echo/57
+=== RUN   TestFacadeMatrixQueryEdges/ServeMux/57
+=== RUN   TestFacadeMatrixQueryEdges/v1/62
+=== RUN   TestFacadeMatrixQueryEdges/v2/62
+=== RUN   TestFacadeMatrixQueryEdges/DecodeWith/62
+=== RUN   TestFacadeMatrixQueryEdges/Gin/62
+=== RUN   TestFacadeMatrixQueryEdges/Echo/62
+=== RUN   TestFacadeMatrixQueryEdges/ServeMux/62
+=== RUN   TestFacadeMatrixQueryEdges/v1/55
+=== RUN   TestFacadeMatrixQueryEdges/v2/55
+=== RUN   TestFacadeMatrixQueryEdges/DecodeWith/55
+=== RUN   TestFacadeMatrixQueryEdges/Gin/55
+=== RUN   TestFacadeMatrixQueryEdges/Echo/55
+=== RUN   TestFacadeMatrixQueryEdges/ServeMux/55
+=== RUN   TestFacadeMatrixQueryEdges/v1/1443
+=== RUN   TestFacadeMatrixQueryEdges/v2/1443
+=== RUN   TestFacadeMatrixQueryEdges/DecodeWith/1443
+=== RUN   TestFacadeMatrixQueryEdges/Gin/1443
+=== RUN   TestFacadeMatrixQueryEdges/Echo/1443
+=== RUN   TestFacadeMatrixQueryEdges/ServeMux/1443
+=== RUN   TestFacadeMatrixQueryEdges/v1/invalidPage
+=== RUN   TestFacadeMatrixQueryEdges/v2/invalidPage
+=== RUN   TestFacadeMatrixQueryEdges/DecodeWith/invalidPage
+=== RUN   TestFacadeMatrixQueryEdges/Gin/invalidPage
+=== RUN   TestFacadeMatrixQueryEdges/Echo/invalidPage
+=== RUN   TestFacadeMatrixQueryEdges/ServeMux/invalidPage
+--- PASS: TestFacadeMatrixQueryEdges (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/v1/57 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/v2/57 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/DecodeWith/57 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/Gin/57 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/Echo/57 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/ServeMux/57 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/v1/62 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/v2/62 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/DecodeWith/62 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/Gin/62 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/Echo/62 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/ServeMux/62 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/v1/55 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/v2/55 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/DecodeWith/55 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/Gin/55 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/Echo/55 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/ServeMux/55 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/v1/1443 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/v2/1443 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/DecodeWith/1443 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/Gin/1443 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/Echo/1443 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/ServeMux/1443 (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/v1/invalidPage (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/v2/invalidPage (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/DecodeWith/invalidPage (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/Gin/invalidPage (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/Echo/invalidPage (0.00s)
+    --- PASS: TestFacadeMatrixQueryEdges/ServeMux/invalidPage (0.00s)
+=== RUN   TestFacadeMatrixSizes
+    facade_matrix_test.go:512: Params_Short path=74 query=149 body=0
+    facade_matrix_test.go:512: Params_BothLong_1K path=5154 query=23973 body=0
+    facade_matrix_test.go:512: Params_BothLong_4K path=20514 query=66981 body=0
+    facade_matrix_test.go:512: Params_PathLong path=20514 query=149 body=0
+    facade_matrix_test.go:512: Params_QueryLong path=74 query=66981 body=0
+    facade_matrix_test.go:512: Params_24Keys path=74 query=1499 body=0
+    facade_matrix_test.go:512: Params_25Keys path=74 query=1574 body=0
+    facade_matrix_test.go:512: POST_JSON path=10 query=0 body=88
+    facade_matrix_test.go:512: POST_Form path=10 query=0 body=56
+    facade_matrix_test.go:512: PUT_JSON path=10 query=0 body=88
+    facade_matrix_test.go:512: PUT_Form path=10 query=0 body=56
+    facade_matrix_test.go:512: PATCH_JSON path=10 query=0 body=88
+    facade_matrix_test.go:512: PATCH_Form path=10 query=0 body=56
+    facade_matrix_test.go:512: DELETE_JSON path=10 query=0 body=88
+    facade_matrix_test.go:512: DELETE_Form path=10 query=0 body=56
+    facade_matrix_test.go:512: POST_JSON_64KiB path=10 query=0 body=104161
+    facade_matrix_test.go:512: POST_JSON_1024KiB path=10 query=0 body=1087201
+    facade_matrix_test.go:512: POST_JSON_1024KiB_Echo path=10 query=0 body=1087201
+    facade_matrix_test.go:512: POST_File_32KiB path=10 query=0 body=33014
+    facade_matrix_test.go:512: POST_File_1024KiB path=10 query=0 body=1048822
+    facade_matrix_test.go:512: POST_File_40960KiB path=10 query=0 body=41943286
+--- PASS: TestFacadeMatrixSizes (0.03s)
+PASS
+ok  	command-line-arguments	1.034s

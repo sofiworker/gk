@@ -1,0 +1,383 @@
+goos: linux
+goarch: amd64
+cpu: AMD Ryzen 7 8845HS w/ Radeon 780M Graphics
+BenchmarkFacadeMatrix/Params_Short/v1-8      	   91569	      2733 ns/op	    1640 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/Params_Short/v1-8      	   86216	      2772 ns/op	    1640 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/Params_Short/v1-8      	   92619	      2766 ns/op	    1640 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/Params_Short/v2-8      	   71763	      3352 ns/op	    1752 B/op	      26 allocs/op
+BenchmarkFacadeMatrix/Params_Short/v2-8      	   74404	      3296 ns/op	    1752 B/op	      26 allocs/op
+BenchmarkFacadeMatrix/Params_Short/v2-8      	   75566	      3347 ns/op	    1752 B/op	      26 allocs/op
+BenchmarkFacadeMatrix/Params_Short/DecodeWith-8         	   88777	      2752 ns/op	    1392 B/op	      14 allocs/op
+BenchmarkFacadeMatrix/Params_Short/DecodeWith-8         	   89239	      2754 ns/op	    1392 B/op	      14 allocs/op
+BenchmarkFacadeMatrix/Params_Short/DecodeWith-8         	   86433	      2741 ns/op	    1392 B/op	      14 allocs/op
+BenchmarkFacadeMatrix/Params_Short/Gin-8                	  105279	      2350 ns/op	    1808 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/Params_Short/Gin-8                	  102104	      2347 ns/op	    1808 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/Params_Short/Gin-8                	  105504	      2361 ns/op	    1808 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/Params_Short/Echo-8               	  105476	      2425 ns/op	    1808 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/Params_Short/Echo-8               	   99649	      2428 ns/op	    1808 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/Params_Short/Echo-8               	  105108	      2434 ns/op	    1808 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/Params_Short/ServeMux-8           	   91351	      2773 ns/op	    2048 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/Params_Short/ServeMux-8           	   87115	      2780 ns/op	    2048 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/Params_Short/ServeMux-8           	   87859	      2786 ns/op	    2048 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_1K/v1-8           	    3052	     76934 ns/op	   45608 B/op	     167 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_1K/v1-8           	    3326	     77083 ns/op	   45625 B/op	     167 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_1K/v1-8           	    3182	     76751 ns/op	   45667 B/op	     167 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_1K/v2-8           	    3205	     78354 ns/op	   45733 B/op	     168 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_1K/v2-8           	    3334	     76586 ns/op	   45748 B/op	     168 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_1K/v2-8           	    3098	     77223 ns/op	   45654 B/op	     168 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_1K/DecodeWith-8   	    3000	     77386 ns/op	   45359 B/op	     160 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_1K/DecodeWith-8   	    3194	     76825 ns/op	   45398 B/op	     160 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_1K/DecodeWith-8   	    3210	     77469 ns/op	   45378 B/op	     160 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_1K/Gin-8          	    3876	     59715 ns/op	   45307 B/op	     159 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_1K/Gin-8          	    4054	     59154 ns/op	   45321 B/op	     159 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_1K/Gin-8          	    3871	     59629 ns/op	   45323 B/op	     159 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_1K/Echo-8         	    3667	     63134 ns/op	   45326 B/op	     159 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_1K/Echo-8         	    3742	     63566 ns/op	   45308 B/op	     159 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_1K/Echo-8         	    3931	     62786 ns/op	   45355 B/op	     159 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_1K/ServeMux-8     	    3266	     73262 ns/op	   45591 B/op	     163 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_1K/ServeMux-8     	    3322	     73536 ns/op	   45570 B/op	     163 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_1K/ServeMux-8     	    3376	     73307 ns/op	   45569 B/op	     163 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_4K/v1-8           	    1153	    217492 ns/op	  107751 B/op	     167 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_4K/v1-8           	    1152	    215262 ns/op	  107511 B/op	     167 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_4K/v1-8           	    1148	    216367 ns/op	  107272 B/op	     167 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_4K/v2-8           	    1140	    216527 ns/op	  107076 B/op	     168 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_4K/v2-8           	    1100	    219037 ns/op	  107076 B/op	     168 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_4K/v2-8           	    1094	    215727 ns/op	  107582 B/op	     168 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_4K/DecodeWith-8   	    1138	    214306 ns/op	  107023 B/op	     160 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_4K/DecodeWith-8   	    1117	    215614 ns/op	  107028 B/op	     160 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_4K/DecodeWith-8   	    1068	    218499 ns/op	  107299 B/op	     160 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_4K/Gin-8          	    1479	    161866 ns/op	  107091 B/op	     159 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_4K/Gin-8          	    1488	    161144 ns/op	  107275 B/op	     159 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_4K/Gin-8          	    1546	    161569 ns/op	  107254 B/op	     159 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_4K/Echo-8         	    1398	    178474 ns/op	  107113 B/op	     159 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_4K/Echo-8         	    1294	    180772 ns/op	  107360 B/op	     159 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_4K/Echo-8         	    1329	    180642 ns/op	  107134 B/op	     159 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_4K/ServeMux-8     	    1138	    214722 ns/op	  107197 B/op	     163 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_4K/ServeMux-8     	    1087	    215511 ns/op	  107209 B/op	     163 allocs/op
+BenchmarkFacadeMatrix/Params_BothLong_4K/ServeMux-8     	    1095	    214212 ns/op	  107460 B/op	     163 allocs/op
+BenchmarkFacadeMatrix/Params_PathLong/v1-8              	    6219	     40331 ns/op	   23137 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/Params_PathLong/v1-8              	    6337	     40221 ns/op	   23148 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/Params_PathLong/v1-8              	    5940	     40728 ns/op	   23138 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/Params_PathLong/v2-8              	    6170	     41294 ns/op	   23260 B/op	      26 allocs/op
+BenchmarkFacadeMatrix/Params_PathLong/v2-8              	    5887	     41479 ns/op	   23262 B/op	      26 allocs/op
+BenchmarkFacadeMatrix/Params_PathLong/v2-8              	    5631	     40713 ns/op	   23250 B/op	      26 allocs/op
+BenchmarkFacadeMatrix/Params_PathLong/DecodeWith-8      	    6343	     39985 ns/op	   22876 B/op	      14 allocs/op
+BenchmarkFacadeMatrix/Params_PathLong/DecodeWith-8      	    6254	     40143 ns/op	   22888 B/op	      14 allocs/op
+BenchmarkFacadeMatrix/Params_PathLong/DecodeWith-8      	    5676	     41007 ns/op	   22890 B/op	      14 allocs/op
+BenchmarkFacadeMatrix/Params_PathLong/Gin-8             	    8838	     27738 ns/op	   23297 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/Params_PathLong/Gin-8             	    8091	     28705 ns/op	   23308 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/Params_PathLong/Gin-8             	    8072	     28192 ns/op	   23308 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/Params_PathLong/Echo-8            	    6974	     32003 ns/op	   23301 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/Params_PathLong/Echo-8            	    7808	     32289 ns/op	   23299 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/Params_PathLong/Echo-8            	    7965	     32086 ns/op	   23317 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/Params_PathLong/ServeMux-8        	    3358	     67805 ns/op	   23541 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/Params_PathLong/ServeMux-8        	    3222	     67782 ns/op	   23542 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/Params_PathLong/ServeMux-8        	    3196	     67326 ns/op	   23543 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/Params_QueryLong/v1-8             	    1388	    182788 ns/op	   90843 B/op	     167 allocs/op
+BenchmarkFacadeMatrix/Params_QueryLong/v1-8             	    1321	    180992 ns/op	   90645 B/op	     167 allocs/op
+BenchmarkFacadeMatrix/Params_QueryLong/v1-8             	    1316	    180289 ns/op	   90958 B/op	     167 allocs/op
+BenchmarkFacadeMatrix/Params_QueryLong/v2-8             	    1390	    180673 ns/op	   90790 B/op	     168 allocs/op
+BenchmarkFacadeMatrix/Params_QueryLong/v2-8             	    1378	    181853 ns/op	   90989 B/op	     168 allocs/op
+BenchmarkFacadeMatrix/Params_QueryLong/v2-8             	    1276	    177880 ns/op	   90799 B/op	     168 allocs/op
+BenchmarkFacadeMatrix/Params_QueryLong/DecodeWith-8     	    1280	    178854 ns/op	   90502 B/op	     160 allocs/op
+BenchmarkFacadeMatrix/Params_QueryLong/DecodeWith-8     	    1366	    179724 ns/op	   90395 B/op	     160 allocs/op
+BenchmarkFacadeMatrix/Params_QueryLong/DecodeWith-8     	    1366	    178948 ns/op	   90596 B/op	     160 allocs/op
+BenchmarkFacadeMatrix/Params_QueryLong/Gin-8            	    1810	    138936 ns/op	   90407 B/op	     159 allocs/op
+BenchmarkFacadeMatrix/Params_QueryLong/Gin-8            	    1816	    138539 ns/op	   90558 B/op	     159 allocs/op
+BenchmarkFacadeMatrix/Params_QueryLong/Gin-8            	    1740	    138013 ns/op	   90568 B/op	     159 allocs/op
+BenchmarkFacadeMatrix/Params_QueryLong/Echo-8           	    1654	    153792 ns/op	   90415 B/op	     159 allocs/op
+BenchmarkFacadeMatrix/Params_QueryLong/Echo-8           	    1569	    152874 ns/op	   90594 B/op	     159 allocs/op
+BenchmarkFacadeMatrix/Params_QueryLong/Echo-8           	    1608	    154096 ns/op	   90502 B/op	     159 allocs/op
+BenchmarkFacadeMatrix/Params_QueryLong/ServeMux-8       	    1633	    151363 ns/op	   90822 B/op	     163 allocs/op
+BenchmarkFacadeMatrix/Params_QueryLong/ServeMux-8       	    1656	    154365 ns/op	   90818 B/op	     163 allocs/op
+BenchmarkFacadeMatrix/Params_QueryLong/ServeMux-8       	    1618	    150613 ns/op	   90655 B/op	     163 allocs/op
+BenchmarkFacadeMatrix/Params_24Keys/v1-8                	   67336	      3747 ns/op	    1640 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/Params_24Keys/v1-8                	   65506	      3702 ns/op	    1640 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/Params_24Keys/v1-8                	   66481	      3714 ns/op	    1640 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/Params_24Keys/v2-8                	   28807	      8284 ns/op	    1752 B/op	      26 allocs/op
+BenchmarkFacadeMatrix/Params_24Keys/v2-8                	   29224	      8401 ns/op	    1752 B/op	      26 allocs/op
+BenchmarkFacadeMatrix/Params_24Keys/v2-8                	   30187	      8297 ns/op	    1752 B/op	      26 allocs/op
+BenchmarkFacadeMatrix/Params_24Keys/DecodeWith-8        	   39183	      6210 ns/op	    1392 B/op	      14 allocs/op
+BenchmarkFacadeMatrix/Params_24Keys/DecodeWith-8        	   40574	      6148 ns/op	    1392 B/op	      14 allocs/op
+BenchmarkFacadeMatrix/Params_24Keys/DecodeWith-8        	   37947	      6275 ns/op	    1392 B/op	      14 allocs/op
+BenchmarkFacadeMatrix/Params_24Keys/Gin-8               	   40665	      5617 ns/op	    4280 B/op	      43 allocs/op
+BenchmarkFacadeMatrix/Params_24Keys/Gin-8               	   37290	      5556 ns/op	    4280 B/op	      43 allocs/op
+BenchmarkFacadeMatrix/Params_24Keys/Gin-8               	   39391	      5430 ns/op	    4280 B/op	      43 allocs/op
+BenchmarkFacadeMatrix/Params_24Keys/Echo-8              	   39217	      5695 ns/op	    4280 B/op	      43 allocs/op
+BenchmarkFacadeMatrix/Params_24Keys/Echo-8              	   39626	      5688 ns/op	    4280 B/op	      43 allocs/op
+BenchmarkFacadeMatrix/Params_24Keys/Echo-8              	   36716	      6110 ns/op	    4280 B/op	      43 allocs/op
+BenchmarkFacadeMatrix/Params_24Keys/ServeMux-8          	   33114	      6798 ns/op	    4520 B/op	      47 allocs/op
+BenchmarkFacadeMatrix/Params_24Keys/ServeMux-8          	   33390	      6632 ns/op	    4520 B/op	      47 allocs/op
+BenchmarkFacadeMatrix/Params_24Keys/ServeMux-8          	   31503	      6692 ns/op	    4520 B/op	      47 allocs/op
+BenchmarkFacadeMatrix/Params_25Keys/v1-8                	   30962	      6884 ns/op	    4608 B/op	      52 allocs/op
+BenchmarkFacadeMatrix/Params_25Keys/v1-8                	   31635	      6767 ns/op	    4608 B/op	      52 allocs/op
+BenchmarkFacadeMatrix/Params_25Keys/v1-8                	   31587	      6925 ns/op	    4608 B/op	      52 allocs/op
+BenchmarkFacadeMatrix/Params_25Keys/v2-8                	   32434	      7134 ns/op	    4656 B/op	      53 allocs/op
+BenchmarkFacadeMatrix/Params_25Keys/v2-8                	   31323	      7212 ns/op	    4656 B/op	      53 allocs/op
+BenchmarkFacadeMatrix/Params_25Keys/v2-8                	   32997	      7081 ns/op	    4656 B/op	      53 allocs/op
+BenchmarkFacadeMatrix/Params_25Keys/DecodeWith-8        	   33944	      6756 ns/op	    4360 B/op	      45 allocs/op
+BenchmarkFacadeMatrix/Params_25Keys/DecodeWith-8        	   34022	      6648 ns/op	    4360 B/op	      45 allocs/op
+BenchmarkFacadeMatrix/Params_25Keys/DecodeWith-8        	   33663	      6575 ns/op	    4360 B/op	      45 allocs/op
+BenchmarkFacadeMatrix/Params_25Keys/Gin-8               	   38544	      5596 ns/op	    4296 B/op	      44 allocs/op
+BenchmarkFacadeMatrix/Params_25Keys/Gin-8               	   39651	      5573 ns/op	    4296 B/op	      44 allocs/op
+BenchmarkFacadeMatrix/Params_25Keys/Gin-8               	   44233	      5572 ns/op	    4296 B/op	      44 allocs/op
+BenchmarkFacadeMatrix/Params_25Keys/Echo-8              	   38226	      5583 ns/op	    4296 B/op	      44 allocs/op
+BenchmarkFacadeMatrix/Params_25Keys/Echo-8              	   39074	      5619 ns/op	    4296 B/op	      44 allocs/op
+BenchmarkFacadeMatrix/Params_25Keys/Echo-8              	   38702	      5648 ns/op	    4296 B/op	      44 allocs/op
+BenchmarkFacadeMatrix/Params_25Keys/ServeMux-8          	   36961	      5987 ns/op	    4536 B/op	      48 allocs/op
+BenchmarkFacadeMatrix/Params_25Keys/ServeMux-8          	   35944	      5895 ns/op	    4536 B/op	      48 allocs/op
+BenchmarkFacadeMatrix/Params_25Keys/ServeMux-8          	   36255	      5961 ns/op	    4536 B/op	      48 allocs/op
+BenchmarkFacadeMatrix/POST_JSON/v1-8                    	   80674	      2831 ns/op	  31.08 MB/s	    1648 B/op	      22 allocs/op
+BenchmarkFacadeMatrix/POST_JSON/v1-8                    	   85324	      2868 ns/op	  30.69 MB/s	    1648 B/op	      22 allocs/op
+BenchmarkFacadeMatrix/POST_JSON/v1-8                    	   88884	      2897 ns/op	  30.37 MB/s	    1648 B/op	      22 allocs/op
+BenchmarkFacadeMatrix/POST_JSON/v2-8                    	   83060	      3056 ns/op	  28.79 MB/s	    1776 B/op	      25 allocs/op
+BenchmarkFacadeMatrix/POST_JSON/v2-8                    	   80194	      3088 ns/op	  28.50 MB/s	    1776 B/op	      25 allocs/op
+BenchmarkFacadeMatrix/POST_JSON/v2-8                    	   82086	      3025 ns/op	  29.09 MB/s	    1776 B/op	      25 allocs/op
+BenchmarkFacadeMatrix/POST_JSON/DecodeWith-8            	   84721	      2988 ns/op	  29.45 MB/s	    1728 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/POST_JSON/DecodeWith-8            	   88339	      2886 ns/op	  30.49 MB/s	    1728 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/POST_JSON/DecodeWith-8            	   83534	      2947 ns/op	  29.86 MB/s	    1728 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/POST_JSON/Gin-8                   	   89802	      2753 ns/op	  31.97 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/POST_JSON/Gin-8                   	   90250	      2792 ns/op	  31.52 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/POST_JSON/Gin-8                   	   89988	      2758 ns/op	  31.91 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/POST_JSON/Echo-8                  	   89630	      2796 ns/op	  31.47 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/POST_JSON/Echo-8                  	   91323	      2711 ns/op	  32.46 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/POST_JSON/Echo-8                  	   92619	      2813 ns/op	  31.29 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/POST_JSON/ServeMux-8              	   86952	      2810 ns/op	  31.31 MB/s	    1680 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/POST_JSON/ServeMux-8              	   87024	      2819 ns/op	  31.21 MB/s	    1680 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/POST_JSON/ServeMux-8              	   84243	      2781 ns/op	  31.64 MB/s	    1680 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/POST_Form/v1-8                    	  102436	      2541 ns/op	  22.04 MB/s	    2552 B/op	      29 allocs/op
+BenchmarkFacadeMatrix/POST_Form/v1-8                    	   99930	      2466 ns/op	  22.71 MB/s	    2552 B/op	      29 allocs/op
+BenchmarkFacadeMatrix/POST_Form/v1-8                    	  102346	      2492 ns/op	  22.48 MB/s	    2552 B/op	      29 allocs/op
+BenchmarkFacadeMatrix/POST_Form/v2-8                    	  104587	      2521 ns/op	  22.21 MB/s	    1800 B/op	      27 allocs/op
+BenchmarkFacadeMatrix/POST_Form/v2-8                    	  100018	      2473 ns/op	  22.65 MB/s	    1800 B/op	      27 allocs/op
+BenchmarkFacadeMatrix/POST_Form/v2-8                    	   94136	      2545 ns/op	  22.00 MB/s	    1800 B/op	      27 allocs/op
+BenchmarkFacadeMatrix/POST_Form/DecodeWith-8            	  130101	      1831 ns/op	  30.58 MB/s	    1672 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/POST_Form/DecodeWith-8            	  138914	      1926 ns/op	  29.08 MB/s	    1672 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/POST_Form/DecodeWith-8            	  132799	      1863 ns/op	  30.06 MB/s	    1672 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/POST_Form/Gin-8                   	  150415	      1696 ns/op	  33.03 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/POST_Form/Gin-8                   	  147404	      1712 ns/op	  32.71 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/POST_Form/Gin-8                   	  149324	      1718 ns/op	  32.60 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/POST_Form/Echo-8                  	  145018	      1671 ns/op	  33.52 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/POST_Form/Echo-8                  	  145989	      1729 ns/op	  32.39 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/POST_Form/Echo-8                  	  145808	      1684 ns/op	  33.26 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/POST_Form/ServeMux-8              	  138945	      1837 ns/op	  30.48 MB/s	    1624 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/POST_Form/ServeMux-8              	  139594	      1818 ns/op	  30.81 MB/s	    1624 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/POST_Form/ServeMux-8              	  145312	      1753 ns/op	  31.94 MB/s	    1624 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/PUT_JSON/v1-8                     	   85968	      2839 ns/op	  30.99 MB/s	    1648 B/op	      22 allocs/op
+BenchmarkFacadeMatrix/PUT_JSON/v1-8                     	   89744	      2816 ns/op	  31.25 MB/s	    1648 B/op	      22 allocs/op
+BenchmarkFacadeMatrix/PUT_JSON/v1-8                     	   78912	      2836 ns/op	  31.03 MB/s	    1648 B/op	      22 allocs/op
+BenchmarkFacadeMatrix/PUT_JSON/v2-8                     	   83702	      3127 ns/op	  28.14 MB/s	    1776 B/op	      25 allocs/op
+BenchmarkFacadeMatrix/PUT_JSON/v2-8                     	   83068	      3065 ns/op	  28.71 MB/s	    1776 B/op	      25 allocs/op
+BenchmarkFacadeMatrix/PUT_JSON/v2-8                     	   82868	      3021 ns/op	  29.13 MB/s	    1776 B/op	      25 allocs/op
+BenchmarkFacadeMatrix/PUT_JSON/DecodeWith-8             	   84544	      2971 ns/op	  29.62 MB/s	    1728 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/PUT_JSON/DecodeWith-8             	   88573	      2897 ns/op	  30.37 MB/s	    1728 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/PUT_JSON/DecodeWith-8             	   84163	      2968 ns/op	  29.65 MB/s	    1728 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/PUT_JSON/Gin-8                    	   93315	      2725 ns/op	  32.29 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/PUT_JSON/Gin-8                    	   87482	      2792 ns/op	  31.51 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/PUT_JSON/Gin-8                    	   89222	      2778 ns/op	  31.68 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/PUT_JSON/Echo-8                   	   91773	      2751 ns/op	  31.99 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/PUT_JSON/Echo-8                   	   89998	      2737 ns/op	  32.15 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/PUT_JSON/Echo-8                   	   94048	      2797 ns/op	  31.46 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/PUT_JSON/ServeMux-8               	   83425	      2853 ns/op	  30.85 MB/s	    1680 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/PUT_JSON/ServeMux-8               	   88132	      2900 ns/op	  30.34 MB/s	    1680 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/PUT_JSON/ServeMux-8               	   90362	      2803 ns/op	  31.39 MB/s	    1680 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/PUT_Form/v1-8                     	  100003	      2534 ns/op	  22.10 MB/s	    2552 B/op	      29 allocs/op
+BenchmarkFacadeMatrix/PUT_Form/v1-8                     	   97167	      2461 ns/op	  22.76 MB/s	    2552 B/op	      29 allocs/op
+BenchmarkFacadeMatrix/PUT_Form/v1-8                     	  101131	      2466 ns/op	  22.71 MB/s	    2552 B/op	      29 allocs/op
+BenchmarkFacadeMatrix/PUT_Form/v2-8                     	   98679	      2463 ns/op	  22.73 MB/s	    1800 B/op	      27 allocs/op
+BenchmarkFacadeMatrix/PUT_Form/v2-8                     	  103496	      2520 ns/op	  22.22 MB/s	    1800 B/op	      27 allocs/op
+BenchmarkFacadeMatrix/PUT_Form/v2-8                     	   95233	      2423 ns/op	  23.11 MB/s	    1800 B/op	      27 allocs/op
+BenchmarkFacadeMatrix/PUT_Form/DecodeWith-8             	  133357	      1848 ns/op	  30.30 MB/s	    1672 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/PUT_Form/DecodeWith-8             	  134725	      1868 ns/op	  29.98 MB/s	    1672 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/PUT_Form/DecodeWith-8             	  137364	      1858 ns/op	  30.15 MB/s	    1672 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/PUT_Form/Gin-8                    	  148329	      1693 ns/op	  33.08 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/PUT_Form/Gin-8                    	  132067	      1668 ns/op	  33.58 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/PUT_Form/Gin-8                    	  151015	      1627 ns/op	  34.42 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/PUT_Form/Echo-8                   	  147565	      1656 ns/op	  33.81 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/PUT_Form/Echo-8                   	  145830	      1679 ns/op	  33.35 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/PUT_Form/Echo-8                   	  151444	      1667 ns/op	  33.60 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/PUT_Form/ServeMux-8               	  143061	      1767 ns/op	  31.69 MB/s	    1624 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/PUT_Form/ServeMux-8               	  145214	      1727 ns/op	  32.43 MB/s	    1624 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/PUT_Form/ServeMux-8               	  142654	      1741 ns/op	  32.16 MB/s	    1624 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/PATCH_JSON/v1-8                   	   87494	      2856 ns/op	  30.81 MB/s	    1648 B/op	      22 allocs/op
+BenchmarkFacadeMatrix/PATCH_JSON/v1-8                   	   90753	      2798 ns/op	  31.46 MB/s	    1648 B/op	      22 allocs/op
+BenchmarkFacadeMatrix/PATCH_JSON/v1-8                   	   89664	      2799 ns/op	  31.44 MB/s	    1648 B/op	      22 allocs/op
+BenchmarkFacadeMatrix/PATCH_JSON/v2-8                   	   81490	      3004 ns/op	  29.30 MB/s	    1776 B/op	      25 allocs/op
+BenchmarkFacadeMatrix/PATCH_JSON/v2-8                   	   81286	      3041 ns/op	  28.93 MB/s	    1776 B/op	      25 allocs/op
+BenchmarkFacadeMatrix/PATCH_JSON/v2-8                   	   76869	      2987 ns/op	  29.46 MB/s	    1776 B/op	      25 allocs/op
+BenchmarkFacadeMatrix/PATCH_JSON/DecodeWith-8           	   86648	      2963 ns/op	  29.70 MB/s	    1728 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/PATCH_JSON/DecodeWith-8           	   86035	      2916 ns/op	  30.18 MB/s	    1728 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/PATCH_JSON/DecodeWith-8           	   87646	      2968 ns/op	  29.65 MB/s	    1728 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/PATCH_JSON/Gin-8                  	   88777	      2733 ns/op	  32.20 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/PATCH_JSON/Gin-8                  	   92248	      2743 ns/op	  32.09 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/PATCH_JSON/Gin-8                  	   92992	      2704 ns/op	  32.55 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/PATCH_JSON/Echo-8                 	   91034	      2756 ns/op	  31.93 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/PATCH_JSON/Echo-8                 	   95953	      2692 ns/op	  32.69 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/PATCH_JSON/Echo-8                 	   90366	      2693 ns/op	  32.68 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/PATCH_JSON/ServeMux-8             	   90807	      2739 ns/op	  32.13 MB/s	    1680 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/PATCH_JSON/ServeMux-8             	   89734	      2822 ns/op	  31.19 MB/s	    1680 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/PATCH_JSON/ServeMux-8             	   90712	      2891 ns/op	  30.44 MB/s	    1680 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/PATCH_Form/v1-8                   	  103173	      2487 ns/op	  22.52 MB/s	    2552 B/op	      29 allocs/op
+BenchmarkFacadeMatrix/PATCH_Form/v1-8                   	   99772	      2449 ns/op	  22.87 MB/s	    2552 B/op	      29 allocs/op
+BenchmarkFacadeMatrix/PATCH_Form/v1-8                   	  101287	      2501 ns/op	  22.39 MB/s	    2552 B/op	      29 allocs/op
+BenchmarkFacadeMatrix/PATCH_Form/v2-8                   	  101140	      2485 ns/op	  22.54 MB/s	    1800 B/op	      27 allocs/op
+BenchmarkFacadeMatrix/PATCH_Form/v2-8                   	   94956	      2477 ns/op	  22.60 MB/s	    1800 B/op	      27 allocs/op
+BenchmarkFacadeMatrix/PATCH_Form/v2-8                   	   96436	      2458 ns/op	  22.79 MB/s	    1800 B/op	      27 allocs/op
+BenchmarkFacadeMatrix/PATCH_Form/DecodeWith-8           	  130485	      1908 ns/op	  29.35 MB/s	    1672 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/PATCH_Form/DecodeWith-8           	  132871	      1852 ns/op	  30.24 MB/s	    1672 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/PATCH_Form/DecodeWith-8           	  127842	      1870 ns/op	  29.94 MB/s	    1672 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/PATCH_Form/Gin-8                  	  147517	      1692 ns/op	  33.10 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/PATCH_Form/Gin-8                  	  147184	      1671 ns/op	  33.51 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/PATCH_Form/Gin-8                  	  145100	      1666 ns/op	  33.61 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/PATCH_Form/Echo-8                 	  131202	      1758 ns/op	  31.86 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/PATCH_Form/Echo-8                 	  147955	      1678 ns/op	  33.36 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/PATCH_Form/Echo-8                 	  147817	      1665 ns/op	  33.64 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/PATCH_Form/ServeMux-8             	  144358	      1799 ns/op	  31.14 MB/s	    1624 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/PATCH_Form/ServeMux-8             	  134528	      1775 ns/op	  31.56 MB/s	    1624 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/PATCH_Form/ServeMux-8             	  136892	      1831 ns/op	  30.58 MB/s	    1624 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/DELETE_JSON/v1-8                  	   85137	      2899 ns/op	  30.36 MB/s	    1648 B/op	      22 allocs/op
+BenchmarkFacadeMatrix/DELETE_JSON/v1-8                  	   87429	      2862 ns/op	  30.75 MB/s	    1648 B/op	      22 allocs/op
+BenchmarkFacadeMatrix/DELETE_JSON/v1-8                  	   88906	      2865 ns/op	  30.72 MB/s	    1648 B/op	      22 allocs/op
+BenchmarkFacadeMatrix/DELETE_JSON/v2-8                  	   83281	      3129 ns/op	  28.12 MB/s	    1776 B/op	      25 allocs/op
+BenchmarkFacadeMatrix/DELETE_JSON/v2-8                  	   82736	      3109 ns/op	  28.31 MB/s	    1776 B/op	      25 allocs/op
+BenchmarkFacadeMatrix/DELETE_JSON/v2-8                  	   79231	      3046 ns/op	  28.89 MB/s	    1776 B/op	      25 allocs/op
+BenchmarkFacadeMatrix/DELETE_JSON/DecodeWith-8          	   84162	      2955 ns/op	  29.78 MB/s	    1728 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/DELETE_JSON/DecodeWith-8          	   84284	      2970 ns/op	  29.62 MB/s	    1728 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/DELETE_JSON/DecodeWith-8          	   84210	      2972 ns/op	  29.61 MB/s	    1728 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/DELETE_JSON/Gin-8                 	   86882	      2773 ns/op	  31.74 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/DELETE_JSON/Gin-8                 	   89490	      2767 ns/op	  31.81 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/DELETE_JSON/Gin-8                 	   88578	      2767 ns/op	  31.80 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/DELETE_JSON/Echo-8                	   92054	      2736 ns/op	  32.17 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/DELETE_JSON/Echo-8                	   87898	      2696 ns/op	  32.64 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/DELETE_JSON/Echo-8                	   87372	      3043 ns/op	  28.92 MB/s	    1664 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/DELETE_JSON/ServeMux-8            	   78321	      3123 ns/op	  28.18 MB/s	    1680 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/DELETE_JSON/ServeMux-8            	   77224	      3217 ns/op	  27.36 MB/s	    1680 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/DELETE_JSON/ServeMux-8            	   80916	      3182 ns/op	  27.66 MB/s	    1680 B/op	      24 allocs/op
+BenchmarkFacadeMatrix/DELETE_Form/v1-8                  	  104775	      2366 ns/op	  23.66 MB/s	    2032 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/DELETE_Form/v1-8                  	  104482	      2240 ns/op	  25.00 MB/s	    2032 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/DELETE_Form/v1-8                  	  115203	      2099 ns/op	  26.68 MB/s	    2032 B/op	      23 allocs/op
+BenchmarkFacadeMatrix/DELETE_Form/v2-8                  	  100584	      2441 ns/op	  22.94 MB/s	    1800 B/op	      27 allocs/op
+BenchmarkFacadeMatrix/DELETE_Form/v2-8                  	   82518	      2587 ns/op	  21.65 MB/s	    1800 B/op	      27 allocs/op
+BenchmarkFacadeMatrix/DELETE_Form/v2-8                  	   98834	      2460 ns/op	  22.77 MB/s	    1800 B/op	      27 allocs/op
+BenchmarkFacadeMatrix/DELETE_Form/DecodeWith-8          	  133110	      1857 ns/op	  30.15 MB/s	    1672 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/DELETE_Form/DecodeWith-8          	  137000	      1852 ns/op	  30.24 MB/s	    1672 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/DELETE_Form/DecodeWith-8          	  131623	      1841 ns/op	  30.41 MB/s	    1672 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/DELETE_Form/Gin-8                 	  148395	      1694 ns/op	  33.05 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/DELETE_Form/Gin-8                 	  150448	      1698 ns/op	  32.98 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/DELETE_Form/Gin-8                 	  142702	      1694 ns/op	  33.06 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/DELETE_Form/Echo-8                	  141620	      1711 ns/op	  32.73 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/DELETE_Form/Echo-8                	  144963	      1671 ns/op	  33.50 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/DELETE_Form/Echo-8                	  149416	      1692 ns/op	  33.09 MB/s	    1608 B/op	      20 allocs/op
+BenchmarkFacadeMatrix/DELETE_Form/ServeMux-8            	  143787	      1794 ns/op	  31.21 MB/s	    1624 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/DELETE_Form/ServeMux-8            	  136041	      1779 ns/op	  31.47 MB/s	    1624 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/DELETE_Form/ServeMux-8            	  139845	      1785 ns/op	  31.37 MB/s	    1624 B/op	      21 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_64KiB/v1-8              	     292	    755336 ns/op	 137.90 MB/s	  591508 B/op	    4103 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_64KiB/v1-8              	     302	    775976 ns/op	 134.23 MB/s	  592492 B/op	    4103 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_64KiB/v1-8              	     302	    763063 ns/op	 136.50 MB/s	  595617 B/op	    4104 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_64KiB/v2-8              	     286	    750004 ns/op	 138.88 MB/s	  591628 B/op	    4106 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_64KiB/v2-8              	     315	    761778 ns/op	 136.73 MB/s	  591572 B/op	    4106 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_64KiB/v2-8              	     296	    767726 ns/op	 135.67 MB/s	  594667 B/op	    4106 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_64KiB/DecodeWith-8      	     296	    763284 ns/op	 136.46 MB/s	  596725 B/op	    4105 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_64KiB/DecodeWith-8      	     302	    780169 ns/op	 133.51 MB/s	  595608 B/op	    4105 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_64KiB/DecodeWith-8      	     302	    763504 ns/op	 136.42 MB/s	  592592 B/op	    4105 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_64KiB/Gin-8             	     304	    771181 ns/op	 135.07 MB/s	  593495 B/op	    4104 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_64KiB/Gin-8             	     301	    749474 ns/op	 138.98 MB/s	  594516 B/op	    4104 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_64KiB/Gin-8             	     301	    763996 ns/op	 136.34 MB/s	  594534 B/op	    4104 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_64KiB/Echo-8            	     303	    773292 ns/op	 134.70 MB/s	  592486 B/op	    4104 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_64KiB/Echo-8            	     295	    758465 ns/op	 137.33 MB/s	  593596 B/op	    4104 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_64KiB/Echo-8            	     307	    761935 ns/op	 136.71 MB/s	  595425 B/op	    4104 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_64KiB/ServeMux-8        	     303	    802494 ns/op	 129.80 MB/s	  592503 B/op	    4105 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_64KiB/ServeMux-8        	     309	    787728 ns/op	 132.23 MB/s	  595429 B/op	    4105 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_64KiB/ServeMux-8        	     296	    771601 ns/op	 134.99 MB/s	  594578 B/op	    4105 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB/v1-8            	      72	   3659094 ns/op	 297.12 MB/s	 6721730 B/op	    4112 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB/v1-8            	      67	   3675804 ns/op	 295.77 MB/s	 6739066 B/op	    4112 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB/v1-8            	      72	   3693328 ns/op	 294.37 MB/s	 6754775 B/op	    4112 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB/v2-8            	      70	   3704573 ns/op	 293.48 MB/s	 6796461 B/op	    4115 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB/v2-8            	      68	   3650527 ns/op	 297.82 MB/s	 6700025 B/op	    4113 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB/v2-8            	      70	   3753091 ns/op	 289.68 MB/s	 6659933 B/op	    4113 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB/DecodeWith-8    	      69	   3691433 ns/op	 294.52 MB/s	 6731547 B/op	    4113 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB/DecodeWith-8    	      73	   3769777 ns/op	 288.40 MB/s	 6751038 B/op	    4113 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB/DecodeWith-8    	      66	   3608995 ns/op	 301.25 MB/s	 6706545 B/op	    4113 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB/Gin-8           	      67	   3478056 ns/op	 312.59 MB/s	 6738655 B/op	    4112 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB/Gin-8           	      72	   3635581 ns/op	 299.04 MB/s	 6721490 B/op	    4112 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB/Gin-8           	      67	   3518971 ns/op	 308.95 MB/s	 6667480 B/op	    4111 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB/Echo-8          	      66	   3725990 ns/op	 291.79 MB/s	 6706233 B/op	    4111 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB/Echo-8          	      73	   3653289 ns/op	 297.60 MB/s	 6685497 B/op	    4111 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB/Echo-8          	      73	   3683061 ns/op	 295.19 MB/s	 6620169 B/op	    4111 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB/ServeMux-8      	      76	   3641445 ns/op	 298.56 MB/s	 6709178 B/op	    4113 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB/ServeMux-8      	      78	   3593997 ns/op	 302.50 MB/s	 6703305 B/op	    4112 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB/ServeMux-8      	      74	   3656968 ns/op	 297.30 MB/s	 6779719 B/op	    4114 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB_Echo/v1-8       	      58	   4395747 ns/op	 247.33 MB/s	 7793314 B/op	    4113 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB_Echo/v1-8       	      56	   4416196 ns/op	 246.18 MB/s	 7864021 B/op	    4116 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB_Echo/v1-8       	      56	   4328357 ns/op	 251.18 MB/s	 7801975 B/op	    4112 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB_Echo/v2-8       	      58	   4384114 ns/op	 247.99 MB/s	 6736488 B/op	    4115 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB_Echo/v2-8       	      61	   4381016 ns/op	 248.16 MB/s	 6763387 B/op	    4114 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB_Echo/v2-8       	      61	   4443025 ns/op	 244.70 MB/s	 6685120 B/op	    4114 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB_Echo/DecodeWith-8         	      63	   4242529 ns/op	 256.26 MB/s	 6640997 B/op	    4112 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB_Echo/DecodeWith-8         	      63	   4352867 ns/op	 249.77 MB/s	 6754677 B/op	    4113 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB_Echo/DecodeWith-8         	      63	   4315489 ns/op	 251.93 MB/s	 6754675 B/op	    4113 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB_Echo/Gin-8                	      56	   3901100 ns/op	 278.69 MB/s	 6830575 B/op	    4114 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB_Echo/Gin-8                	      60	   3961461 ns/op	 274.44 MB/s	 6767945 B/op	    4113 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB_Echo/Gin-8                	      58	   3824108 ns/op	 284.30 MB/s	 6736275 B/op	    4112 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB_Echo/Echo-8               	      55	   4389523 ns/op	 247.68 MB/s	 6706169 B/op	    4111 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB_Echo/Echo-8               	      54	   4299287 ns/op	 252.88 MB/s	 6666241 B/op	    4112 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB_Echo/Echo-8               	      52	   4329980 ns/op	 251.09 MB/s	 6764779 B/op	    4112 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB_Echo/ServeMux-8           	      62	   4439590 ns/op	 244.89 MB/s	 6604881 B/op	    4113 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB_Echo/ServeMux-8           	      62	   4336857 ns/op	 250.69 MB/s	 6720254 B/op	    4113 allocs/op
+BenchmarkFacadeMatrix/POST_JSON_1024KiB_Echo/ServeMux-8           	      64	   4365211 ns/op	 249.06 MB/s	 6713048 B/op	    4113 allocs/op
+BenchmarkFacadeMatrix/POST_File_32KiB/v1-8                        	    5155	     48167 ns/op	 685.40 MB/s	  174199 B/op	      81 allocs/op
+BenchmarkFacadeMatrix/POST_File_32KiB/v1-8                        	    5488	     48415 ns/op	 681.89 MB/s	  174194 B/op	      81 allocs/op
+BenchmarkFacadeMatrix/POST_File_32KiB/v1-8                        	    5900	     48366 ns/op	 682.59 MB/s	  174199 B/op	      81 allocs/op
+BenchmarkFacadeMatrix/POST_File_32KiB/v2-8                        	    4886	     48444 ns/op	 681.49 MB/s	  174485 B/op	      84 allocs/op
+BenchmarkFacadeMatrix/POST_File_32KiB/v2-8                        	    5190	     49394 ns/op	 668.38 MB/s	  174484 B/op	      84 allocs/op
+BenchmarkFacadeMatrix/POST_File_32KiB/v2-8                        	    4874	     48231 ns/op	 684.49 MB/s	  174487 B/op	      84 allocs/op
+BenchmarkFacadeMatrix/POST_File_32KiB/DecodeWith-8                	    5196	     49133 ns/op	 671.93 MB/s	  174026 B/op	      78 allocs/op
+BenchmarkFacadeMatrix/POST_File_32KiB/DecodeWith-8                	    5564	     47414 ns/op	 696.29 MB/s	  174028 B/op	      78 allocs/op
+BenchmarkFacadeMatrix/POST_File_32KiB/DecodeWith-8                	    5628	     46883 ns/op	 704.19 MB/s	  174040 B/op	      78 allocs/op
+BenchmarkFacadeMatrix/POST_File_32KiB/Gin-8                       	    4958	     46830 ns/op	 704.98 MB/s	  173963 B/op	      77 allocs/op
+BenchmarkFacadeMatrix/POST_File_32KiB/Gin-8                       	    5780	     48615 ns/op	 679.09 MB/s	  173973 B/op	      77 allocs/op
+BenchmarkFacadeMatrix/POST_File_32KiB/Gin-8                       	    5144	     47020 ns/op	 702.13 MB/s	  173967 B/op	      77 allocs/op
+BenchmarkFacadeMatrix/POST_File_32KiB/Echo-8                      	    5270	     47190 ns/op	 699.59 MB/s	  173970 B/op	      77 allocs/op
+BenchmarkFacadeMatrix/POST_File_32KiB/Echo-8                      	    5955	     46623 ns/op	 708.11 MB/s	  173972 B/op	      77 allocs/op
+BenchmarkFacadeMatrix/POST_File_32KiB/Echo-8                      	    5220	     47039 ns/op	 701.84 MB/s	  173956 B/op	      77 allocs/op
+BenchmarkFacadeMatrix/POST_File_32KiB/ServeMux-8                  	    5336	     47775 ns/op	 691.03 MB/s	  173969 B/op	      78 allocs/op
+BenchmarkFacadeMatrix/POST_File_32KiB/ServeMux-8                  	    5744	     48007 ns/op	 687.69 MB/s	  173978 B/op	      78 allocs/op
+BenchmarkFacadeMatrix/POST_File_32KiB/ServeMux-8                  	    5654	     47642 ns/op	 692.96 MB/s	  173980 B/op	      78 allocs/op
+BenchmarkFacadeMatrix/POST_File_1024KiB/v1-8                      	     192	   1190246 ns/op	 881.18 MB/s	 4238307 B/op	      87 allocs/op
+BenchmarkFacadeMatrix/POST_File_1024KiB/v1-8                      	     182	   1174819 ns/op	 892.75 MB/s	 4238657 B/op	      87 allocs/op
+BenchmarkFacadeMatrix/POST_File_1024KiB/v1-8                      	     196	   1173996 ns/op	 893.38 MB/s	 4238630 B/op	      87 allocs/op
+BenchmarkFacadeMatrix/POST_File_1024KiB/v2-8                      	     196	   1178031 ns/op	 890.32 MB/s	 4238737 B/op	      90 allocs/op
+BenchmarkFacadeMatrix/POST_File_1024KiB/v2-8                      	     201	   1311796 ns/op	 799.53 MB/s	 4238892 B/op	      90 allocs/op
+BenchmarkFacadeMatrix/POST_File_1024KiB/v2-8                      	     192	   1205651 ns/op	 869.92 MB/s	 4238757 B/op	      90 allocs/op
+BenchmarkFacadeMatrix/POST_File_1024KiB/DecodeWith-8              	     174	   1204286 ns/op	 870.91 MB/s	 4238657 B/op	      84 allocs/op
+BenchmarkFacadeMatrix/POST_File_1024KiB/DecodeWith-8              	     193	   1176147 ns/op	 891.74 MB/s	 4238384 B/op	      84 allocs/op
+BenchmarkFacadeMatrix/POST_File_1024KiB/DecodeWith-8              	     189	   1178366 ns/op	 890.06 MB/s	 4238549 B/op	      84 allocs/op
+BenchmarkFacadeMatrix/POST_File_1024KiB/Gin-8                     	     182	   1148131 ns/op	 913.50 MB/s	 4238509 B/op	      83 allocs/op
+BenchmarkFacadeMatrix/POST_File_1024KiB/Gin-8                     	     194	   1170195 ns/op	 896.28 MB/s	 4238363 B/op	      83 allocs/op
+BenchmarkFacadeMatrix/POST_File_1024KiB/Gin-8                     	     184	   1130420 ns/op	 927.82 MB/s	 4238312 B/op	      83 allocs/op
+BenchmarkFacadeMatrix/POST_File_1024KiB/Echo-8                    	     186	   1160955 ns/op	 903.41 MB/s	 4238489 B/op	      83 allocs/op
+BenchmarkFacadeMatrix/POST_File_1024KiB/Echo-8                    	     196	   1121735 ns/op	 935.00 MB/s	 4238427 B/op	      83 allocs/op
+BenchmarkFacadeMatrix/POST_File_1024KiB/Echo-8                    	     200	   1176780 ns/op	 891.26 MB/s	 4238260 B/op	      83 allocs/op
+BenchmarkFacadeMatrix/POST_File_1024KiB/ServeMux-8                	     200	   1143048 ns/op	 917.57 MB/s	 4237950 B/op	      83 allocs/op
+BenchmarkFacadeMatrix/POST_File_1024KiB/ServeMux-8                	     192	   1187538 ns/op	 883.19 MB/s	 4238368 B/op	      84 allocs/op
+BenchmarkFacadeMatrix/POST_File_1024KiB/ServeMux-8                	     200	   1203393 ns/op	 871.55 MB/s	 4238375 B/op	      84 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/v1-8                     	       2	 122001182 ns/op	 343.79 MB/s	134305212 B/op	     112 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/v1-8                     	       3	  82714412 ns/op	 507.09 MB/s	134305704 B/op	     110 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/v1-8                     	       2	 109673830 ns/op	 382.44 MB/s	134300824 B/op	     108 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/v2-8                     	       3	  84092046 ns/op	 498.78 MB/s	134305248 B/op	     114 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/v2-8                     	       3	  83952430 ns/op	 499.61 MB/s	134305248 B/op	     114 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/v2-8                     	       2	 107624619 ns/op	 389.72 MB/s	134309008 B/op	     116 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/DecodeWith-8             	       3	  81540146 ns/op	 514.39 MB/s	134302128 B/op	     108 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/DecodeWith-8             	       2	 123235616 ns/op	 340.35 MB/s	134304436 B/op	     109 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/DecodeWith-8             	       3	  85328728 ns/op	 491.55 MB/s	134307746 B/op	     111 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/Gin-8                    	       2	 107361928 ns/op	 390.67 MB/s	134300156 B/op	     104 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/Gin-8                    	       3	  86372078 ns/op	 485.61 MB/s	134301917 B/op	     104 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/Gin-8                    	       2	 121275358 ns/op	 345.85 MB/s	134304004 B/op	     103 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/Echo-8                   	       3	  86360280 ns/op	 485.68 MB/s	134301877 B/op	     104 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/Echo-8                   	       3	  86101127 ns/op	 487.14 MB/s	134301866 B/op	     104 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/Echo-8                   	       2	 118966173 ns/op	 352.56 MB/s	134299896 B/op	     102 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/ServeMux-8               	       3	  86045968 ns/op	 487.45 MB/s	134306757 B/op	     106 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/ServeMux-8               	       3	  83919869 ns/op	 499.80 MB/s	134301144 B/op	     104 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/ServeMux-8               	       2	 112814852 ns/op	 371.79 MB/s	134303428 B/op	     103 allocs/op
+PASS
+ok  	command-line-arguments	113.423s

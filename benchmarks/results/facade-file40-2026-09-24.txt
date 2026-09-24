@@ -1,0 +1,23 @@
+goos: linux
+goarch: amd64
+cpu: AMD Ryzen 7 8845HS w/ Radeon 780M Graphics
+BenchmarkFacadeMatrix/POST_File_40960KiB/v1-8      	      13	  77926340 ns/op	 538.24 MB/s	134304619 B/op	     112 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/v1-8      	      14	  80485279 ns/op	 521.13 MB/s	134304844 B/op	     111 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/v1-8      	      15	  79387207 ns/op	 528.34 MB/s	134304021 B/op	     110 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/v2-8      	      14	  83966465 ns/op	 499.52 MB/s	134305213 B/op	     115 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/v2-8      	      15	  80896250 ns/op	 518.48 MB/s	134306437 B/op	     116 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/v2-8      	      15	  81652681 ns/op	 513.68 MB/s	134304148 B/op	     115 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/DecodeWith-8         	      15	  84414836 ns/op	 496.87 MB/s	134305861 B/op	     109 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/DecodeWith-8         	      14	  86301997 ns/op	 486.01 MB/s	134305337 B/op	     109 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/DecodeWith-8         	      14	  82012950 ns/op	 511.42 MB/s	134305381 B/op	     110 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/Gin-8                	      15	  81426836 ns/op	 515.10 MB/s	134304635 B/op	     105 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/Gin-8                	      14	  83437585 ns/op	 502.69 MB/s	134303939 B/op	     104 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/Gin-8                	      15	  81792526 ns/op	 512.80 MB/s	134305780 B/op	     106 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/Echo-8               	      15	  84433061 ns/op	 496.76 MB/s	134305148 B/op	     105 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/Echo-8               	      14	  86904871 ns/op	 482.63 MB/s	134306381 B/op	     106 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/Echo-8               	      15	  80103108 ns/op	 523.62 MB/s	134304093 B/op	     105 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/ServeMux-8           	      14	  84813852 ns/op	 494.53 MB/s	134303254 B/op	     105 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/ServeMux-8           	      14	  81928552 ns/op	 511.95 MB/s	134303134 B/op	     104 allocs/op
+BenchmarkFacadeMatrix/POST_File_40960KiB/ServeMux-8           	      15	  81757214 ns/op	 513.02 MB/s	134303330 B/op	     105 allocs/op
+PASS
+ok  	command-line-arguments	26.511s

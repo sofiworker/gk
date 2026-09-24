@@ -1,0 +1,21 @@
+goos: linux
+goarch: amd64
+pkg: github.com/sofiworker/gk/ghttp/v2
+cpu: AMD Ryzen 7 8845HS w/ Radeon 780M Graphics
+BenchmarkRequestInputComparison/DTO-8         	  518366	       645.7 ns/op	     112 B/op	       4 allocs/op
+BenchmarkRequestInputComparison/DTO-8         	  543070	       630.2 ns/op	     112 B/op	       4 allocs/op
+BenchmarkRequestInputComparison/DTO-8         	  588394	       629.3 ns/op	     112 B/op	       4 allocs/op
+BenchmarkRequestInputComparison/DecodeWith-8  	  649438	       546.0 ns/op	      80 B/op	       3 allocs/op
+BenchmarkRequestInputComparison/DecodeWith-8  	  638852	       547.3 ns/op	      80 B/op	       3 allocs/op
+BenchmarkRequestInputComparison/DecodeWith-8  	  667082	       543.4 ns/op	      80 B/op	       3 allocs/op
+BenchmarkRequestInputComparison/RequestInput-8         	  676188	       552.2 ns/op	      80 B/op	       3 allocs/op
+BenchmarkRequestInputComparison/RequestInput-8         	  705787	       567.0 ns/op	      80 B/op	       3 allocs/op
+BenchmarkRequestInputComparison/RequestInput-8         	  697448	       562.3 ns/op	      80 B/op	       3 allocs/op
+BenchmarkRequestInputComparison/Sources-8              	  640804	       530.6 ns/op	      80 B/op	       3 allocs/op
+BenchmarkRequestInputComparison/Sources-8              	  578326	       543.9 ns/op	      80 B/op	       3 allocs/op
+BenchmarkRequestInputComparison/Sources-8              	  673644	       548.9 ns/op	      80 B/op	       3 allocs/op
+BenchmarkRequestInputComparison/Map-8                  	  406479	       847.4 ns/op	     512 B/op	       7 allocs/op
+BenchmarkRequestInputComparison/Map-8                  	  371611	       862.2 ns/op	     512 B/op	       7 allocs/op
+BenchmarkRequestInputComparison/Map-8                  	  402073	       843.5 ns/op	     512 B/op	       7 allocs/op
+PASS
+ok  	github.com/sofiworker/gk/ghttp/v2	5.482s

@@ -61,10 +61,12 @@ func (p *Params) truncate(length int) {
 // query string is cached in queryCache (parsed on first Query() call).
 type Request struct {
 	*http.Request
-	Params     Params
-	queryCache url.Values // filled on first Query() call; cleared at reset.
-	resp       Response
-	skipped    []skippedNode
+	Params          Params
+	queryCache      url.Values // filled on first Query() call; cleared at reset.
+	queryCountKnown bool
+	querySmall      bool
+	resp            Response
+	skipped         []skippedNode
 	// matchedRoute 命中的完整路由模板(gin 形式,如 /users/:id),命中后由分发器写入。
 	// 未命中或 raw 快路径的 miss 时为空。经 MatchedRoute() 只读暴露。
 	// matchedRoute is the matched full route template (gin form, e.g.
@@ -111,6 +113,8 @@ func (r *Request) Query() url.Values {
 // reset clears tracking state for pooled reuse.
 func (r *Request) reset() {
 	r.queryCache = nil // 清空 cache 供下一请求重新解析。
+	r.queryCountKnown = false
+	r.querySmall = false
 	r.Params.reset()
 	r.skipped = r.skipped[:0]
 	r.matchedRoute = ""

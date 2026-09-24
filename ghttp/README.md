@@ -673,3 +673,5 @@ ghttp.GetParams[In, Out](s, "/users/{id}", ghttp.JSON[Out](),
 ---
 
 > 本包遵循 [gk 模块依赖分层原则](../docs/superpowers/specs/2026-08-07-gk-module-dependency-policy.md)：作为能力层，只依赖基础契约层（`gerr` / `gretry` / `grx` 等），不引入其他能力层；日志、追踪等可观测性通过接口注入，用户按需拼接。
+
+按需读取 query：`Request.QueryFirst(key)` 返回首值和是否存在，`Request.QueryValues(key)` 返回全部同名值。两者复用惰性解析，大 query 回退到缓存映射；返回切片不应修改。`Query()` 仍提供完整映射。

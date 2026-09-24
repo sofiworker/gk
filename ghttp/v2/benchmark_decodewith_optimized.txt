@@ -1,0 +1,21 @@
+goos: linux
+goarch: amd64
+pkg: github.com/sofiworker/gk/ghttp/v2
+cpu: AMD Ryzen 7 8845HS w/ Radeon 780M Graphics
+BenchmarkDecodeWithComparison/v1-8         	 1000000	       520.6 ns/op	      96 B/op	       4 allocs/op
+BenchmarkDecodeWithComparison/v1-8         	 1000000	       528.4 ns/op	      96 B/op	       4 allocs/op
+BenchmarkDecodeWithComparison/v1-8         	 1000000	       525.3 ns/op	      96 B/op	       4 allocs/op
+BenchmarkDecodeWithComparison/v1-8         	 1000000	       521.2 ns/op	      96 B/op	       4 allocs/op
+BenchmarkDecodeWithComparison/v1-8         	 1000000	       521.7 ns/op	      96 B/op	       4 allocs/op
+BenchmarkDecodeWithComparison/v2-8         	  886513	       633.2 ns/op	     128 B/op	       6 allocs/op
+BenchmarkDecodeWithComparison/v2-8         	  968613	       626.3 ns/op	     128 B/op	       6 allocs/op
+BenchmarkDecodeWithComparison/v2-8         	  919396	       623.1 ns/op	     128 B/op	       6 allocs/op
+BenchmarkDecodeWithComparison/v2-8         	  937352	       629.7 ns/op	     128 B/op	       6 allocs/op
+BenchmarkDecodeWithComparison/v2-8         	  961688	       634.9 ns/op	     128 B/op	       6 allocs/op
+BenchmarkDecodeWithComparison/v2DecodeWith-8         	 1334106	       449.3 ns/op	      48 B/op	       2 allocs/op
+BenchmarkDecodeWithComparison/v2DecodeWith-8         	 1330989	       445.1 ns/op	      48 B/op	       2 allocs/op
+BenchmarkDecodeWithComparison/v2DecodeWith-8         	 1353481	       455.8 ns/op	      48 B/op	       2 allocs/op
+BenchmarkDecodeWithComparison/v2DecodeWith-8         	 1336533	       442.5 ns/op	      48 B/op	       2 allocs/op
+BenchmarkDecodeWithComparison/v2DecodeWith-8         	 1335752	       442.5 ns/op	      48 B/op	       2 allocs/op
+PASS
+ok  	github.com/sofiworker/gk/ghttp/v2	10.934s

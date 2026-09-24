@@ -1,0 +1,20 @@
+File: v2-profile.test
+Build ID: 95193c07a7f2986e55df310602ef7d0ebfbd1bcb
+Type: alloc_space
+Time: 2026-09-23 17:54:08 CST
+Showing nodes accounting for 1824.44MB, 99.69% of 1830.19MB total
+Dropped 36 nodes (cum <= 9.15MB)
+Showing top 12 nodes out of 23
+      flat  flat%   sum%        cum   cum%
+ 1370.42MB 74.88% 74.88%  1370.42MB 74.88%  net/url.parseQuery
+  193.50MB 10.57% 85.45%   278.01MB 15.19%  github.com/sofiworker/gk/ghttp/v2.encodeJSON[go.shape.struct { ID int "json:\"id\""; Name string "json:\"name\"" }]
+  176.01MB  9.62% 95.07%  1546.43MB 84.50%  net/url.ParseQuery (inline)
+   84.50MB  4.62% 99.69%    84.50MB  4.62%  reflect.unsafe_New
+         0     0% 99.69%    84.50MB  4.62%  encoding/json.(*Encoder).Encode
+         0     0% 99.69%    84.50MB  4.62%  encoding/json/v2.MarshalEncode
+         0     0% 99.69%    84.50MB  4.62%  encoding/json/v2.marshalEncode
+         0     0% 99.69%  1546.43MB 84.50%  github.com/sofiworker/gk/ghttp.(*Request).Query (inline)
+         0     0% 99.69%  1824.44MB 99.69%  github.com/sofiworker/gk/ghttp.(*mux).ServeHTTP
+         0     0% 99.69%  1824.44MB 99.69%  github.com/sofiworker/gk/ghttp.(*mux).dispatchRaw
+         0     0% 99.69%  1824.44MB 99.69%  github.com/sofiworker/gk/ghttp.(*mux).serve
+         0     0% 99.69%  1824.44MB 99.69%  github.com/sofiworker/gk/ghttp.Handler.serve

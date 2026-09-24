@@ -1,5 +1,7 @@
 # webbench — ghttp vs 主流 Go Web 框架基准测试
 
+新增 [v2 门面扩展验证报告](FACADE_V2_RESULTS.md)：覆盖 v1、v2 自动绑定、DecodeWith、Gin、Echo 和现代 ServeMux，包含长 path/query、写入方法、表单、大 JSON 与文件。该矩阵的 Gin/Echo 使用共用手写解码器，具体比较边界见报告。
+
 本目录是一个**独立 Go module**（不污染主仓库依赖），使用 Go 标准 `testing.B`
 基准框架 + [benchstat](https://pkg.go.dev/golang.org/x/perf/cmd/benchstat)
 对比方法论，参照社区通行的

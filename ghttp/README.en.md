@@ -299,3 +299,5 @@ Generic entries are a thin shell (sink mode, T inferred from `*T`): `client.GetI
 ## Status
 
 pre-v1.0.0, under development, not for direct production use; see `DEVELOPMENT.md` at the repository root.
+
+On-demand query access: Request.QueryFirst(key) returns the first value and presence; Request.QueryValues(key) returns all values for a key. Both use lazy parsing with cached-map fallback for large queries. Do not modify returned slices. Query() still provides the complete map.

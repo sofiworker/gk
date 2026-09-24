@@ -1,0 +1,46 @@
+goos: linux
+goarch: amd64
+pkg: github.com/sofiworker/gk/ghttp/v2
+cpu: AMD Ryzen 7 8845HS w/ Radeon 780M Graphics
+BenchmarkV1V2/GetNone/v1-8    	 2281833	       267.4 ns/op	      64 B/op	       3 allocs/op
+BenchmarkV1V2/GetNone/v1-8    	 2227651	       267.2 ns/op	      64 B/op	       3 allocs/op
+BenchmarkV1V2/GetNone/v1-8    	 2249059	       265.6 ns/op	      64 B/op	       3 allocs/op
+BenchmarkV1V2/GetNone/v1-8    	 2235036	       270.2 ns/op	      64 B/op	       3 allocs/op
+BenchmarkV1V2/GetNone/v1-8    	 2242976	       263.9 ns/op	      64 B/op	       3 allocs/op
+BenchmarkV1V2/GetNone/v2-8    	 1716022	       340.5 ns/op	      72 B/op	       3 allocs/op
+BenchmarkV1V2/GetNone/v2-8    	 1734889	       343.4 ns/op	      72 B/op	       3 allocs/op
+BenchmarkV1V2/GetNone/v2-8    	 1700888	       351.4 ns/op	      72 B/op	       3 allocs/op
+BenchmarkV1V2/GetNone/v2-8    	 1690758	       353.8 ns/op	      72 B/op	       3 allocs/op
+BenchmarkV1V2/GetNone/v2-8    	 1704048	       342.5 ns/op	      72 B/op	       3 allocs/op
+BenchmarkV1V2/GetParams/v1-8  	  978349	       525.4 ns/op	      96 B/op	       4 allocs/op
+BenchmarkV1V2/GetParams/v1-8  	 1000000	       529.8 ns/op	      96 B/op	       4 allocs/op
+BenchmarkV1V2/GetParams/v1-8  	 1000000	       530.9 ns/op	      96 B/op	       4 allocs/op
+BenchmarkV1V2/GetParams/v1-8  	 1000000	       526.1 ns/op	      96 B/op	       4 allocs/op
+BenchmarkV1V2/GetParams/v1-8  	 1000000	       529.1 ns/op	      96 B/op	       4 allocs/op
+BenchmarkV1V2/GetParams/v2-8  	  598798	       875.7 ns/op	     552 B/op	       9 allocs/op
+BenchmarkV1V2/GetParams/v2-8  	  665247	       866.6 ns/op	     552 B/op	       9 allocs/op
+BenchmarkV1V2/GetParams/v2-8  	  580099	       870.7 ns/op	     552 B/op	       9 allocs/op
+BenchmarkV1V2/GetParams/v2-8  	  642259	       865.1 ns/op	     552 B/op	       9 allocs/op
+BenchmarkV1V2/GetParams/v2-8  	  630991	       867.9 ns/op	     552 B/op	       9 allocs/op
+BenchmarkV1V2/PostBody/v1-8   	  395677	      1320 ns/op	     601 B/op	      10 allocs/op
+BenchmarkV1V2/PostBody/v1-8   	  471453	      1354 ns/op	     601 B/op	      10 allocs/op
+BenchmarkV1V2/PostBody/v1-8   	  427969	      1337 ns/op	     601 B/op	      10 allocs/op
+BenchmarkV1V2/PostBody/v1-8   	  461961	      1303 ns/op	     601 B/op	      10 allocs/op
+BenchmarkV1V2/PostBody/v1-8   	  407431	      1357 ns/op	     601 B/op	      10 allocs/op
+BenchmarkV1V2/PostBody/v2-8   	  356068	      1551 ns/op	     737 B/op	      13 allocs/op
+BenchmarkV1V2/PostBody/v2-8   	  382336	      1549 ns/op	     737 B/op	      13 allocs/op
+BenchmarkV1V2/PostBody/v2-8   	  359295	      1572 ns/op	     737 B/op	      13 allocs/op
+BenchmarkV1V2/PostBody/v2-8   	  359967	      1572 ns/op	     737 B/op	      13 allocs/op
+BenchmarkV1V2/PostBody/v2-8   	  369555	      1561 ns/op	     737 B/op	      13 allocs/op
+BenchmarkV1V2Registration/v1-8         	  506827	      1293 ns/op	    1664 B/op	      22 allocs/op
+BenchmarkV1V2Registration/v1-8         	  438450	      1302 ns/op	    1664 B/op	      22 allocs/op
+BenchmarkV1V2Registration/v1-8         	  433287	      1298 ns/op	    1664 B/op	      22 allocs/op
+BenchmarkV1V2Registration/v1-8         	  467154	      1292 ns/op	    1664 B/op	      22 allocs/op
+BenchmarkV1V2Registration/v1-8         	  529490	      1311 ns/op	    1664 B/op	      22 allocs/op
+BenchmarkV1V2Registration/v2-8         	  346578	      1639 ns/op	    2000 B/op	      27 allocs/op
+BenchmarkV1V2Registration/v2-8         	  350130	      1643 ns/op	    2000 B/op	      27 allocs/op
+BenchmarkV1V2Registration/v2-8         	  338622	      1642 ns/op	    2000 B/op	      27 allocs/op
+BenchmarkV1V2Registration/v2-8         	  333967	      1620 ns/op	    2000 B/op	      27 allocs/op
+BenchmarkV1V2Registration/v2-8         	  394629	      1634 ns/op	    2000 B/op	      27 allocs/op
+PASS
+ok  	github.com/sofiworker/gk/ghttp/v2	27.128s
