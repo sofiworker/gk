@@ -1,4 +1,4 @@
-package v2
+package v3
 
 import (
 	"context"
@@ -41,7 +41,7 @@ func compileInput[I any](in Input[I]) (func(context.Context, *Request) (I, error
 		}, nil
 	}
 	if typ.Elem().Kind() == reflect.Pointer {
-		return nil, errors.New("ghttp/v2: nested input pointers are unsupported")
+		return nil, errors.New("ghttp/v3: nested input pointers are unsupported")
 	}
 	element := typ.Elem()
 	return func(_ context.Context, req *Request) (I, error) {

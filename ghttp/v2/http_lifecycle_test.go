@@ -18,6 +18,8 @@ func TestCustomMultipartCleanup(t *testing.T) {
 		t.Run(stage, func(t *testing.T) {
 			dir := t.TempDir()
 			t.Setenv("TMPDIR", dir)
+			t.Setenv("TMP", dir)
+			t.Setenv("TEMP", dir)
 			var body bytes.Buffer
 			writer := multipart.NewWriter(&body)
 			part, err := writer.CreateFormFile("file", "test.bin")

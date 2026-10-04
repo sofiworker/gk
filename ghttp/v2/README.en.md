@@ -1,5 +1,46 @@
 # ghttp v2
 
+## Unified request wrapper with on-demand sources
+
+**Breaking change (experimental v2)**: `BodyInput[T]` becomes `RequestOf[T]`, its `Body` field becomes `Data`, `Body(codec)` becomes `DecodeRequest(codec)`, and `WithBodyValidator` becomes `WithDataValidator`. No legacy aliases or separate JSON/form/multipart wrapper types are retained.
+
+The handler remains `func(context.Context, I) (O, error)`. Use `FromFunc`/`FromProcedure` for no input, `RequestInput` for on-demand sources, `RequestOf[T]` for a typed body plus a request view, and tagged DTOs for complete automatic binding.
+
+```go
+func updateUser(ctx context.Context, in httpv2.RequestOf[*UpdateBody]) (User, error) {
+    id := in.Path("id")
+    notify, _ := in.QueryFirst("notify")
+    return service.Update(ctx, id, in.Data, notify == "true")
+}
+```
+
+Both `RequestOf[T]` and `*RequestOf[T]` default to a whole JSON body. The body is decoded before the handler; the wrapper is constructed directly by a typed closure without reflective field assignment. Path/query/header/cookie are read only on access, so unused invalid business parameters are not automatically rejected. JSON/XML decoding itself may still use reflection.
+
+Use `WithInput(DecodeRequest(StrictJSONInput[T]()))`, `DecodeRequest(XMLInput[T]())`, `DecodeRequest(FormInput[T]())`, `DecodeRequest(MultipartInput[T]())`, or `DecodeRequest(MultipartStreamInput())` for an explicit value-wrapper contract. Its type must match the complete handler input. For a pointer wrapper with a custom format, compose it explicitly with DecodeWith.
+
+```go
+func updateProfile(ctx context.Context, in httpv2.RequestOf[*ProfileForm]) (User, error) {
+    return service.UpdateProfile(ctx, in.Path("id"), in.Data)
+}
+
+route := httpv2.Post("/users/{id}/profile", updateProfile,
+    httpv2.WithInput(httpv2.DecodeRequest(httpv2.FormInput[*ProfileForm]())),
+)
+// File uploads use the same wrapper: DecodeRequest(MultipartInput[*UploadForm]()).
+```
+
+`WithDataValidator(func(context.Context, T) error)` validates the decoded body before whole-input `WithValidator`. Either failure skips the handler. Group defaults and route overrides apply independently to the two validators.
+
+`ReadBody(ctx, requestInput, codec)` allows checking a path, authorization or cache before consuming the body. It validates declared media types and preserves error causes: malformed input maps to 400, size violations to 413, and media mismatch to 415. The endpoint still owns body limits and multipart cleanup. Its explicit media check is independent of WithoutContentTypeCheck. It does not automatically invoke validators; the handler validates manually decoded values.
+
+`RequireBody(codec)` requires at least one byte without buffering the complete body. Missing/empty bodies preserve ErrMissingBody and map to 400. JSON null is not absence; codecs decide whether whitespace is valid. Default JSON accepts no body. RequestOf and manual ReadBody preserve original codec nil/null semantics: a JSON pointer body remains nil for absence or null, without reflective allocation. Existing root DTO automatic input semantics remain unchanged. Business field types own absent/null/empty distinctions.
+
+Bodies are consumed once, without caching or replay. Callers must explicitly restore bodies consumed by middleware. Request views, uploaded files and streaming readers remain valid only during the request; copy data for asynchronous work.
+
+OpenAPI describes the actual body type, excluding the request wrapper. `WithParameter[int](ParameterQuery, "page", false)` documents on-demand parameters using ParameterPath/Query/Header/Cookie without enabling parsing, conversion or required-field validation. Path parameters must exist in the route template and are always required. Later declarations override the same source/name. Required body contracts export requestBody.required.
+
+Existing DTO binding defaults remain unchanged. No arbitrary handler signature inference or disabled default safeguards are introduced. The unified wrapper does not remove JSON/form codec decoding costs. Compare performance using equivalent decoding and validation work; no parity with other frameworks is promised.
+
 [中文](README.md) · [Design (Chinese)](DESIGN.md)
 
 Runnable complete example: [HTTP example](examples/http/README.en.md), with [source](examples/http/main.go).

@@ -17,7 +17,7 @@ type UpdateInput struct {
 }
 
 func update(ctx context.Context, in *UpdateInput) (*User, error) {
-    return service.Update(ctx, in.Username, in.Body)
+    return service.Update(ctx, in.Username, in.Data)
 }
 
 route := httpv2.Patch("/users/{username}", update)
@@ -31,6 +31,49 @@ if err := route.Mount(api); err != nil {
 Route.Err 在注册时报告配置错误；Route.Serve 用于执行而不匹配路径。Mount 复用现有 Server/Group 的路由器、中间件与错误处理，不重新实现路由树。HEAD 执行端点但抑制响应体。
 
 ## 输入与输出
+
+### 统一请求包装与按需来源读取
+
+**破坏性变更（实验性 v2）**：`BodyInput[T]` 改为 `RequestOf[T]`，其 `Body` 字段改为 `Data`；`Body(codec)` 改为 `DecodeRequest(codec)`，`WithBodyValidator` 改为 `WithDataValidator`。不保留旧别名，也不为 JSON、表单或 multipart 增加不同包装类型。
+
+保留 `func(context.Context, I) (O, error)` 签名。无输入用 `FromFunc`/`FromProcedure`；仅需请求来源用 `RequestInput`；body 与来源组合用 `RequestOf[T]`；需要整体自动绑定时继续使用标签 DTO。
+
+```go
+func updateUser(ctx context.Context, in httpv2.RequestOf[*UpdateBody]) (User, error) {
+    id := in.Path("id")
+    notify, _ := in.QueryFirst("notify")
+    return service.Update(ctx, id, in.Data, notify == "true")
+}
+
+route := httpv2.Patch("/users/{id}", updateUser)
+```
+
+`RequestOf[T]` 与 `*RequestOf[T]` 默认整体 JSON body；body 的值/指针类型均可使用。框架在 handler 前解码 body，通过类型化闭包直接构造包装，不反射写入包装字段，不自动绑定 path/query/header/cookie。读取来源时才查找或转换；未读取的非法业务参数不会被自动拒绝。JSON/XML codec 自身仍有反射成本，不能称为零反射。
+
+格式与输入形态正交：`WithInput(DecodeRequest(StrictJSONInput[T]()))`、`DecodeRequest(XMLInput[T]())`、`DecodeRequest(FormInput[T]())`、`DecodeRequest(MultipartInput[T]())` 和 `DecodeRequest(MultipartStreamInput())` 返回值类型的 `RequestOf[T]` 契约。显式 codec 必须匹配整个 handler 输入类型；需要指针包装与自定义格式时用 `DecodeWith` 显式组合。
+
+```go
+func updateProfile(ctx context.Context, in httpv2.RequestOf[*ProfileForm]) (User, error) {
+    return service.UpdateProfile(ctx, in.Path("id"), in.Data)
+}
+
+route := httpv2.Post("/users/{id}/profile", updateProfile,
+    httpv2.WithInput(httpv2.DecodeRequest(httpv2.FormInput[*ProfileForm]())),
+)
+// 文件上传使用同一包装：DecodeRequest(MultipartInput[*UploadForm]())。
+```
+
+`WithDataValidator(func(context.Context, T) error)` 复用业务 body 校验器，在 body 解码后、整个输入的 `WithValidator` 前执行。任一校验失败不调用 handler；组默认与路由覆盖分别适用于两类校验器。
+
+按需 body 解码使用 `ReadBody(ctx, in, codec)`，其中 in 为 `RequestInput`；可先判断 path、权限或缓存，再决定是否消费 body。该函数检查 codec 声明的媒体类型并保留错误链，格式错误归类 400、超限归类 413、不匹配归类 415；端点仍负责 body 上限和 multipart 清理。显式 ReadBody 的媒体检查不受 `WithoutContentTypeCheck` 控制。它不自动运行 validator；手动解码后由 handler 校验。
+
+`RequireBody(codec)` 要求至少一个 body 字节，不预读整份 body；缺失/空体保留 `ErrMissingBody`，端点映射 400。JSON `null` 不算缺失，空白 body 由 codec 判定是否合法。默认 JSON 允许无 body；RequestOf 和手动 `ReadBody` 均保留 codec 的原始 nil/null 语义：JSON 指针 body 在无体或 null 时为 nil，不反射补分配。既有根 DTO 自动输入的非 nil 构造语义不变。字段缺失/null/空值的区分由业务字段类型表达。
+
+body 默认只消费一次，不缓存、不重放；middleware 读取后的 body 必须由调用方显式恢复。请求视图、multipart 文件和流式 reader 只在当前请求有效，异步任务应复制所需数据。
+
+OpenAPI 描述实际 body 类型，不把请求包装序列化为 schema。按需参数可用 `WithParameter[int](ParameterQuery, "page", false)` 等声明文档类型；支持 ParameterPath/Query/Header/Cookie，不触发运行时解析、转换或必填校验。path 必须存在于路由模板且始终标记必需，同来源同名的后续声明覆盖前者。必需 body 契约会输出 requestBody.required。
+
+既有 DTO 默认绑定保持不变；未引入任意 handler 签名推断或关闭默认防护。统一包装不消除 JSON/表单 codec 的解码成本；性能需按相同解码及校验工作量比较，不承诺达到其他框架的性能。
 
 不需要业务 DTO、只需读取请求来源时，可直接接收 `RequestInput`，其 `Sources()` 返回零复制的来源视图：`Path`、`QueryFirst`/`QueryValues`、`Header` 和 `Cookie`。它适合轻量端点；需要保留领域输入类型时仍使用自动绑定 DTO。
 

@@ -1,4 +1,4 @@
-package v2
+package v3
 
 import (
 	"context"
@@ -15,7 +15,7 @@ func Raw(method, path string, handler func(context.Context, *Request, *Response)
 	snapshot := append([]Option(nil), opts...)
 	build := func(fullPath string, inherited []Option) Route {
 		if handler == nil {
-			return Route{Method: method, Path: fullPath, err: errors.New("ghttp/v2: nil raw handler")}
+			return Route{Method: method, Path: fullPath, err: errors.New("ghttp/v3: nil raw handler")}
 		}
 		local := routeOptions{}
 		for _, opt := range snapshot {
@@ -24,7 +24,7 @@ func Raw(method, path string, handler func(context.Context, *Request, *Response)
 			}
 		}
 		if local.inputSet || local.outputSet || local.validator != nil || local.dataValidator != nil || local.negotiation != nil {
-			return Route{Method: method, Path: fullPath, err: errors.New("ghttp/v2: raw routes do not accept codecs, validators or negotiation")}
+			return Route{Method: method, Path: fullPath, err: errors.New("ghttp/v3: raw routes do not accept codecs, validators or negotiation")}
 		}
 		all := append(append([]Option(nil), inherited...), snapshot...)
 		all = append(all, func(c *routeOptions) {

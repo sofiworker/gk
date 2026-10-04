@@ -1,4 +1,4 @@
-package v2
+package v3
 
 import (
 	"context"
@@ -38,7 +38,7 @@ func (r Route) Serve(ctx context.Context, req *Request, resp *Response) error {
 		return r.err
 	}
 	if r.serve == nil {
-		return errors.New("ghttp/v2: uninitialized route")
+		return errors.New("ghttp/v3: uninitialized route")
 	}
 	return r.serve(ctx, req, resp)
 }
@@ -70,9 +70,9 @@ func WithUnsafeFastPath() Option {
 	return func(c *routeOptions) { c.skipBodyLimit = true; c.skipMediaCheck = true; c.skipCleanup = true }
 }
 
-// WithInput 选择请求解码器。
-// WithInput selects a request decoder.
-func WithInput[I any](in Input[I]) Option {
+// WithInput 选择 RequestOf[T].Data 的解码器，不接收包装后的请求 codec。
+// WithInput selects the decoder for RequestOf[T].Data rather than a wrapped request codec.
+func WithInput[T any](in Input[T]) Option {
 	return func(c *routeOptions) { c.input = in; c.inputSet = true }
 }
 
@@ -82,9 +82,7 @@ func WithOutput[O any](out Output[O]) Option {
 	return func(c *routeOptions) { c.output = out; c.outputSet = true }
 }
 
-// Method 创建端点；默认 JSON 输入输出，不进行路由匹配。
-// Method creates an endpoint with JSON defaults and no path matching.
-func Method[I, O any](method, path string, h func(context.Context, I) (O, error), opts ...Option) Route {
+func methodEndpoint[I, O any](method, path string, h func(context.Context, I) (O, error), opts ...Option) Route {
 	snapshot := append([]Option(nil), opts...)
 	build := func(fullPath string, inherited []Option) Route {
 		all := append(append([]Option(nil), inherited...), snapshot...)
@@ -118,6 +116,7 @@ func compileMethod[I, O any](method, path string, h func(context.Context, I) (O,
 	route.outputStatus, route.negotiated = output.status, c.negotiation != nil
 	route.outputHasBody = output.hasBody
 	_, route.sourceBinding = input.decoder.(bindingDecoder[I])
+	route.sourceBinding = route.sourceBinding || input.sourceBinding
 	if input.read != nil {
 		route.inputType = nil
 	}
@@ -125,17 +124,17 @@ func compileMethod[I, O any](method, path string, h func(context.Context, I) (O,
 		route.inputType = input.schema
 	}
 	if !inOK || !outOK || !input.HasDecoder() || !output.configured {
-		route.err = errors.New("ghttp/v2: codec type mismatch")
+		route.err = errors.New("ghttp/v3: codec type mismatch")
 		return route
 	}
 	if path == "" || !strings.HasPrefix(path, "/") || method == "" || strings.IndexFunc(method, func(r rune) bool {
 		return !strings.ContainsRune("!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", r)
 	}) >= 0 {
-		route.err = errors.New("ghttp/v2: invalid method or path")
+		route.err = errors.New("ghttp/v3: invalid method or path")
 		return route
 	}
 	if h == nil {
-		route.err = errors.New("ghttp/v2: nil handler")
+		route.err = errors.New("ghttp/v3: nil handler")
 		return route
 	}
 	parameters, parameterErr := compileParameters(path, c.parameters)
@@ -145,17 +144,17 @@ func compileMethod[I, O any](method, path string, h func(context.Context, I) (O,
 	}
 	route.parameters = parameters
 	if c.maxBodyBytes <= 0 {
-		route.err = errors.New("ghttp/v2: body limit must be positive")
+		route.err = errors.New("ghttp/v3: body limit must be positive")
 		return route
 	}
 	for _, mw := range c.middleware {
 		if mw == nil {
-			route.err = errors.New("ghttp/v2: nil middleware")
+			route.err = errors.New("ghttp/v3: nil middleware")
 			return route
 		}
 	}
 	if output.status != 0 && (output.status < 200 || output.status > 599) {
-		route.err = errors.New("ghttp/v2: invalid output status")
+		route.err = errors.New("ghttp/v3: invalid output status")
 		return route
 	}
 	decode, err := compileInput(input)
@@ -168,7 +167,7 @@ func compileMethod[I, O any](method, path string, h func(context.Context, I) (O,
 	if c.dataValidator != nil {
 		factory := requestInputFactoryFor(reflect.TypeFor[I]())
 		if factory == nil {
-			route.err = errors.New("ghttp/v2: data validator requires RequestOf")
+			route.err = errors.New("ghttp/v3: data validator requires RequestOf")
 			return route
 		}
 		compiled, err := factory.dataValidation(c.dataValidator, reflect.TypeFor[I]().Kind() == reflect.Pointer)
@@ -179,7 +178,7 @@ func compileMethod[I, O any](method, path string, h func(context.Context, I) (O,
 		var ok bool
 		validateBody, ok = compiled.(func(context.Context, I) error)
 		if !ok {
-			route.err = errors.New("ghttp/v2: unsupported embedded request input")
+			route.err = errors.New("ghttp/v3: unsupported embedded request input")
 			return route
 		}
 	}
@@ -187,7 +186,7 @@ func compileMethod[I, O any](method, path string, h func(context.Context, I) (O,
 		var ok bool
 		validate, ok = c.validator.(func(context.Context, I) error)
 		if !ok || validate == nil {
-			route.err = errors.New("ghttp/v2: validator type mismatch or nil validator")
+			route.err = errors.New("ghttp/v3: validator type mismatch or nil validator")
 			return route
 		}
 	}
@@ -252,6 +251,17 @@ func compileMethod[I, O any](method, path string, h func(context.Context, I) (O,
 			}
 			return fmt.Errorf("%w: %w", root.ErrInvalidInput, err)
 		}
+		// 如果 input 标记为 required，强制立即解码以验证 body 存在
+		// If input is marked as required, force immediate decoding to validate body presence
+		if route.inputRequired {
+			// 使用 any 类型和类型断言
+			var inAny any = in
+			if validator, ok := inAny.(lazyRequestValidator); ok {
+				if err := validator.forceValidate(ctx); err != nil {
+					return fmt.Errorf("%w: %w", root.ErrInvalidInput, err)
+				}
+			}
+		}
 		if validateBody != nil {
 			if err := validateBody(ctx, in); err != nil {
 				return fmt.Errorf("%w: %w", root.ErrInvalidInput, err)
@@ -292,43 +302,43 @@ func WithMiddleware(middleware ...root.Middleware) Option {
 
 // Get 创建 GET 端点。
 // Get creates a GET endpoint.
-func Get[I, O any](path string, h func(context.Context, I) (O, error), opts ...Option) Route {
+func Get[T, O any](path string, h func(context.Context, RequestOf[T]) (O, error), opts ...Option) Route {
 	return Method(http.MethodGet, path, h, opts...)
 }
 
 // Post 创建 POST 端点。
 // Post creates a POST endpoint.
-func Post[I, O any](path string, h func(context.Context, I) (O, error), opts ...Option) Route {
+func Post[T, O any](path string, h func(context.Context, RequestOf[T]) (O, error), opts ...Option) Route {
 	return Method(http.MethodPost, path, h, opts...)
 }
 
 // Put 创建 PUT 端点。
 // Put creates a PUT endpoint.
-func Put[I, O any](path string, h func(context.Context, I) (O, error), opts ...Option) Route {
+func Put[T, O any](path string, h func(context.Context, RequestOf[T]) (O, error), opts ...Option) Route {
 	return Method(http.MethodPut, path, h, opts...)
 }
 
 // Patch 创建 PATCH 端点。
 // Patch creates a PATCH endpoint.
-func Patch[I, O any](path string, h func(context.Context, I) (O, error), opts ...Option) Route {
+func Patch[T, O any](path string, h func(context.Context, RequestOf[T]) (O, error), opts ...Option) Route {
 	return Method(http.MethodPatch, path, h, opts...)
 }
 
 // Delete 创建 DELETE 端点。
 // Delete creates a DELETE endpoint.
-func Delete[I, O any](path string, h func(context.Context, I) (O, error), opts ...Option) Route {
+func Delete[T, O any](path string, h func(context.Context, RequestOf[T]) (O, error), opts ...Option) Route {
 	return Method(http.MethodDelete, path, h, opts...)
 }
 
 // Head 创建 HEAD 端点。
 // Head creates a HEAD endpoint.
-func Head[I, O any](path string, h func(context.Context, I) (O, error), opts ...Option) Route {
+func Head[T, O any](path string, h func(context.Context, RequestOf[T]) (O, error), opts ...Option) Route {
 	return Method(http.MethodHead, path, h, opts...)
 }
 
 // Options 创建 OPTIONS 端点。
 // Options creates a OPTIONS endpoint.
-func Options[I, O any](path string, h func(context.Context, I) (O, error), opts ...Option) Route {
+func Options[T, O any](path string, h func(context.Context, RequestOf[T]) (O, error), opts ...Option) Route {
 	return Method(http.MethodOptions, path, h, opts...)
 }
 

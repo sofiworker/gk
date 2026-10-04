@@ -4,6 +4,8 @@ v2 按普通 HTTP 主线开发，不增加 v1 API 兼容层，不改写 gmemos�
 
 建议按顺序 review：
 
+统一请求输入另见 request_of.go：RequestOf[T]、DecodeRequest、ReadBody、RequireBody，以及 validation.go 的 WithDataValidator。request_of_test.go 与 request_metadata_test.go 覆盖 JSON/form/XML/multipart/流式输入的组合、校验顺序、nil/null、请求生命周期和 OpenAPI；包装格式不依赖 HTTP 方法。
+
 1. route.go：包级泛型门面、Option、Route.Err/Serve、WithMiddleware、WithBodyLimit。所有 HTTP 方法共用执行器，值/指针类型由函数推断。
 2. binding.go：默认输入与来源标签，注册期解析计划；显式 WithInput 替换默认计划。
 3. contracts.go：Input/Output、自定义 codec 与内置 codec，默认 JSON，文本/HTML显式选择。

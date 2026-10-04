@@ -1,4 +1,4 @@
-package v2
+package v3
 
 import (
 	"encoding/json"
@@ -13,11 +13,11 @@ import (
 
 type openAPIObject map[string]any
 
-// OpenAPI 生成当前已成功注册的 v2 路由的 OpenAPI 3.1 文档。
-// OpenAPI generates an OpenAPI 3.1 document for successfully registered v2 routes.
+// OpenAPI 生成当前已成功注册的 v3 路由的 OpenAPI 3.1 文档。
+// OpenAPI generates an OpenAPI 3.1 document for successfully registered v3 routes.
 func (s *Server) OpenAPI(title, version string) ([]byte, error) {
 	if title == "" || version == "" {
-		return nil, fmt.Errorf("ghttp/v2: OpenAPI title and version are required")
+		return nil, fmt.Errorf("ghttp/v3: OpenAPI title and version are required")
 	}
 	s.mu.RLock()
 	routes := append([]Route(nil), s.routes...)
@@ -36,7 +36,7 @@ func (s *Server) OpenAPI(title, version string) ([]byte, error) {
 			method = "x-gk-method-" + method
 		}
 		if _, exists := item[method]; exists {
-			return nil, fmt.Errorf("ghttp/v2: OpenAPI path collision for %s %s", route.Method, path)
+			return nil, fmt.Errorf("ghttp/v3: OpenAPI path collision for %s %s", route.Method, path)
 		}
 		item[method] = operationFor(route, registry)
 	}

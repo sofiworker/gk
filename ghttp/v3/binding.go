@@ -1,4 +1,4 @@
-package v2
+package v3
 
 import (
 	"context"
@@ -58,11 +58,11 @@ func (d bindingDecoder[T]) ContentType() string {
 
 func (d bindingDecoder[T]) Decode(req *Request, dst *T) error {
 	if req == nil || req.Request == nil {
-		return errors.New("ghttp/v2: binding decoder requires a request")
+		return errors.New("ghttp/v3: binding decoder requires a request")
 	}
 	v := reflect.ValueOf(dst)
 	if v.Kind() != reflect.Pointer || v.IsNil() {
-		return errors.New("ghttp/v2: binding decoder requires a non-nil destination")
+		return errors.New("ghttp/v3: binding decoder requires a non-nil destination")
 	}
 	v = v.Elem()
 	if v.Kind() == reflect.Pointer {
@@ -72,7 +72,7 @@ func (d bindingDecoder[T]) Decode(req *Request, dst *T) error {
 		v = v.Elem()
 	}
 	if v.Kind() != reflect.Struct {
-		return fmt.Errorf("ghttp/v2: binding input requires a struct, got %s", v.Type())
+		return fmt.Errorf("ghttp/v3: binding input requires a struct, got %s", v.Type())
 	}
 	if d.plan.bodyTag != "" {
 		if err := decodeBindingBody(req, fieldValue(v, d.plan.body), d.plan.bodyTag, d.plan.form); err != nil {
@@ -119,7 +119,7 @@ func (d bindingDecoder[T]) Decode(req *Request, dst *T) error {
 				err = f.set(field, raw)
 			}
 			if err != nil {
-				return fmt.Errorf("ghttp/v2: field %s: %w", f.name, err)
+				return fmt.Errorf("ghttp/v3: field %s: %w", f.name, err)
 			}
 		}
 	}
@@ -160,7 +160,7 @@ func decodeBindingBody(req *Request, dst reflect.Value, codec string, plan formP
 		dst = dst.Elem()
 	}
 	if !dst.IsValid() || !dst.CanAddr() {
-		return errors.New("ghttp/v2: body field is not writable")
+		return errors.New("ghttp/v3: body field is not writable")
 	}
 	if codec == "text" {
 		b, err := io.ReadAll(req.Body)
@@ -178,7 +178,7 @@ func decodeBindingBody(req *Request, dst reflect.Value, codec string, plan formP
 			var extra any
 			if tail := d.Decode(&extra); tail != io.EOF {
 				if tail == nil {
-					err = errors.New("ghttp/v2: multiple JSON values")
+					err = errors.New("ghttp/v3: multiple JSON values")
 				} else {
 					err = tail
 				}
@@ -196,7 +196,7 @@ func decodeBindingBody(req *Request, dst reflect.Value, codec string, plan formP
 			return parseErr
 		}
 		if dst.Kind() != reflect.Struct {
-			return fmt.Errorf("ghttp/v2: form body requires struct")
+			return fmt.Errorf("ghttp/v3: form body requires struct")
 		}
 		err = bindFormPlan(dst, values, plan)
 	}
@@ -213,12 +213,12 @@ func defaultInput[T any]() (Input[T], error) {
 		if typed, ok := in.(Input[T]); ok {
 			return typed, nil
 		}
-		return Input[T]{}, errors.New("ghttp/v2: unsupported embedded request input")
+		return Input[T]{}, errors.New("ghttp/v3: unsupported embedded request input")
 	}
 	if typ == reflect.TypeFor[RequestInput]() {
 		return any(DecodeWith(func(_ context.Context, req *Request) (RequestInput, error) {
 			if req == nil || req.Request == nil {
-				return RequestInput{}, errors.New("ghttp/v2: request input requires a request")
+				return RequestInput{}, errors.New("ghttp/v3: request input requires a request")
 			}
 			return RequestInput{Request: req}, nil
 		})).(Input[T]), nil
@@ -226,7 +226,7 @@ func defaultInput[T any]() (Input[T], error) {
 	if typ == reflect.TypeFor[*RequestInput]() {
 		return any(DecodeWith(func(_ context.Context, req *Request) (*RequestInput, error) {
 			if req == nil || req.Request == nil {
-				return nil, errors.New("ghttp/v2: request input requires a request")
+				return nil, errors.New("ghttp/v3: request input requires a request")
 			}
 			return &RequestInput{Request: req}, nil
 		})).(Input[T]), nil
@@ -280,7 +280,7 @@ func hasBindingTags(typ reflect.Type, visiting map[reflect.Type]bool) bool {
 
 func compileBindingFields(typ reflect.Type, prefix []int, visiting map[reflect.Type]bool, plan *bindingPlan) error {
 	if visiting[typ] {
-		return fmt.Errorf("ghttp/v2: recursive binding field type %s", typ)
+		return fmt.Errorf("ghttp/v3: recursive binding field type %s", typ)
 	}
 	visiting[typ] = true
 	defer delete(visiting, typ)
@@ -289,7 +289,7 @@ func compileBindingFields(typ reflect.Type, prefix []int, visiting map[reflect.T
 		if f.PkgPath != "" {
 			for _, key := range []string{"path", "query", "header", "cookie", "body"} {
 				if _, ok := f.Tag.Lookup(key); ok {
-					return fmt.Errorf("ghttp/v2: binding on unexported field %s", f.Name)
+					return fmt.Errorf("ghttp/v3: binding on unexported field %s", f.Name)
 				}
 			}
 			continue
@@ -305,15 +305,15 @@ func compileBindingFields(typ reflect.Type, prefix []int, visiting map[reflect.T
 			if value, ok := f.Tag.Lookup(item.key); ok {
 				name := strings.Split(value, ",")[0]
 				if name == "" || name == "-" {
-					return fmt.Errorf("ghttp/v2: invalid %s binding on field %s", item.key, f.Name)
+					return fmt.Errorf("ghttp/v3: invalid %s binding on field %s", item.key, f.Name)
 				}
 				if bound {
-					return fmt.Errorf("ghttp/v2: multiple source bindings on field %s", f.Name)
+					return fmt.Errorf("ghttp/v3: multiple source bindings on field %s", f.Name)
 				}
 				bound = true
 				setter, err := compileFieldSetter(f.Type)
 				if err != nil {
-					return fmt.Errorf("ghttp/v2: field %s: %w", f.Name, err)
+					return fmt.Errorf("ghttp/v3: field %s: %w", f.Name, err)
 				}
 				setterOne, _ := compileFieldSetterOne(f.Type)
 				plan.fields = append(plan.fields, bindingField{index: index, source: item.source, name: name, set: setter, setOne: setterOne})
@@ -322,18 +322,18 @@ func compileBindingFields(typ reflect.Type, prefix []int, visiting map[reflect.T
 		if value, ok := f.Tag.Lookup("body"); ok {
 			codec := strings.Split(value, ",")[0]
 			if plan.bodyTag != "" {
-				return errors.New("ghttp/v2: multiple body bindings")
+				return errors.New("ghttp/v3: multiple body bindings")
 			}
 			if bound {
-				return fmt.Errorf("ghttp/v2: multiple bindings on field %s", f.Name)
+				return fmt.Errorf("ghttp/v3: multiple bindings on field %s", f.Name)
 			}
 			if codec != "json" && codec != "xml" && codec != "form" && codec != "text" {
-				return fmt.Errorf("ghttp/v2: unsupported body codec %q", codec)
+				return fmt.Errorf("ghttp/v3: unsupported body codec %q", codec)
 			}
 			if codec == "form" {
 				form, err := compileFormPlan(f.Type)
 				if err != nil {
-					return fmt.Errorf("ghttp/v2: body field %s: %w", f.Name, err)
+					return fmt.Errorf("ghttp/v3: body field %s: %w", f.Name, err)
 				}
 				plan.form = form
 			}

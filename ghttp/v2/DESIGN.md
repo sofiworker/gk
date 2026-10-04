@@ -55,6 +55,14 @@ api.Delete("/users/{username}", s.DeleteUser)
 
 ## 输入协议
 
+### 统一请求包装（2026-10-01）
+
+输入形态与编码格式保持正交：无输入用 FromFunc/FromProcedure，按需读取用 RequestInput，类型化数据与请求视图组合用 RequestOf[T]，完整自动来源绑定仍使用标签 DTO。RequestOf[T] 的 Data 保存 codec 返回的 T；JSON、XML、form、multipart 和流式 reader 不增加专属包装类型。
+
+RequestOf[T] 默认 JSON；显式 WithInput(DecodeRequest(codec)) 选择其他协议。包装在注册期选择类型化构造函数，请求期直接构造，不反射写包装字段。WithDataValidator 校验 T，先于整个 RequestOf[T] 的 WithValidator 执行。参数访问保持按需，codec 的实际解析成本和资源生命周期由对应协议决定。
+
+破坏性变更：此前实验性 BodyInput[T]/Body/WithBodyValidator 统一替换为 RequestOf[T]/DecodeRequest/WithDataValidator，字段 Body 改为 Data。不保留旧别名。普通业务 DTO 的默认绑定行为不变。
+
 输入描述与 HTTP 方法正交。默认输入由 handler 类型和字段标签推断；需要覆盖时通过选项指定：
 
 ```go

@@ -1,6 +1,6 @@
-// Package v2 提供 ghttp 下一代门面的类型化公开契约。
-// Package v2 contains the typed public contracts for the next ghttp facade.
-package v2
+// Package v3 提供 ghttp 下一代门面的类型化公开契约。
+// Package v3 contains the typed public contracts for the next ghttp facade.
+package v3
 
 import (
 	"context"
@@ -17,13 +17,49 @@ import (
 	root "github.com/sofiworker/gk/ghttp"
 )
 
-// Request 是 v1 请求上下文的别名，便于自定义解码器逐步接入 v2。
-// Request aliases the v1 request context so custom decoders can adopt v2 incrementally.
+// Request 是 v1 请求上下文的别名，便于自定义解码器逐步接入 v3。
+// Request aliases the v1 request context so custom decoders can adopt v3 incrementally.
 type Request = root.Request
 
 // RequestInput 是面向 handler 的增强请求视图，直接持有当前请求，不复制来源数据。
 // RequestInput is an enhanced handler request view that holds the current request without copying source data.
 type RequestInput struct{ *Request }
+
+// PathValue 返回 path 参数的类型化访问器。
+// PathValue returns a typed accessor for the path parameter.
+func (in RequestInput) PathValue(name string) *Value {
+	return &Value{raw: in.Params.Get(name), ok: true}
+}
+
+// QueryValue 返回 query 参数的类型化访问器。
+// QueryValue returns a typed accessor for the query parameter.
+func (in RequestInput) QueryValue(name string) *Value {
+	v, ok := in.Request.QueryFirst(name)
+	return &Value{raw: v, ok: ok}
+}
+
+// QueryValues 返回 query 参数的多值访问器。
+// QueryValues returns a multi-value accessor for the query parameter.
+func (in RequestInput) QueryValues(name string) *Values {
+	return &Values{raw: in.Request.QueryValues(name)}
+}
+
+// HeaderValue 返回 HTTP header 的类型化访问器。
+// HeaderValue returns a typed accessor for the HTTP header.
+func (in RequestInput) HeaderValue(name string) *Value {
+	v := in.Header.Get(name)
+	return &Value{raw: v, ok: v != ""}
+}
+
+// CookieValue 返回 cookie 的类型化访问器。
+// CookieValue returns a typed accessor for the cookie.
+func (in RequestInput) CookieValue(name string) *Value {
+	c, err := in.Cookie(name)
+	if err != nil {
+		return &Value{ok: false}
+	}
+	return &Value{raw: c.Value, ok: true}
+}
 
 // Sources returns a zero-copy source view over the request.
 // Sources 返回不复制请求数据的来源视图。
@@ -45,21 +81,14 @@ func (s Sources) Cookie(name string) string {
 	return c.Value
 }
 
+// 保留旧的 API 用于向后兼容
+// Keep old API for backward compatibility
+
 func (in RequestInput) Path(name string) string               { return in.Params.Get(name) }
 func (in RequestInput) QueryFirst(name string) (string, bool) { return in.Request.QueryFirst(name) }
-func (in RequestInput) QueryValues(name string) []string      { return in.Request.QueryValues(name) }
-func (in RequestInput) HeaderValue(name string) string        { return in.Header.Get(name) }
-
 func (in RequestInput) QueryFirstValue(key string) string {
 	value, _ := in.QueryFirst(key)
 	return value
-}
-func (in RequestInput) CookieValue(key string) string {
-	c, err := in.Cookie(key)
-	if err != nil {
-		return ""
-	}
-	return c.Value
 }
 
 // Response 是 v1 响应封装的别名，便于自定义编码器写出响应。
@@ -69,14 +98,13 @@ type Response = root.Response
 // Endpoint 描述一个有输入和输出的业务端点。
 // Endpoint describes a business endpoint with typed input and output.
 //
-// I 和 O 可独立选择值或指针，四种组合共用此契约。
-// I and O may independently be values or pointers. All four combinations are
-// valid and are intentionally represented by this single contract.
-type Endpoint[I, O any] func(context.Context, I) (O, error)
+// T 和 O 可独立选择值或指针，请求包装始终按值传入。
+// T and O may independently be values or pointers; the request wrapper is always passed by value.
+type Endpoint[T, O any] func(context.Context, RequestOf[T]) (O, error)
 
 // Action 描述一个只产生错误结果的业务端点。
 // Action describes a business endpoint with no response body.
-type Action[I any] func(context.Context, I) error
+type Action[T any] func(context.Context, RequestOf[T]) error
 
 // Procedure 描述一个既没有输入也没有响应体的业务端点。
 // Procedure describes a business endpoint with neither input nor response body.
@@ -117,22 +145,23 @@ type MultiContentTyper interface {
 
 // ErrNilDecoder 表示输入契约没有解码器。
 // ErrNilDecoder reports an input contract without a decoder.
-var ErrNilDecoder = errors.New("ghttp/v2: nil decoder")
+var ErrNilDecoder = errors.New("ghttp/v3: nil decoder")
 
 // ErrNilEncoder 表示输出契约没有编码器。
 // ErrNilEncoder reports an output contract without an encoder.
-var ErrNilEncoder = errors.New("ghttp/v2: nil encoder")
+var ErrNilEncoder = errors.New("ghttp/v3: nil encoder")
 
 // Input 是注册期固定的输入契约。
 // Input is an input contract fixed at registration time.
 type Input[T any] struct {
-	decoder      Decoder[T]
-	read         func(context.Context, *Request) (T, error)
-	contentType  string
-	contentTypes []string
-	schema       reflect.Type
-	err          error
-	required     bool
+	decoder       Decoder[T]
+	read          func(context.Context, *Request) (T, error)
+	contentType   string
+	contentTypes  []string
+	schema        reflect.Type
+	err           error
+	required      bool
+	sourceBinding bool
 }
 
 // CustomInput 使用用户提供的解码器创建输入契约。
@@ -208,7 +237,7 @@ func CustomOutput[T any](encoder Encoder[T]) Output[T] {
 // Encode encodes a value into the response.
 func (out Output[T]) Encode(resp *Response, value T) error {
 	if out.status != 0 && (out.status < 200 || out.status > 599) {
-		return errors.New("ghttp/v2: invalid output status")
+		return errors.New("ghttp/v3: invalid output status")
 	}
 	if !out.configured {
 		return ErrNilEncoder
@@ -404,7 +433,7 @@ func (codec jsonDecoder[T]) Decode(req *Request, dst *T) error {
 		if err != nil {
 			return err
 		}
-		return errors.New("ghttp/v2: multiple JSON values")
+		return errors.New("ghttp/v3: multiple JSON values")
 	}
 	return nil
 }
@@ -425,7 +454,7 @@ func (d formDecoder[T]) Decode(req *Request, dst *T) error {
 		return d.err
 	}
 	if req == nil || req.Request == nil {
-		return errors.New("ghttp/v2: form decoder requires a request")
+		return errors.New("ghttp/v3: form decoder requires a request")
 	}
 	if req.Body == nil || req.Body == http.NoBody {
 		return nil
@@ -436,11 +465,11 @@ func (d formDecoder[T]) Decode(req *Request, dst *T) error {
 	}
 	values, err := url.ParseQuery(string(data))
 	if err != nil {
-		return fmt.Errorf("ghttp/v2: parse form: %w", err)
+		return fmt.Errorf("ghttp/v3: parse form: %w", err)
 	}
 	value := reflect.ValueOf(dst)
 	if value.Kind() != reflect.Pointer || value.IsNil() {
-		return errors.New("ghttp/v2: form decoder requires a non-nil destination")
+		return errors.New("ghttp/v3: form decoder requires a non-nil destination")
 	}
 	value = value.Elem()
 	if value.Kind() == reflect.Pointer {
@@ -450,7 +479,7 @@ func (d formDecoder[T]) Decode(req *Request, dst *T) error {
 		value = value.Elem()
 	}
 	if value.Kind() != reflect.Struct {
-		return fmt.Errorf("ghttp/v2: form input requires a struct, got %s", value.Type())
+		return fmt.Errorf("ghttp/v3: form input requires a struct, got %s", value.Type())
 	}
 	if err := bindFormPlan(value, values, d.plan); err != nil {
 		return err
@@ -521,7 +550,7 @@ func (textDecoder[T]) Decode(req *Request, dst *T) error {
 		}
 		return err
 	default:
-		return fmt.Errorf("ghttp/v2: text input requires string or []byte, got %T", dst)
+		return fmt.Errorf("ghttp/v3: text input requires string or []byte, got %T", dst)
 	}
 }
 
