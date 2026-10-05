@@ -80,6 +80,10 @@ type lazyBodyData[T BodyConstraint] struct {
 // 后续调用直接返回缓存结果，不重复解码。
 // Subsequent calls return the cached result without re-decoding.
 func (r *RequestOf[T]) Data(ctx context.Context) (T, error) {
+	if r.lazyBody == nil {
+		var zero T
+		return zero, nil
+	}
 	r.lazyBody.decodeOnce.Do(func() {
 		if r.lazyBody.decoder != nil {
 			r.lazyBody.data, r.lazyBody.decodeError = r.lazyBody.decoder(ctx, r.lazyBody.req)
@@ -98,11 +102,11 @@ func NewRequestOf[T BodyConstraint](req *Request) RequestOf[T] {
 // newRequestOf creates a typed request wrapper with the given Input. When T is NoDataType
 // the body is never read.
 func newRequestOf[T BodyConstraint](req *Request, in Input[T]) RequestOf[T] {
-	lb := &lazyBodyData[T]{req: req}
 	var zero T
-	if _, noData := any(zero).(NoDataType); !noData {
-		lb.decoder = in.Decode
+	if _, noData := any(zero).(NoDataType); noData {
+		return RequestOf[T]{RequestInput: RequestInput{req: req}}
 	}
+	lb := &lazyBodyData[T]{req: req, decoder: in.Decode}
 	return RequestOf[T]{
 		RequestInput: RequestInput{req: req},
 		lazyBody:     lb,
