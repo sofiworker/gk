@@ -1,10 +1,35 @@
 # ghttp v3 HTTP Server 设计文档
 
-**状态：**设计基线  
-**主线：**`ghttp/v3`  ️
+**状态：**设计基线（2026-10-05 已按实现修订，见第 0 节）  
+**主线：**`ghttp`（根包；原文中的 `ghttp/v3`、`v3.`、`root.` 均指根包）
 **范围：**HTTP Server、Router、Handler、Request、Response 及默认 Gin 风格路由匹配
 
-> 本文把 v3 作为唯一主线设计，不提供 v2 迁移方案、兼容层或双 API 运行模式。实现和示例均以 `github.com/sofiworker/gk/ghttp/v3` 为准。仓库当前处于 pre-v1.0.0，本文是开发期设计，不构成生产承诺。
+> 本文把 v3 作为唯一主线设计，不提供 v2 迁移方案、兼容层或双 API 运行模式。实现位于 `github.com/sofiworker/gk/ghttp` 根包（v3 已替代旧 server 成为根包本身）。仓库当前处于 pre-v1.0.0，本文是开发期设计，不构成生产承诺。
+
+---
+
+## 0. 实现对照（2026-10-05）
+
+本节记录实现与下文原始设计的差异。**两者冲突时以本节为准**；原文中仍保留的旧表述（如"暂时空实现"、`v3.` 前缀）应按本节理解。完整 API 见 `ghttp/README.md`，进度见 `ghttp/SERVER_PLAN.md`。
+
+| 主题 | 原设计 | 实现 |
+|---|---|---|
+| 包路径 | `ghttp/v3`，底层 `root` 包 | 根包 `ghttp`；`ErrInvalidInput` 等哨兵都在根包 |
+| WithInput / WithOutput | 预留，空实现 | 已实现：`Input[T]`/`Output[O]` 接口，内置 `JSONInput`、`XMLInput`、`FormInput`（urlencoded + multipart）、`JSONOutput`、`XMLOutput`、`TextOutput`；只能用于路由级，泛型类型不匹配在注册期报错 |
+| BindInput（§6.3） | 规定了 path/query/header/cookie/body 标签绑定 | **不实现**，与 §1.2 非目标一致；path/query/header/cookie 用 `PathValue` 等 Value API 或 `Sources()`，表单 body 用 `FormInput` |
+| 校验 | `WithValidator`（未定义） | `Validator`/`ValidatorFunc`/`WithValidator`；body 类型实现 `Validate() error` 或 `Validate(ctx) error` 时自动调用；在 `Data()` 解码后执行，保持 lazy；失败 400，validator 返回的 HTTPError 保留其状态 |
+| Group 选项 | `GroupInput`、`GroupOutput` | 不提供；`GroupOption` 为 `func(*Group)`，有 `WithGroupMiddleware`、`WithGroupOptions`；`Server.With`/`Group.With` 设置默认路由选项（不允许 WithInput/WithOutput） |
+| 路由冲突 | — | 同一层不能同时注册 catch-all 与静态路由（与 Gin 一致），如 `/files/*p` 与 `/files/public` |
+| 405 / OPTIONS | 405 带 Allow | `Allow` 额外包含自动应答的 `OPTIONS`；`OPTIONS` 请求自动 204 |
+| 错误映射 | `ErrInvalidInput` / `ErrRequestEntityTooLarge` / `ErrUnsupportedMediaType` / `ErrNotFound` | 相同哨兵，`HTTPError` 按状态码参与 `errors.Is`；另映射 `wire.ErrInvalidFormat` 400、`*http.MaxBytesError` 413、`gerr.Kind`、`context.Canceled` 499、`DeadlineExceeded` 504；`StatusFromError`、`ErrorResponseOf`、`FinalStatus` 导出；默认错误体为 JSON 且只回显 `HTTPError.Message` |
+| Action / Procedure | 只定义了类型 | `HandleAction`、`HandleProcedure`，成功 204 |
+| Reply 族 | `Reply[T]` | 另有 `FileReply`、`StreamReply`、`RedirectReply`、`NoContentReply`，handler 返回值或指针均可 |
+| 中间件链固化 | 首个请求固化 | 首个请求或 `Run/Serve` 固化；之后 `Use`/`With` 被忽略并经 `WithLogger` 告警 |
+| 日志 | — | `Logger` 接口（与 client 同方法集）、`NewSlogLogger`、`NewStdLogger`、`WithLogger`；访问日志中间件为 `AccessLog*`（原 `Logger()` 改名） |
+| 观测 | — | `Observe` 钩子；`ghttp/adapters/gotel` 提供基于 gotel 的 Tracing/Metrics |
+| 路由元数据 | — | `Server.Routes()`、`WithDoc`/`WithTags`/`WithOperationID`/`WithDeprecated`，供 OpenAPI 生成 |
+| 协议升级 | Raw handler | `Response` 实现 `http.Hijacker`，接管后的错误只记日志；WebSocket 见 `ghttp/ws` |
+| 共享线格式 | — | 严格解码、media-type、SSE、日志单行化、`StatusCoder` 位于 `ghttp/wire`，server 与 client 共用 |
 
 ---
 
@@ -62,7 +87,7 @@ Route 预编译执行器
 2. **完全 Lazy 输入**：path、query、header、body 全部按需访问，不访问则零开销。
 3. **默认 JSON**：Body 默认 JSON 解码，输出默认 JSON 序列化。
 4. **泛型约束**：所有泛型类型参数使用约束接口，避免裸 `any`。
-5. **扩展点预留**：`WithInput`/`WithOutput` 保留 API（暂时空实现），未来支持其他格式。
+5. **可扩展编解码**：`WithInput`/`WithOutput` 已实现（见第 0 节），默认 JSON。
 
 ---
 
@@ -174,7 +199,7 @@ if err != nil {
 
 - Body 默认按 **JSON 解码**（`req.Data(ctx)` 首次调用时）
 - 返回值默认按 **JSON 序列化**
-- `WithInput`/`WithOutput` 保留 API，暂时空实现，未来扩展支持 XML/Form/Text 等格式
+- `WithInput`/`WithOutput` 已实现，内置 JSON/XML/Form 输入与 JSON/XML/Text 输出（见第 0 节）
 
 Go 代码中不需要显式填写可推导的类型参数时，可直接使用 `v3.Get("/path", handler)`。
 
@@ -235,7 +260,7 @@ Group 规则：
 
 - 子组继承父组前缀和已创建时的配置快照。
 - middleware 顺序为：Server 全局 → 父组 → 子组 → Route。
-- `GroupInput`、`GroupOutput` 等默认值会参与后续路由编译；Route 级选项可覆盖。
+- `Server.With`/`Group.With`/`WithGroupOptions` 设置的默认路由选项参与后续路由编译；Route 级选项追加在后（见第 0 节）。
 - 批量注册先校验整批 Route，再逐条安装；底层安装失败不回滚已经安装的端点，因此启动阶段应尽早处理错误。
 
 ---
@@ -613,7 +638,7 @@ route := v3.Get("/tenants/{tenant}/users", list,
 
 绑定只负责输入来源与类型转换，不做授权判断。绑定错误归类为 400；权限错误由 handler/middleware 返回 401/403。
 
-#### 6.3.1 BindInput 标签规范
+#### 6.3.1 BindInput 标签规范（不实现，见第 0 节；保留作历史记录）
 
 **支持的标签：**
 
