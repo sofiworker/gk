@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"strings"
 
-	internalcodec "github.com/sofiworker/gk/ghttp/internal/codec"
+	"github.com/sofiworker/gk/ghttp/wire"
 )
 
 // 本文件定义请求体编码与响应体解码的扩展点，以及内置的 JSON/XML/Text/Form 实现。
@@ -25,12 +25,12 @@ type Encoder interface {
 }
 
 // Decoder 把 r 解码进 v。contentLength 供实现区分"合法空体"与"声明了长度却截断"
-// （-1 或 0 表示长度未知）；实现应把它透传给 ghttp/internal/codec 的严格解码内核，
+// （-1 或 0 表示长度未知）；实现应把它透传给 ghttp/wire 的严格解码内核，
 // 以保持与 server 侧一致的严格性。
 // Decoder decodes r into v. contentLength lets an implementation distinguish a
 // legitimate empty body from truncation after a declared length (-1 or 0 means
 // unknown); implementations should pass it through to the strict decoding kernel in
-// ghttp/internal/codec so strictness matches the server side.
+// ghttp/wire so strictness matches the server side.
 type Decoder interface {
 	Decode(r io.Reader, v any, contentLength int64) error
 	ContentType() string
@@ -51,14 +51,14 @@ type jsonCodec struct{}
 // JSONCodec returns the built-in JSON codec.
 func JSONCodec() Codec { return jsonCodec{} }
 
-func (jsonCodec) ContentType() string { return internalcodec.ContentTypeJSON }
+func (jsonCodec) ContentType() string { return wire.ContentTypeJSON }
 
 func (jsonCodec) Encode(w io.Writer, v any) error {
 	return json.NewEncoder(w).Encode(v)
 }
 
 func (jsonCodec) Decode(r io.Reader, v any, contentLength int64) error {
-	return internalcodec.DecodeJSON(r, v, contentLength)
+	return wire.DecodeJSON(r, v, contentLength)
 }
 
 // ——— XML ——— //
@@ -69,14 +69,14 @@ type xmlCodec struct{}
 // XMLCodec returns the built-in XML codec.
 func XMLCodec() Codec { return xmlCodec{} }
 
-func (xmlCodec) ContentType() string { return internalcodec.ContentTypeXML }
+func (xmlCodec) ContentType() string { return wire.ContentTypeXML }
 
 func (xmlCodec) Encode(w io.Writer, v any) error {
 	return xml.NewEncoder(w).Encode(v)
 }
 
 func (xmlCodec) Decode(r io.Reader, v any, contentLength int64) error {
-	return internalcodec.DecodeXML(r, v, contentLength)
+	return wire.DecodeXML(r, v, contentLength)
 }
 
 // ——— Text ——— //
@@ -90,7 +90,7 @@ type textCodec struct{}
 // and *any.
 func TextCodec() Codec { return textCodec{} }
 
-func (textCodec) ContentType() string { return internalcodec.ContentTypeText }
+func (textCodec) ContentType() string { return wire.ContentTypeText }
 
 func (textCodec) Encode(w io.Writer, v any) error {
 	switch s := v.(type) {
@@ -144,7 +144,7 @@ type formCodec struct{}
 // *url.Values or *map[string][]string.
 func FormCodec() Codec { return formCodec{} }
 
-func (formCodec) ContentType() string { return internalcodec.ContentTypeForm }
+func (formCodec) ContentType() string { return wire.ContentTypeForm }
 
 func (formCodec) Encode(w io.Writer, v any) error {
 	values, err := formValues(v)
@@ -198,10 +198,10 @@ func formValues(v any) (url.Values, error) {
 // defaultCodecs returns the built-in codec registry, keyed by normalized media-type.
 func defaultCodecs() map[string]Codec {
 	return map[string]Codec{
-		internalcodec.ContentTypeJSON: JSONCodec(),
-		internalcodec.ContentTypeXML:  XMLCodec(),
-		internalcodec.ContentTypeText: TextCodec(),
-		internalcodec.ContentTypeForm: FormCodec(),
+		wire.ContentTypeJSON: JSONCodec(),
+		wire.ContentTypeXML:  XMLCodec(),
+		wire.ContentTypeText: TextCodec(),
+		wire.ContentTypeForm: FormCodec(),
 	}
 }
 
@@ -212,7 +212,7 @@ func lookupCodec(registry map[string]Codec, contentType string) (Codec, bool) {
 	if contentType == "" {
 		return nil, false
 	}
-	ct := internalcodec.MediaType(contentType)
+	ct := wire.MediaType(contentType)
 	if ct == "" {
 		return nil, false
 	}
@@ -225,5 +225,5 @@ func lookupCodec(registry map[string]Codec, contentType string) (Codec, bool) {
 // registryKey normalizes a registration key so "application/json" and
 // "Application/JSON; charset=utf-8" are not treated as two entries.
 func registryKey(contentType string) string {
-	return strings.ToLower(internalcodec.MediaType(contentType))
+	return strings.ToLower(wire.MediaType(contentType))
 }

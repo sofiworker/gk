@@ -3,103 +3,83 @@ package ghttp
 import (
 	"context"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
-	"strconv"
+	"os"
+	"runtime/debug"
+
+	"github.com/sofiworker/gk/ghttp/wire"
 )
 
-// Handler 是执行链中的一环,与 compiledHandler.serve 同签名。typed 终端(compiled.serve)
-// 与 RawHandler 都归一为它,因此中间件对二者一视同仁,类型契约的解码/编码只发生在终端内部。
-// Handler is one link in the execution chain, sharing compiledHandler.serve's
-// signature. Both a typed terminal (compiled.serve) and a RawHandler collapse
-// into it, so middleware treats both uniformly and the typed contract's
-// decode/encode happens only inside the terminal.
-type Handler func(ctx context.Context, req *Request, resp *Response) error
-
-// serve 让 Handler 直接满足 compiledHandler,使折叠后的链能以单一接口进树。
-// serve makes a Handler satisfy compiledHandler directly, so a folded chain
-// enters the tree as one interface.
-func (h Handler) serve(ctx context.Context, req *Request, resp *Response) error {
-	return h(ctx, req, resp)
+// Recovery 返回一个恢复 panic 的中间件。
+// Recovery returns a middleware that recovers from panics.
+//
+// 当处理器发生 panic 时，捕获并返回 500 Internal Server Error。
+// When a handler panics, it catches the panic and returns 500 Internal Server Error.
+func Recovery() Middleware {
+	return RecoveryWithWriter(os.Stderr)
 }
 
-// Middleware 以洋葱方式包裹下一环:返回的 Handler 可在调用 next 前做前处理、调用后做
-// 后处理,或不调用 next 直接短路(echo 式)。next 返回的 error 沿调用栈上冒至统一错误链。
-// Middleware wraps the next link onion-style: the returned Handler may run
-// pre-processing before calling next, post-processing after, or short-circuit by
-// not calling next at all (echo style). The error next returns bubbles up the
-// call stack to the unified error chain.
-type Middleware func(next Handler) Handler
+// RecoveryWithWriter 返回一个恢复 panic 的中间件，将日志写入指定的 writer。
+// RecoveryWithWriter returns a middleware that recovers from panics and writes logs to the specified writer.
+func RecoveryWithWriter(out io.Writer) Middleware {
+	return RecoveryWithHandler(out, nil)
+}
 
-// chain 在注册期把中间件栈折叠到 terminal 外层:mws[0] 最外、最先执行,terminal 殿后。
-// 请求期无迭代状态(调用栈即状态),零每请求分配。空栈时原样返回 terminal。
-// chain folds the middleware stack around terminal at registration time: mws[0]
-// is outermost and runs first, terminal runs last. There is no per-request
-// iteration state (the call stack is the state) and zero per-request allocation.
-// With an empty stack it returns terminal unchanged.
-func chain(terminal Handler, mws []Middleware) Handler {
-	// 由内向外包裹,保证 mws[0] 处于最外层。
-	// Wrap from the inside out so that mws[0] ends up outermost.
-	for i := len(mws) - 1; i >= 0; i-- {
-		terminal = mws[i](terminal)
+// RecoveryWithHandler 返回一个恢复 panic 的中间件，支持自定义处理函数。
+// RecoveryWithHandler returns a middleware that recovers from panics with a custom handler.
+func RecoveryWithHandler(out io.Writer, handler func(context.Context, *Request, *Response, any)) Middleware {
+	var logger *log.Logger
+	if out != nil {
+		logger = log.New(out, "[Recovery] ", log.LstdFlags)
 	}
-	return terminal
-}
 
-// router 是包内密封接口,统一 Server 与 Group 的注册入口,使泛型自由函数 Handle/Get/...
-// 能对二者通用。register 收到的是 typed 或 raw 终端,由实现方按需再叠加自己的中间件栈。
-// router is the package-sealed registration interface unifying Server and Group, so
-// the generic free functions Handle/Get/... work against both. register receives
-// a typed or raw terminal; the implementation layers its own middleware stack.
-type router interface {
-	// register 将 terminal(可能已在调用方内部折叠部分链)注册到 method + path。
-	// register registers terminal (possibly partially folded by the caller) at
-	// method + path.
-	register(method, path string, terminal Handler) error
-
-	// owner 返回承载路由的 mux,供注册期读取 server 级配置(如严格 Content-Type),
-	// 把配置在注册期固化进执行器,避免请求期查配置的开销。包内密封,不对用户暴露。
-	// owner returns the mux backing the routes, so registration can read
-	// server-level config (e.g. strict Content-Type) and bake it into the
-	// executor at registration time, avoiding request-time config lookups.
-	// Package-sealed; not exposed to users.
-	owner() *mux
-}
-
-// LimitBody 是请求体大小限制中间件：超过 maxBytes 即返回 413 PayloadTooLarge,
-// 无需用户自行读取 Body 或判断 Content-Length。maxBytes<=0 时跳过校验(防御性)。
-// LimitBody is a request body size limit middleware: returns 413 PayloadTooLarge
-// when exceeding maxBytes, without requiring user to read Body or check
-// Content-Length. Skips validation defensively if maxBytes<=0.
-func LimitBody(maxBytes int64) Middleware {
-	if maxBytes <= 0 {
-		return func(next Handler) Handler {
-			return next // 无效参数，直接透传避免滥用
-		}
-	}
 	return func(next Handler) Handler {
-		return func(ctx context.Context, req *Request, resp *Response) error {
-			if cl := req.Header.Get("Content-Length"); cl != "" {
-				if clen, err := strconv.ParseInt(cl, 10, 64); err == nil && clen > maxBytes {
-					// 只返回错误、绝不在此提交响应:手动 WriteHeader(413) 会让响应体为空并
-					// 提前置 Written(),使统一错误链无法渲染 JSON 错误体;而返回的
-					// ErrInvalidInput 又被 classifyError 映射成 400,导致客户端(413 空体)、
-					// onError 钩子(400)、响应体三方互相矛盾。改用 ErrRequestEntityTooLarge
-					// 后状态码与 code 串都由错误链单点决定,三方必然一致。
-					// Return the error only; never commit the response here. A manual
-					// WriteHeader(413) emptied the body and set Written() early, so the
-					// unified error chain could not render the JSON error body, while the
-					// returned ErrInvalidInput was classified as 400 — leaving the client
-					// (413, empty body), the onError hook (400), and the body mutually
-					// inconsistent. With ErrRequestEntityTooLarge the status and code
-					// come from the single decision point in the error chain, so all
-					// three necessarily agree.
-					return fmt.Errorf("%w: declared %d bytes (limit %d)", ErrRequestEntityTooLarge, clen, maxBytes)
+		return func(ctx context.Context, req *Request, resp *Response) (err error) {
+			defer func() {
+				if rec := recover(); rec != nil {
+					// http.ErrAbortHandler 是 net/http 约定的"静默中止"信号，原样继续传播
+					// http.ErrAbortHandler is net/http's "abort silently" signal; keep propagating it
+					if rec == http.ErrAbortHandler {
+						panic(rec)
+					}
+
+					// 记录堆栈信息
+					// Log stack trace
+					if logger != nil {
+						stack := debug.Stack()
+						// panic 值可能含客户端输入，单行化后再写入；堆栈本身是多行的可信内容
+						// The panic value may carry client input, so keep it single-line; the stack is trusted multi-line output
+						logger.Printf("panic recovered: %s\n%s", wire.LogToken(fmt.Sprint(rec)), stack)
+					}
+
+					// 如果已经写入响应，不再处理
+					// If response already written, don't handle
+					if resp.written {
+						return
+					}
+
+					// 自定义处理器
+					// Custom handler
+					if handler != nil {
+						handler(ctx, req, resp, rec)
+						return
+					}
+
+					// 默认转为 500 错误交给统一错误链，响应体与其他错误一致，panic 值不外泄
+					// By default turn it into a 500 for the error chain, so the body matches
+					// other errors and the panic value never leaks
+					err = HTTPError{
+						Status:  http.StatusInternalServerError,
+						Message: ErrInternalServerError.Message,
+						Cause:   fmt.Errorf("ghttp: panic recovered: %v", rec),
+					}
 				}
-			}
-			// 无 Content-Length 时，包装 Body 为 MaxBytesReader,解码期触发 413。
-			// no Content-Length: wrap Body in MaxBytesReader, triggers 413 during decode.
-			req.Body = http.MaxBytesReader(resp.ResponseWriter, req.Body, maxBytes)
-			return next(ctx, req, resp)
+			}()
+
+			err = next(ctx, req, resp)
+			return
 		}
 	}
 }

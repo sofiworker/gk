@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	internalcodec "github.com/sofiworker/gk/ghttp/internal/codec"
+	"github.com/sofiworker/gk/ghttp/wire"
 )
 
 // 本文件是 client 的执行引擎：把 *Request 落实为 *http.Request，跑中间件链，发送，
@@ -274,7 +274,7 @@ func (c *Client) encodeBody(r *Request) (io.Reader, string, error) {
 	}
 	ct := r.bodyContentType
 	if ct == "" {
-		ct = internalcodec.ContentTypeJSON
+		ct = wire.ContentTypeJSON
 	}
 	cd, ok := lookupCodec(c.codecs, ct)
 	if !ok || cd == nil {

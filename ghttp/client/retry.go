@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sofiworker/gk/ghttp/internal/logsafe"
+	"github.com/sofiworker/gk/ghttp/wire"
 	"github.com/sofiworker/gk/gretry"
 )
 
@@ -301,7 +301,7 @@ func (c *Client) attempt(ctx context.Context, r *Request) (*Response, error) {
 		return nil, err
 	}
 	if c.debug && c.logger != nil {
-		c.logger.Debugf("ghttp/client: --> %s %s", httpReq.Method, logsafe.Token(httpReq.URL.String()))
+		c.logger.Debugf("ghttp/client: --> %s %s", httpReq.Method, wire.LogToken(httpReq.URL.String()))
 	}
 	start := time.Now()
 	raw, err := c.httpClient.Do(httpReq)

@@ -3,248 +3,328 @@ package ghttp
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
-	"time"
 )
 
-// TestNewDefaults 验证 New 的默认监听配置（IdleTimeout=60s）与初始生命周期状态。
-func TestNewDefaults(t *testing.T) {
-	s := New()
-	if s.IsStarted() || s.IsClosed() {
-		t.Fatal("new server should be neither started nor closed")
+// TestNewServer 测试创建服务器。
+// TestNewServer tests creating a server.
+func TestNewServer(t *testing.T) {
+	s := NewServer()
+	if s == nil {
+		t.Fatal("NewServer returned nil")
 	}
-	h := s.unwrap()
-	if h.IdleTimeout != 60*time.Second {
-		t.Errorf("default IdleTimeout=%v, want 60s", h.IdleTimeout)
+	if s.router == nil {
+		t.Error("router is nil")
 	}
-	// Handler 必须直指内部 mux（零偏移嵌入），保证请求路径无提升包装。
-	if h.Handler != &s.mux {
-		t.Error("http.Server.Handler should point at the embedded mux")
+	if len(s.middleware) != 0 {
+		t.Errorf("expected no global middleware, got %d", len(s.middleware))
+	}
+	if s.started.Load() {
+		t.Error("server should not be started")
 	}
 }
 
-// TestNewOptions 验证 WithXxx 选项正确应用。
-func TestNewOptions(t *testing.T) {
-	dur := 5 * time.Second
-	s := New(
-		WithAddr(":1999"),
-		WithReadTimeout(dur),
-		WithWriteTimeout(dur),
-		WithMaxHeaderBytes(8<<10),
-		WithStrictPath(true),
+// TestServerWithOptions 测试服务器选项。
+// TestServerWithOptions tests server options.
+func TestServerWithOptions(t *testing.T) {
+	s := NewServer(
+		WithAddr(":9090"),
+		WithReadTimeout(30),
+		WithWriteTimeout(30),
 	)
-	h := s.unwrap()
-	if h.Addr != ":1999" {
-		t.Errorf("Addr=%q, want \":1999\"", h.Addr)
-	}
-	if h.ReadTimeout != dur {
-		t.Errorf("ReadTimeout=%v, want %v", h.ReadTimeout, dur)
-	}
-	if h.WriteTimeout != dur {
-		t.Errorf("WriteTimeout=%v, want %v", h.WriteTimeout, dur)
-	}
-	if h.MaxHeaderBytes != 8<<10 {
-		t.Errorf("MaxHeaderBytes=%d, want %d", h.MaxHeaderBytes, 8<<10)
-	}
-	if !s.strictPath {
-		t.Error("WithStrictPath(true) should set strictPath")
+	if s.config.addr != ":9090" {
+		t.Errorf("expected addr :9090, got %s", s.config.addr)
 	}
 }
 
-// TestServerLifecycle 验证状态转换：started → shutdown 后不可再启动。
-func TestServerLifecycle(t *testing.T) {
-	s := New()
-	if err := s.markStarted(); err != nil {
-		t.Fatalf("first markStarted: %v", err)
+// TestServerUse 测试全局中间件。
+// TestServerUse tests global middleware.
+func TestServerUse(t *testing.T) {
+	s := NewServer()
+	middleware := func(next Handler) Handler {
+		return func(ctx context.Context, req *Request, resp *Response) error {
+			return next(ctx, req, resp)
+		}
 	}
-	if err := s.Shutdown(context.Background()); err != nil {
-		t.Fatalf("first Shutdown failed: %v", err)
-	}
-	if err := s.markStarted(); err == nil {
-		t.Error("markStarted after close should fail")
+
+	s.Use(middleware)
+	if len(s.middleware) != 1 {
+		t.Errorf("expected 1 middleware, got %d", len(s.middleware))
 	}
 }
 
-// TestIsStarted_IsClosed 验证三态生命周期的报告方法:idle → running → closed 逐态互斥,
-// 不存在"既在运行又已关闭"的矛盾组合。
-// TestIsStarted_IsClosed verifies the three-state lifecycle reporters: idle →
-// running → closed are mutually exclusive, with no contradictory "running and
-// closed" combination.
-func TestIsStarted_IsClosed(t *testing.T) {
-	s := New()
-	if s.IsStarted() {
-		t.Error("fresh server IsStarted should be false")
-	}
-	if s.IsClosed() {
-		t.Error("fresh server IsClosed should be false")
+// TestServerRegister 测试路由注册。
+// TestServerRegister tests route registration.
+func TestServerRegister(t *testing.T) {
+	s := NewServer()
+
+	handler := func(ctx context.Context, req *Request, resp *Response) error {
+		resp.Write([]byte("OK"))
+		return nil
 	}
 
-	_ = s.markStarted()
-	if !s.IsStarted() {
-		t.Error("after start IsStarted should be true")
-	}
-	if s.IsClosed() {
-		t.Error("while running IsClosed should be false")
+	route := Route{
+		Method:          http.MethodGet,
+		Path:            "/test",
+		compiledHandler: handler,
 	}
 
-	_ = s.Shutdown(context.Background())
-	if !s.IsClosed() {
-		t.Error("after shutdown IsClosed should be true")
+	err := s.Register(route)
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
 	}
-	// 三态语义:关闭后不再"正在运行"。
-	// Three-state semantics: no longer "running" once closed.
-	if s.IsStarted() {
-		t.Error("after shutdown IsStarted should be false (running and closed are exclusive)")
+
+	// 验证路由已注册
+	// Verify route is registered
+	h, _, _ := s.router.match(http.MethodGet, "/test")
+	if h == nil {
+		t.Error("route not registered")
 	}
 }
 
-// TestServerState_TransitionsAreTerminal 验证 closed 是终态:关闭后既不能启动,
-// 也不会被后续 Shutdown/Close 退回其他状态。
-// TestServerState_TransitionsAreTerminal verifies closed is terminal: once closed the
-// server cannot start, and later Shutdown/Close calls never move it back.
-func TestServerState_TransitionsAreTerminal(t *testing.T) {
-	s := New()
-	_ = s.markStarted()
-	_ = s.Shutdown(context.Background())
+// TestServerRegisterDuplicate 测试重复路由注册。
+// TestServerRegisterDuplicate tests duplicate route registration.
+func TestServerRegisterDuplicate(t *testing.T) {
+	s := NewServer()
 
-	if err := s.markStarted(); !errors.Is(err, ErrServerNotStartable) {
-		t.Errorf("markStarted after close = %v, want ErrServerNotStartable", err)
+	handler := func(ctx context.Context, req *Request, resp *Response) error {
+		return nil
 	}
-	_ = s.Close()
-	if !s.IsClosed() || s.IsStarted() {
-		t.Error("Close after Shutdown should keep the server closed")
+
+	route := Route{
+		Method:          http.MethodGet,
+		Path:            "/test",
+		compiledHandler: handler,
 	}
-	if err := s.markStarted(); !errors.Is(err, ErrServerNotStartable) {
-		t.Errorf("markStarted after Close = %v, want ErrServerNotStartable", err)
+
+	// 第一次注册成功
+	// First registration succeeds
+	err := s.Register(route)
+	if err != nil {
+		t.Fatalf("first Register failed: %v", err)
+	}
+
+	// 第二次注册应失败
+	// Second registration should fail
+	err = s.Register(route)
+	if err == nil {
+		t.Error("expected error for duplicate route, got nil")
 	}
 }
 
-// TestShutdownIdempotent 验证 Shutdown 幂等性，且未启动时调用也安全。
-func TestShutdownIdempotent(t *testing.T) {
-	s := New()
-	ctx := context.Background()
+// TestServerRegisterAfterStart 测试启动后禁止注册。
+// TestServerRegisterAfterStart tests registration is disallowed after start.
+func TestServerRegisterAfterStart(t *testing.T) {
+	s := NewServer()
 
-	// 未启动就 Shutdown 应安全返回（无监听器可关）。
-	if err := s.Shutdown(ctx); err != nil {
-		t.Errorf("Shutdown before start: %v, want nil", err)
+	handler := func(ctx context.Context, req *Request, resp *Response) error {
+		return nil
 	}
 
-	s2 := New()
-	_ = s2.markStarted()
-	_ = s2.Shutdown(ctx)
-	_ = s2.Shutdown(ctx) // 第二次不应 panic 或报错
-}
-
-// TestSentinelErrors_TLS 验证缺证书 TLS 失败时,用户侧可用 errors.Is(ErrTLSConfig) 判定。
-// TestSentinelErrors_TLS verifies that a TLS failure with no certs can be detected
-// via errors.Is(ErrTLSConfig).
-func TestSentinelErrors_TLS(t *testing.T) {
-	s := New()
-	if err := s.RunTLS("", "", ""); !errors.Is(err, ErrTLSConfig) {
-		t.Errorf("RunTLS err=%v, want errors.Is ErrTLSConfig", err)
-	}
-}
-
-// TestSentinelErrors_DoubleStart 验证运行中重复启动可经 errors.Is(ErrServerStarted) 判定。
-// 第一个 Run 在后台阻塞,其间从主 goroutine 再次启动应被拒。
-// TestSentinelErrors_DoubleStart verifies a double start while running is detectable
-// via errors.Is(ErrServerStarted). The first Run blocks in the background; a second
-// start from the main goroutine must be rejected.
-func TestSentinelErrors_DoubleStart(t *testing.T) {
-	s := New()
-	go func() { _ = s.Run("127.0.0.1:0") }()
-	time.Sleep(100 * time.Millisecond) // 等启动 / wait for start
-
-	if err := s.Run("127.0.0.1:0"); !errors.Is(err, ErrServerStarted) {
-		t.Errorf("double start err=%v, want errors.Is ErrServerStarted", err)
+	route := Route{
+		Method:          http.MethodGet,
+		Path:            "/test",
+		compiledHandler: handler,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if err := s.Shutdown(ctx); err != nil {
-		t.Fatalf("Shutdown: %v", err)
+	// 启动服务器（通过 ServeHTTP）
+	// Start server (via ServeHTTP)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/notfound", nil)
+	s.ServeHTTP(w, r)
+
+	// 启动后注册应失败
+	// Registration after start should fail
+	err := s.Register(route)
+	if !errors.Is(err, ErrRegistrationAfterStart) {
+		t.Errorf("expected ErrRegistrationAfterStart, got %v", err)
 	}
 }
 
-// TestSentinelErrors_RestartAfterClose 验证关闭后再启动返回 ErrServerNotStartable。
-// TestSentinelErrors_RestartAfterClose verifies starting after close returns
-// ErrServerNotStartable.
-func TestSentinelErrors_RestartAfterClose(t *testing.T) {
-	s := New()
-	go func() { _ = s.Run("127.0.0.1:0") }()
-	time.Sleep(100 * time.Millisecond)
+// TestServerGroup 测试路由分组。
+// TestServerGroup tests route groups.
+func TestServerGroup(t *testing.T) {
+	s := NewServer()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if err := s.Shutdown(ctx); err != nil {
-		t.Fatalf("Shutdown: %v", err)
+	g := s.Group("/api")
+	if g == nil {
+		t.Fatal("Group returned nil")
 	}
-
-	if err := s.Run("127.0.0.1:0"); !errors.Is(err, ErrServerNotStartable) {
-		t.Errorf("restart after close err=%v, want errors.Is ErrServerNotStartable", err)
+	if g.prefix != "/api" {
+		t.Errorf("expected prefix /api, got %s", g.prefix)
+	}
+	if g.server != s {
+		t.Error("group server mismatch")
 	}
 }
 
-// TestEndRun_ListenFailureFallsBackToIdle 验证启动失败后 Server 退回未启动状态：否则 state
-// 会永久停在 running，IsStarted 谎报正在服务，且换端口重试会被 ErrServerStarted 挡回。
-func TestEndRun_ListenFailureFallsBackToIdle(t *testing.T) {
-	s := New()
-	if err := s.markStarted(); err != nil {
-		t.Fatal(err)
+// TestServerServeHTTP 测试 HTTP 请求处理。
+// TestServerServeHTTP tests HTTP request handling.
+func TestServerServeHTTP(t *testing.T) {
+	s := NewServer()
+
+	handler := func(ctx context.Context, req *Request, resp *Response) error {
+		resp.Write([]byte("Hello"))
+		return nil
 	}
 
-	bindErr := errors.New("listen tcp :80: bind: permission denied")
-	if got := s.endRun(bindErr); !errors.Is(got, bindErr) {
-		t.Fatalf("endRun() = %v, want the original bind error", got)
+	route := Route{
+		Method:          http.MethodGet,
+		Path:            "/hello",
+		compiledHandler: handler,
 	}
-	if s.IsStarted() {
-		t.Error("IsStarted() = true after a listen failure, want false")
+
+	err := s.Register(route)
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
 	}
-	if s.IsClosed() {
-		t.Error("IsClosed() = true after a listen failure, want false (failure is not terminal)")
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/hello", nil)
+	s.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
 	}
-	// 关键：启动失败不是终态，必须能换地址重试。
-	if err := s.markStarted(); err != nil {
-		t.Errorf("cannot restart after a listen failure: %v", err)
+	if w.Body.String() != "Hello" {
+		t.Errorf("expected body 'Hello', got '%s'", w.Body.String())
 	}
 }
 
-// TestEndRun_PreservesClosedStateOnCleanShutdown 验证正常关闭路径不被回退覆盖：Shutdown 已
-// 把状态推进到 closed，底层随即返回 ErrServerClosed，此时不得回退到可启动状态。
-func TestEndRun_PreservesClosedStateOnCleanShutdown(t *testing.T) {
-	s := New()
-	if err := s.markStarted(); err != nil {
-		t.Fatal(err)
-	}
-	s.markClosed()
+// TestServerServeHTTP404 测试 404 响应。
+// TestServerServeHTTP404 tests 404 response.
+func TestServerServeHTTP404(t *testing.T) {
+	s := NewServer()
 
-	if got := s.endRun(ErrServerClosed); !errors.Is(got, ErrServerClosed) {
-		t.Fatalf("endRun() = %v, want ErrServerClosed", got)
-	}
-	if !s.IsClosed() {
-		t.Error("IsClosed() = false after a clean shutdown, want true (closed is terminal)")
-	}
-	if err := s.markStarted(); !errors.Is(err, ErrServerNotStartable) {
-		t.Errorf("markStarted() = %v, want ErrServerNotStartable", err)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/notfound", nil)
+	s.ServeHTTP(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d", w.Code)
 	}
 }
 
-// TestEndRun_RollbackDoesNotResurrectClosedServer 覆盖回退分支里的复合判定：并发 Shutdown
-// 抢先推进到终态后，即便底层报的是非 ErrServerClosed 的错误，回退也不得把终态改回 idle
-// ——那才是真正的状态污染（把已关闭的 Server 变回可启动）。
-func TestEndRun_RollbackDoesNotResurrectClosedServer(t *testing.T) {
-	s := New()
-	if err := s.markStarted(); err != nil {
-		t.Fatal(err)
-	}
-	s.markClosed() // 模拟并发 Shutdown 先落笔
+// TestMiddlewareExecution 测试中间件执行顺序。
+// TestMiddlewareExecution tests middleware execution order.
+func TestMiddlewareExecution(t *testing.T) {
+	s := NewServer()
 
-	_ = s.endRun(errors.New("use of closed network connection"))
+	var order []int
 
-	if !s.IsClosed() {
-		t.Error("IsClosed() = false, want true (rollback must not overwrite the terminal state)")
+	middleware1 := func(next Handler) Handler {
+		return func(ctx context.Context, req *Request, resp *Response) error {
+			order = append(order, 1)
+			err := next(ctx, req, resp)
+			order = append(order, 4)
+			return err
+		}
 	}
-	if err := s.markStarted(); !errors.Is(err, ErrServerNotStartable) {
-		t.Errorf("markStarted() = %v, want ErrServerNotStartable", err)
+
+	middleware2 := func(next Handler) Handler {
+		return func(ctx context.Context, req *Request, resp *Response) error {
+			order = append(order, 2)
+			err := next(ctx, req, resp)
+			order = append(order, 3)
+			return err
+		}
+	}
+
+	handler := func(ctx context.Context, req *Request, resp *Response) error {
+		order = append(order, 99)
+		resp.Write([]byte("OK"))
+		return nil
+	}
+
+	s.Use(middleware1, middleware2)
+
+	route := Route{
+		Method:          http.MethodGet,
+		Path:            "/test",
+		compiledHandler: handler,
+	}
+
+	err := s.Register(route)
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/test", nil)
+	s.ServeHTTP(w, r)
+
+	// 期望顺序：1 -> 2 -> 99 -> 3 -> 4
+	// Expected order: 1 -> 2 -> 99 -> 3 -> 4
+	expected := []int{1, 2, 99, 3, 4}
+	if len(order) != len(expected) {
+		t.Fatalf("expected order length %d, got %d", len(expected), len(order))
+	}
+	for i, v := range expected {
+		if order[i] != v {
+			t.Errorf("order[%d]: expected %d, got %d", i, v, order[i])
+		}
+	}
+}
+
+// TestErrorHandling 测试错误处理。
+// TestErrorHandling tests error handling.
+func TestErrorHandling(t *testing.T) {
+	s := NewServer()
+
+	handler := func(ctx context.Context, req *Request, resp *Response) error {
+		return errors.New("test error")
+	}
+
+	route := Route{
+		Method:          http.MethodGet,
+		Path:            "/error",
+		compiledHandler: handler,
+	}
+
+	err := s.Register(route)
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/error", nil)
+	s.ServeHTTP(w, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected status 500, got %d", w.Code)
+	}
+}
+
+// TestHTTPError 测试 HTTPError 处理。
+// TestHTTPError tests HTTPError handling.
+func TestHTTPError(t *testing.T) {
+	s := NewServer()
+
+	handler := func(ctx context.Context, req *Request, resp *Response) error {
+		return BadRequest("invalid input")
+	}
+
+	route := Route{
+		Method:          http.MethodGet,
+		Path:            "/bad",
+		compiledHandler: handler,
+	}
+
+	err := s.Register(route)
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/bad", nil)
+	s.ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d", w.Code)
+	}
+	if w.Body.String() != `{"error":"invalid input","status":400}` {
+		t.Errorf("unexpected body '%s'", w.Body.String())
 	}
 }

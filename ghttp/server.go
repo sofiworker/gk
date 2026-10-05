@@ -2,458 +2,437 @@ package ghttp
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
-	"net"
+	"fmt"
+	"log"
 	"net/http"
+	"strings"
 	"sync"
-	"time"
+	"sync/atomic"
+
+	"github.com/sofiworker/gk/ghttp/wire"
 )
 
-// Server 是本包唯一的顶层类型:它【就是】一个 HTTP server——内部组合路由核心(mux)与
-// 监听生命周期(*http.Server)。用户在它上面挂中间件、注册路由,然后启动与优雅关闭,
-// 无需再认识第二个类型。
+// Server 是 v3 HTTP 服务器，实现 http.Handler。
+// Server is the v3 HTTP server; it implements http.Handler.
 //
-// mux 以【首个嵌入字段】的形式并入,因此 ServeHTTP / RawHandle / Group / register 等
-// 由 Go 字段提升直接成为 Server 的方法,不产生手写委托层;且 mux 位于零偏移处,底层
-// http.Server 的 Handler 直接指向它,真实请求路径无任何额外间接。
-//
-// 零值不可用,必须经 New 构造。
-//
-// Server is this package's only top-level type: it IS an HTTP server — internally
-// composing the routing core (mux) and the listen lifecycle (*http.Server). Users
-// attach middleware and register routes on it, then start and gracefully stop it,
-// without meeting a second type.
-//
-// mux is merged in as the FIRST embedded field, so ServeHTTP / RawHandle / Group /
-// register become Server's methods through Go's field promotion with no hand-written
-// delegation; and since mux sits at offset zero, the underlying http.Server's
-// Handler points straight at it, leaving the real request path free of any extra
-// indirection.
-//
-// The zero value is unusable; construct it via New.
+// 生命周期：先 Use/With/Register/Group 完成配置，再 Run/Serve 或直接作为 http.Handler 使用。
+// 首个请求（或 Run/Serve）会固化全局中间件链与路由树，之后的注册返回 ErrRegistrationAfterStart。
+// Lifecycle: configure with Use/With/Register/Group first, then Run/Serve or use it as an
+// http.Handler. The first request (or Run/Serve) freezes the global middleware chain and
+// the router; later registrations return ErrRegistrationAfterStart.
 type Server struct {
-	mux
+	// router 存储路由树（按 HTTP method 分组）
+	// router stores route trees (grouped by HTTP method)
+	router *router
 
-	httpSrv *http.Server
+	// middleware 存储全局中间件链
+	// middleware stores the global middleware chain
+	middleware []Middleware
 
-	// openAPI 非 nil 表示已开启 OpenAPI 生成(经 WithOpenAPI);它只在注册期与首次
-	// spec 构建时被读取。
-	// A non-nil openAPI means OpenAPI generation is enabled (via WithOpenAPI); it
-	// is read only at registration and on the first spec build.
-	openAPI *openAPIConfig
-	// pendingOpenAPIRoute 是待注册的 spec 暴露路径。New 在应用完所有 Option 后注册它,
-	// 从而使 spec 路由本身不被登记进 spec。
-	// pendingOpenAPIRoute is the spec route awaiting registration. New registers it
-	// after all Options are applied, keeping the spec route out of the spec itself.
-	pendingOpenAPIRoute string
-	specOnceHolder
+	// routes 是已安装路由的元数据
+	// routes is the metadata of installed routes
+	routes []RouteInfo
 
-	// mu 守护 state。它守护的是【复合的判定—落笔】:markStarted 与 endRun 都必须在同一
-	// 临界区内先判定状态再改写,因此单纯把 state 换成原子变量并不够——那会留下"读到 idle
-	// → 期间被关闭 → 仍改写为 running"的竞态,即启动一个已关闭的 Server。
-	//
-	// 临界区内只有整数比较与赋值:不调用其它函数、不取第二把锁、不做 I/O,Shutdown/Close
-	// 的阻塞排空一律在解锁【之后】执行。因此既无循环等待也无重入,不存在死锁路径。生命周期
-	// 方法每进程仅调用一两次且不在请求路径上,故用最简单的 Mutex,不引入 RWMutex 或原子 CAS。
-	// mu guards state. What it guards is a COMPOUND check-then-write: both markStarted
-	// and endRun must inspect the state and rewrite it inside the same critical
-	// section, so merely making state atomic is not enough — that would leave a "read
-	// idle → closed meanwhile → still rewritten to running" race, i.e. starting an
-	// already-closed Server.
-	//
-	// A critical section holds only integer compares and assignments: no calls, no
-	// second lock, no I/O, and Shutdown/Close run their blocking drain AFTER
-	// unlocking. So there is neither a wait cycle nor reentrancy, and no deadlock is
-	// reachable. Lifecycle methods run once or twice per process and never on the
-	// request path, so a plain Mutex suffices; no RWMutex or atomic CAS.
-	mu    sync.Mutex
-	state serverState
+	// defaults 是经 With 设置、对之后注册的路由生效的默认选项
+	// defaults are options set via With, applied to routes registered afterwards
+	defaults []Option
+
+	// config 存储服务器配置
+	// config stores server configuration
+	config serverConfig
+
+	// handler 是固化后的全局处理链（全局中间件包裹分发终端）
+	// handler is the frozen global chain (global middleware around the dispatch terminal)
+	handler Handler
+
+	// freezeOnce 保证处理链只固化一次
+	// freezeOnce guarantees the chain is frozen once
+	freezeOnce sync.Once
+
+	// started 标记处理链已固化（原子操作）
+	// started marks that the chain has been frozen (atomic)
+	started atomic.Bool
+
+	// mu 保护注册与固化
+	// mu guards registration and freezing
+	mu sync.Mutex
+
+	// srvMu 保护 httpServer 与 closed
+	// srvMu guards httpServer and closed
+	srvMu sync.Mutex
+
+	// httpServer 是底层的 http.Server
+	// httpServer is the underlying http.Server
+	httpServer *http.Server
+
+	// closed 标记已调用 Shutdown/Close，之后的启动直接返回 ErrServerClosed
+	// closed marks that Shutdown/Close was called; later starts return ErrServerClosed
+	closed bool
+
+	// hooks 是 OnShutdown 注册的关闭钩子，受 srvMu 保护
+	// hooks are the OnShutdown hooks, guarded by srvMu
+	hooks []func(context.Context) error
+
+	// hooksOnce 保证关闭钩子只执行一次
+	// hooksOnce guarantees the hooks run once
+	hooksOnce sync.Once
+
+	// hooksErr 是关闭钩子的合并错误
+	// hooksErr is the joined error of the hooks
+	hooksErr error
 }
 
-// serverState 是 Server 的三态生命周期。用单字段而非多个 bool,使"已启动"与"已关闭"
-// 这组有序且互斥的状态不可能出现矛盾组合。
-// serverState is Server's three-state lifecycle. A single field rather than several
-// bools makes the ordered, mutually exclusive "started"/"closed" states unable to
-// form a contradictory combination.
-type serverState uint8
+// ErrRegistrationAfterStart 表示服务启动后尝试注册路由。
+// ErrRegistrationAfterStart indicates attempting to register routes after server start.
+var ErrRegistrationAfterStart = errors.New("ghttp: cannot register routes after server started")
 
-const (
-	stateIdle    serverState = iota // 已构造未启动 / constructed, not started
-	stateRunning                    // 正在服务 / serving
-	stateClosed                     // 已关闭,不可再启动 / closed, not startable
-)
+// ErrServerClosed 表示服务器已关闭。
+// ErrServerClosed indicates the server is closed.
+var ErrServerClosed = http.ErrServerClosed
 
-// Option 以函数式选项配置 Server(对齐仓库 WithXxx 约定),涵盖路由行为与监听参数。
-// Option configures a Server via functional options (matching the repo's WithXxx
-// convention), covering both routing behavior and listener parameters.
-type Option func(*Server)
+// ErrInvalidRequestPath 表示请求路径非法（含 "."/".." 段、控制字符，或严格模式下的空段），映射为 400。
+// ErrInvalidRequestPath marks an invalid request path ("."/".." segments, control
+// characters, or empty segments in strict mode) and maps to 400.
+var ErrInvalidRequestPath = HTTPError{Status: http.StatusBadRequest, Message: "invalid request path"}
 
-// New 构造一个 HTTP Server:空路由 + 默认监听配置,opts 按顺序应用。默认无读写超时,
-// IdleTimeout=60s(长连接闲置回收),MaxHeaderBytes 用标准库默认。
-// New constructs an HTTP Server: empty routes plus default listener configuration,
-// applying opts in order. Defaults: no read/write timeout, IdleTimeout=60s (idle
-// keep-alive reaping), standard-library default MaxHeaderBytes.
-func New(opts ...Option) *Server {
-	s := &Server{}
-	// 池化 Request 一次性绑定 owner=&s.mux(reset 不清空),使 ClientIP() 等访问器
-	// 无需每请求写入即可读取 server 级配置。
-	// Pooled Requests bind owner=&s.mux once (never cleared on reset), so
-	// accessors like ClientIP() read server-level config with no per-request write.
-	s.pool.New = func() any { return &Request{owner: &s.mux} }
-	// 默认严格 Content-Type 校验(body 入口不符声明的 CT 即 415);经
-	// WithStrictContentType(false) 关闭。零值 false 不是期望默认,故在此显式置真。
-	// Default strict Content-Type checking (body entries yield 415 on CT
-	// mismatch); disable via WithStrictContentType(false). The zero value false
-	// is not the desired default, so set it true here explicitly.
-	s.strictContentType = true
-	s.httpSrv = &http.Server{
-		// 直接指向内部 mux(零偏移嵌入),使请求路径不经 Server 的提升包装。
-		// Point straight at the inner mux (embedded at offset zero) so the request
-		// path skips Server's promotion wrapper.
-		Handler:     &s.mux,
-		IdleTimeout: 60 * time.Second,
-	}
+// NewServer 创建新的 HTTP 服务器。
+// NewServer creates a new HTTP server.
+func NewServer(opts ...ServerOption) *Server {
+	config := defaultServerConfig()
 	for _, opt := range opts {
-		opt(s)
-	}
-	// spec 暴露路由在全部 Option 之后注册,使它自身不出现在 spec 里。注册失败只可能是
-	// 用户给了非法路径,此时静默跳过暴露(spec 仍可经 SpecJSON 取得),不破坏 New 的
-	// 无错签名。
-	// The spec route is registered after all Options so it stays out of the spec.
-	// Registration can only fail on a user-supplied illegal path; exposure is then
-	// skipped silently (the spec remains available via SpecJSON) rather than
-	// breaking New's error-free signature.
-	_ = s.registerOpenAPIRoute()
-	return s
-}
-
-// Use 向全局中间件栈追加中间件,对【所有】请求生效(含未命中路由与预检)。须在注册路由
-// 与开始服务前调用(gin 同款约束)。返回自身以便链式调用。
-// Use appends middleware to the global stack, applying to ALL requests (including
-// route misses and preflight). Call before registering routes and before serving
-// (gin's constraint). Returns itself for chaining.
-func (s *Server) Use(mws ...Middleware) *Server {
-	s.use(mws...)
-	return s
-}
-
-// ---------------------------------------------------------------------------
-// 路由行为选项 / Routing behavior options
-// ---------------------------------------------------------------------------
-
-// WithStrictPath 开启严格路径校验:dot 段与空段均返回 400。默认关闭(快速模式,
-// 仅拦 dot 段以防路径遍历,空段交给匹配,与 gin 一致的高性能取舍)。
-// WithStrictPath enables strict path validation: both dot and empty segments
-// yield 400. Off by default (fast mode: only dot segments are rejected as a
-// path-traversal guard, empty segments pass to matching — the gin-aligned
-// high-performance tradeoff).
-func WithStrictPath(strict bool) Option {
-	return func(s *Server) { s.strictPath = strict }
-}
-
-// WithAutoHEAD makes registered GET routes also accept HEAD requests. The
-// default is false to preserve ghttp's Gin-style routing semantics.
-func WithAutoHEAD(enabled bool) Option {
-	return func(s *Server) { s.autoHEAD = enabled }
-}
-
-// WithStrictContentType 控制 body 入口是否在解码前校验请求 Content-Type 属于端点声明的
-// 可接受集合。默认 true(不符即 415);置 false 时跳过校验,直接把请求体交给解码器
-// (旧宽松行为)。可接受集合优先取解码器实现的 MultiContentTypeDecoder.ContentTypes()
-// (表单据此声明 urlencoded 与 multipart 两种),否则回退到单值 RequestDecoder.ContentType()。
-// WithStrictContentType controls whether body entries verify that the request
-// Content-Type belongs to the endpoint's declared accepted set before decoding.
-// Default true (415 on mismatch); false skips the check and hands the body straight
-// to the decoder (the older lenient behavior). The accepted set prefers the decoder's
-// MultiContentTypeDecoder.ContentTypes() (which is how a form declares both
-// urlencoded and multipart), falling back to the single-valued
-// RequestDecoder.ContentType().
-func WithStrictContentType(strict bool) Option {
-	return func(s *Server) { s.strictContentType = strict }
-}
-
-// WithNotFoundHandler 注册自定义 404 处理器,替代默认 JSON 错误体。处理器在全局中间件
-// 链内运行,可读取请求并完全接管响应。nil 时回退默认错误体。
-// WithNotFoundHandler registers a custom 404 handler replacing the default JSON
-// error body. It runs inside the global middleware chain, can read the request,
-// and fully owns the response. A nil handler falls back to the default body.
-func WithNotFoundHandler(h RawHandlerFunc) Option {
-	return func(s *Server) { s.notFoundHandler = h }
-}
-
-// WithMethodNotAllowedHandler 注册自定义 405 处理器。框架仍会先设置 Allow 头,再调用
-// 该处理器。nil 时回退默认错误体。
-// WithMethodNotAllowedHandler registers a custom 405 handler. The framework still
-// sets the Allow header first, then invokes the handler. Nil falls back to the
-// default body.
-func WithMethodNotAllowedHandler(h RawHandlerFunc) Option {
-	return func(s *Server) { s.methodNotAllowedHandler = h }
-}
-
-// ---------------------------------------------------------------------------
-// 监听与超时选项 / Listener and timeout options
-// ---------------------------------------------------------------------------
-
-// WithAddr 设置监听地址（形如 ":8080" 或 "127.0.0.1:8080"）。
-// WithAddr sets the listen address (e.g. ":8080" or "127.0.0.1:8080").
-func WithAddr(addr string) Option {
-	return func(s *Server) { s.httpSrv.Addr = addr }
-}
-
-// WithReadTimeout 设置读取整个请求（含 body）的最大时长；<=0 表示无超时。
-// WithReadTimeout caps reading the entire request (including body); <=0 disables.
-func WithReadTimeout(d time.Duration) Option {
-	return func(s *Server) { s.httpSrv.ReadTimeout = d }
-}
-
-// WithReadHeaderTimeout 设置读取请求头的最大时长；<=0 表示回退到 ReadTimeout。
-// WithReadHeaderTimeout caps reading request headers; <=0 falls back to ReadTimeout.
-func WithReadHeaderTimeout(d time.Duration) Option {
-	return func(s *Server) { s.httpSrv.ReadHeaderTimeout = d }
-}
-
-// WithWriteTimeout 设置写响应的最大时长；<=0 表示无超时。
-// WithWriteTimeout caps writing the response; <=0 disables.
-func WithWriteTimeout(d time.Duration) Option {
-	return func(s *Server) { s.httpSrv.WriteTimeout = d }
-}
-
-// WithIdleTimeout 设置 keep-alive 连接的空闲最大时长；<=0 表示无超时。
-// WithIdleTimeout caps idle time for keep-alive connections; <=0 disables.
-func WithIdleTimeout(d time.Duration) Option {
-	return func(s *Server) { s.httpSrv.IdleTimeout = d }
-}
-
-// WithMaxHeaderBytes 设置请求头（含请求行）解析的最大字节数；<=0 用标准库默认。
-// WithMaxHeaderBytes caps bytes parsed for request headers (incl. request line);
-// <=0 uses the standard-library default.
-func WithMaxHeaderBytes(n int) Option {
-	return func(s *Server) {
-		if n > 0 {
-			s.httpSrv.MaxHeaderBytes = n
+		if opt != nil {
+			opt(&config)
 		}
 	}
+	if config.errorHandler == nil {
+		config.errorHandler = defaultErrorHandler
+	}
+	return &Server{
+		router: newRouter(),
+		config: config,
+	}
 }
 
-// WithTLSConfig 直接注入 *tls.Config（用于 mTLS、自定义 CA、ALPN 等高级场景）。
-// WithTLSConfig injects a *tls.Config directly (for mTLS, custom CA, ALPN, etc.).
-func WithTLSConfig(cfg *tls.Config) Option {
-	return func(s *Server) { s.httpSrv.TLSConfig = cfg }
-}
-
-// WithBaseContext 设置所有入站请求的根 context 构造器，便于注入全局取消或值。
-// WithBaseContext sets the base-context constructor for all inbound requests,
-// useful for injecting global cancellation or values.
-func WithBaseContext(fn func(net.Listener) context.Context) Option {
-	return func(s *Server) { s.httpSrv.BaseContext = fn }
-}
-
-// ---------------------------------------------------------------------------
-// 启动与关闭 / Startup and shutdown
-// ---------------------------------------------------------------------------
-
-// Run 在 addr 上阻塞式启动明文 HTTP 服务。addr 非空时覆盖 WithAddr 的配置;二者皆空
-// 时默认 ":8080"。正常关闭返回 ErrServerClosed(可 errors.Is 判定)。启动后可从另一
-// goroutine 调 Shutdown 优雅停止。监听失败(如端口被占用)时返回该错误,且 Server 退回未
-// 启动状态,可换 addr 重试。
-// Run starts a plaintext HTTP server on addr and blocks. A non-empty addr overrides
-// WithAddr; if both are empty it defaults to ":8080". A clean shutdown returns
-// ErrServerClosed (test via errors.Is). After starting, call Shutdown from another
-// goroutine to stop gracefully. If listening fails (e.g. the port is already in use)
-// that error is returned and the Server falls back to not-started, so it can be
-// retried on another addr.
-func (s *Server) Run(addr string) error {
-	// 先过启动守卫再写 Addr:守卫是互斥的,只有胜出的那次调用会改配置,从而避免并发 Run
-	// 同时写 httpSrv.Addr 造成数据竞争。
-	// Take the start guard before writing Addr: the guard is mutually exclusive, so
-	// only the winning call mutates configuration, avoiding a data race on
-	// httpSrv.Addr between concurrent Run calls.
-	if err := s.markStarted(); err != nil {
-		return err
-	}
-	if addr != "" {
-		s.httpSrv.Addr = addr
-	}
-	if s.httpSrv.Addr == "" {
-		s.httpSrv.Addr = ":8080"
-	}
-	return s.endRun(s.httpSrv.ListenAndServe())
-}
-
-// RunTLS 在 addr 上阻塞式启动 HTTPS 服务。addr 非空时覆盖 WithAddr 的配置;二者皆空
-// 时默认 ":8443"。若已注入 TLSConfig,certFile/keyFile 可为空;否则二者必填。
-// RunTLS starts an HTTPS server on addr and blocks. A non-empty addr overrides
-// WithAddr; if both are empty it defaults to ":8443". certFile/keyFile may be empty
-// if a TLSConfig was injected; otherwise both are required.
-func (s *Server) RunTLS(addr, certFile, keyFile string) error {
-	if s.httpSrv.TLSConfig == nil && (certFile == "" || keyFile == "") {
-		return ErrTLSConfig
-	}
-	// 同 Run:守卫先行,确保只有一次调用写 Addr。
-	// As in Run: guard first so only one call writes Addr.
-	if err := s.markStarted(); err != nil {
-		return err
-	}
-	if addr != "" {
-		s.httpSrv.Addr = addr
-	}
-	if s.httpSrv.Addr == "" {
-		s.httpSrv.Addr = ":8443"
-	}
-	return s.endRun(s.httpSrv.ListenAndServeTLS(certFile, keyFile))
-}
-
-// Serve 在已有 net.Listener 上启动服务，供自定义监听器（Unix socket、限流监听等）
-// 或测试注入使用。
-// Serve runs the server on an existing net.Listener, for custom listeners (Unix
-// socket, throttled listener, etc.) or test injection.
-func (s *Server) Serve(l net.Listener) error {
-	if err := s.markStarted(); err != nil {
-		return err
-	}
-	return s.endRun(s.httpSrv.Serve(l))
-}
-
-// ServeTLS 在已有 net.Listener 上启动 HTTPS 服务。若已注入 TLSConfig（含证书），
-// certFile/keyFile 可为空；否则二者必填。供自定义监听器或测试注入使用。
-// ServeTLS runs an HTTPS server on an existing net.Listener. certFile/keyFile may
-// be empty if a TLSConfig with certificates was injected; otherwise both are
-// required. For custom listeners or test injection.
-func (s *Server) ServeTLS(l net.Listener, certFile, keyFile string) error {
-	hasConfigCert := s.httpSrv.TLSConfig != nil && len(s.httpSrv.TLSConfig.Certificates) > 0
-	if !hasConfigCert && (certFile == "" || keyFile == "") {
-		return ErrTLSConfig
-	}
-	if err := s.markStarted(); err != nil {
-		return err
-	}
-	return s.endRun(s.httpSrv.ServeTLS(l, certFile, keyFile))
-}
-
-// Shutdown 优雅关闭：先关监听器拒绝新连接，再等待进行中请求完成，直到 ctx 到期。
-// 幂等，且【每个】调用者(含并发调用)都等到真正排空完成才返回；ctx 到期时返回其错误。
-//
-// 每次调用都下沉到标准库,而不对重复调用提前 return nil:http.Server.Shutdown 本身可
-// 重复调用,并让每个调用者都等到排空完成。若在此短路,第二个调用者会在实际尚未排空时
-// 拿到 nil,误判为已完成。
-//
-// Shutdown gracefully stops the server: it closes listeners to reject new
-// connections, then waits for in-flight requests until ctx expires. Idempotent, and
-// EVERY caller (including concurrent ones) waits for the drain to actually finish;
-// it returns ctx's error if ctx expires first.
-//
-// Each call delegates to the standard library rather than short-circuiting a repeat
-// call with nil: http.Server.Shutdown is itself safe to call repeatedly and makes
-// every caller wait for completion. Short-circuiting here would hand a second
-// caller a nil before the drain finished, misreporting completion.
-func (s *Server) Shutdown(ctx context.Context) error {
-	s.markClosed()
-	return s.httpSrv.Shutdown(ctx)
-}
-
-// Close 立即关闭：强制中断所有活动连接，不等待进行中请求。仅用于紧急停止。
-// 与 Shutdown 同理,每次调用都下沉到标准库以传递真实的关闭结果(标准库在监听器已摘除后
-// 重复调用返回 nil,故仍是幂等的)。
-// Close stops immediately, forcibly interrupting all active connections without
-// waiting for in-flight requests. Use only for emergency stops. As with Shutdown,
-// each call delegates to the standard library so the real close result propagates
-// (the stdlib returns nil once listeners are already detached, so it stays
-// idempotent).
-func (s *Server) Close() error {
-	s.markClosed()
-	return s.httpSrv.Close()
-}
-
-// markStarted 原子地把 Server 标记为已启动，重复启动或关闭后启动均报错。
-// markStarted atomically flags the server started, rejecting a double start or a
-// start after close.
-func (s *Server) markStarted() error {
+// Use 添加全局中间件。全局中间件包裹整个分发过程，404/405/TSR 也会经过它们。
+// 启动后调用被忽略并经 WithErrorLog 告警；nil 中间件被忽略并告警。
+// Use adds global middleware. It wraps the whole dispatch, so 404/405/TSR pass through
+// it as well. Calls after start are ignored with a warning via WithErrorLog; nil
+// middleware is ignored with a warning.
+func (s *Server) Use(middleware ...Middleware) *Server {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	switch s.state {
-	case stateIdle:
-		s.state = stateRunning
-		s.serving.Store(true)
-		return nil
-	case stateRunning:
-		return ErrServerStarted
+
+	if s.started.Load() {
+		s.logf("ghttp: Use called after the server started; %d middleware ignored", len(middleware))
+		return s
 	}
-	// 仅剩 stateClosed:已终结的 Server 不可复用。
-	// Only stateClosed remains: a terminated Server cannot be reused.
-	return ErrServerNotStartable
+	for _, m := range middleware {
+		if m == nil {
+			s.logf("ghttp: nil middleware passed to Use; ignored")
+			continue
+		}
+		s.middleware = append(s.middleware, m)
+	}
+	return s
 }
 
-// endRun 收敛一次启动调用的结局。监听失败(端口被占用、权限不足、地址非法)意味着 Server
-// 从未真正服务过,必须退回 stateIdle;否则它会永久停在 stateRunning——IsStarted 谎报正在
-// 服务,换端口重试又被 ErrServerStarted 挡回,Server 成为不可用的僵尸对象。
-//
-// 回退本身也是一次复合判定:仅当自己仍是 stateRunning 时才退回。若期间已有 Shutdown/Close
-// 把状态推进到 stateClosed(正常关闭正是这条路径,底层返回 ErrServerClosed),必须保留终态;
-// 无条件回退才会造成真正的状态污染——把一个已关闭的 Server 改回可启动。
-//
-// endRun settles the outcome of one start call. A listen failure (port already in
-// use, insufficient privileges, malformed address) means the server never served at
-// all, so it must fall back to stateIdle; otherwise it would sit in stateRunning
-// forever — IsStarted lying that it serves and a retry on another port bouncing off
-// ErrServerStarted, leaving an unusable zombie.
-//
-// The rollback is itself a compound decision: fall back only while still
-// stateRunning. If Shutdown/Close has meanwhile advanced the state to stateClosed
-// (the normal-shutdown path, where the stdlib returns ErrServerClosed), that terminal
-// state must survive; an unconditional rollback is what would truly corrupt state, by
-// turning a closed Server back into a startable one.
-func (s *Server) endRun(err error) error {
-	if err == nil || errors.Is(err, ErrServerClosed) {
-		return err
-	}
+// With 追加对之后注册的路由（以及之后创建的 Group）生效的默认路由选项，如 WithMiddleware、
+// WithBodyLimit。WithInput/WithOutput 只能用于路由级，放在这里会使注册失败。
+// With appends default route options applied to routes registered (and groups created)
+// afterwards, such as WithMiddleware and WithBodyLimit. WithInput/WithOutput are
+// route-level only and make registration fail here.
+func (s *Server) With(opts ...Option) *Server {
 	s.mu.Lock()
-	if s.state == stateRunning {
-		s.state = stateIdle
-		// serving 与 state 是同一"已启动"事实的两个投影(markStarted 同时置位),回退
-		// 必须成对:只退 state 会留下半僵尸——IsStarted()=false 却因 serving 仍为 true
-		// 而永久拒绝 RawHandle,换端口重试前想补注册路由都做不到。
-		// serving and state are two projections of the same "started" fact
-		// (markStarted sets both), so the rollback must be paired: resetting state
-		// alone leaves a half-zombie — IsStarted()=false yet RawHandle rejected
-		// forever because serving stayed true, so routes cannot even be added
-		// before retrying on another port.
-		s.serving.Store(false)
+	defer s.mu.Unlock()
+
+	if s.started.Load() {
+		s.logf("ghttp: With called after the server started; options ignored")
+		return s
 	}
+	s.defaults = append(s.defaults, opts...)
+	return s
+}
+
+// Register 注册路由。整批路由先全部校验与编译，再逐条安装；安装期冲突不会回滚已安装的路由。
+// 服务启动后调用返回 ErrRegistrationAfterStart。
+// Register registers routes. The whole batch is validated and compiled first, then
+// installed one by one; a conflict during installation does not roll back routes already
+// installed. Returns ErrRegistrationAfterStart after the server started.
+func (s *Server) Register(routes ...Route) error {
+	s.mu.Lock()
+	defaults := append([]Option(nil), s.defaults...)
 	s.mu.Unlock()
-	return err
+	return s.register("", defaults, routes)
 }
 
-// markClosed 置为已关闭终态。幂等且无错误可报——关闭是终态,重复置入无副作用。
-// markClosed moves to the terminal closed state. Idempotent with nothing to report:
-// closed is terminal, so re-entering it has no effect.
-func (s *Server) markClosed() {
+// Group 创建路由分组，分组继承此刻 Server.With 设置的默认选项。
+// Group creates a route group inheriting the Server.With defaults set so far.
+func (s *Server) Group(prefix string, opts ...GroupOption) *Group {
 	s.mu.Lock()
-	s.state = stateClosed
+	defaults := append([]Option(nil), s.defaults...)
 	s.mu.Unlock()
+	return newGroup(s, prefix, defaults, opts)
 }
 
-// IsStarted 报告 Server 是否正在服务(已启动且尚未关闭)。关闭后返回 false——生命周期
-// 是三态的,"正在运行"与"已关闭"互斥。
-// IsStarted reports whether the server is serving (started and not yet closed). It
-// returns false after close: the lifecycle is three-state, so "running" and "closed"
-// are mutually exclusive.
-func (s *Server) IsStarted() bool {
+// preparedRoute 是校验并编译完成、等待安装的路由。
+// preparedRoute is a validated, compiled route awaiting installation.
+type preparedRoute struct {
+	method  string
+	path    string
+	handler Handler
+	info    RouteInfo
+}
+
+// register 合并默认选项、校验并编译整批路由，然后安装。
+// register merges defaults, validates and compiles the whole batch, then installs it.
+func (s *Server) register(prefix string, defaults []Option, routes []Route) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.state == stateRunning
+
+	if s.started.Load() {
+		return ErrRegistrationAfterStart
+	}
+
+	prepared := make([]preparedRoute, 0, len(routes))
+	for _, r := range routes {
+		p, err := s.prepare(prefix, defaults, r)
+		if err != nil {
+			return fmt.Errorf("ghttp: route %s %s: %w", r.Method, joinPaths(prefix, r.Path), err)
+		}
+		prepared = append(prepared, p)
+	}
+	for _, p := range prepared {
+		route := Route{Method: p.method, Path: p.path, compiledHandler: p.handler}
+		if err := s.router.addRoute(route); err != nil {
+			return fmt.Errorf("ghttp: failed to register route %s %s: %w", p.method, p.path, err)
+		}
+		s.routes = append(s.routes, p.info)
+	}
+	return nil
 }
 
-// IsClosed 报告 Server 是否已关闭。
-// IsClosed reports whether the server has been shut down.
-func (s *Server) IsClosed() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.state == stateClosed
+// prepare 校验单个路由并按"默认选项 → 路由选项"的顺序编译处理器。
+// prepare validates one route and compiles its handler with defaults first, then route options.
+func (s *Server) prepare(prefix string, defaults []Option, r Route) (preparedRoute, error) {
+	if err := r.Err(); err != nil {
+		return preparedRoute{}, err
+	}
+	if !validMethod(r.Method) {
+		return preparedRoute{}, fmt.Errorf("invalid HTTP method %q", r.Method)
+	}
+	path, err := canonicalRoutePath(joinPaths(prefix, r.Path))
+	if err != nil {
+		return preparedRoute{}, err
+	}
+
+	var o routeOptions
+	o.apply(defaults)
+	if o.input != nil || o.output != nil {
+		return preparedRoute{}, errors.New("WithInput/WithOutput are route-level options")
+	}
+	o.apply(r.opts)
+	if o.err != nil {
+		return preparedRoute{}, o.err
+	}
+
+	h := r.compiledHandler
+	if r.build != nil {
+		if h, err = r.build(o); err != nil {
+			return preparedRoute{}, err
+		}
+	}
+	if h == nil {
+		return preparedRoute{}, errors.New("nil handler")
+	}
+	for i := len(o.middleware) - 1; i >= 0; i-- {
+		if h = o.middleware[i](h); h == nil {
+			return preparedRoute{}, errors.New("middleware returned a nil handler")
+		}
+	}
+
+	limit := o.bodyLimit
+	if limit == 0 {
+		limit = s.config.maxBodyBytes
+	}
+	if limit > 0 {
+		h = limitBody(limit, h)
+	}
+	info := RouteInfo{Method: r.Method, Path: path, Kind: r.meta.kind, BodyType: r.meta.bodyType,
+		ResultType: r.meta.resultType, Doc: o.doc}
+	if info.Kind == "" {
+		info.Kind = RouteRaw
+	}
+	return preparedRoute{method: r.Method, path: path, handler: h, info: info}, nil
 }
 
-// unwrap 暴露底层 *http.Server，仅供同包测试断言配置用。
-// unwrap exposes the underlying *http.Server for same-package test assertions.
-func (s *Server) unwrap() *http.Server {
-	return s.httpSrv
+// limitBody 用 http.MaxBytesReader 限制请求体；读取超限返回 *http.MaxBytesError（映射为 413）。
+// 只包装 body，不提前读取，保持 lazy 解码语义。
+// limitBody caps the request body with http.MaxBytesReader; reading past it yields
+// *http.MaxBytesError (mapped to 413). It only wraps the body and never reads ahead,
+// keeping decoding lazy.
+func limitBody(limit int64, next Handler) Handler {
+	return func(ctx context.Context, req *Request, resp *Response) error {
+		if b := req.Raw.Body; b != nil && b != http.NoBody {
+			req.Raw.Body = http.MaxBytesReader(resp.Writer, b, limit)
+		}
+		return next(ctx, req, resp)
+	}
+}
+
+// frozenHandler 固化并返回全局处理链；首次调用时标记服务已启动。
+// frozenHandler freezes and returns the global chain, marking the server started on first call.
+func (s *Server) frozenHandler() Handler {
+	s.freezeOnce.Do(func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		h := Handler(s.dispatch)
+		for i := len(s.middleware) - 1; i >= 0; i-- {
+			if h = s.middleware[i](h); h == nil {
+				// 不能跳过该中间件（它可能是鉴权），因此让所有请求失败并告警
+				// The middleware cannot be skipped (it may be auth), so fail every request and warn
+				s.logf("ghttp: global middleware #%d returned a nil handler; all requests will fail with 500", i)
+				h = func(context.Context, *Request, *Response) error {
+					return HTTPError{Status: http.StatusInternalServerError, Message: ErrInternalServerError.Message,
+						Cause: errors.New("ghttp: global middleware returned a nil handler")}
+				}
+				break
+			}
+		}
+		s.handler = h
+		s.started.Store(true)
+	})
+	return s.handler
+}
+
+// ServeHTTP 实现 http.Handler：先校验路径并匹配路由（使中间件可读取 Request.Route），
+// 再执行全局处理链，最后把返回的错误交给错误处理器。
+// ServeHTTP implements http.Handler: it validates the path and matches the route first
+// (so middleware can read Request.Route), runs the global chain, and hands any returned
+// error to the error handler.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h := s.frozenHandler()
+
+	req := &Request{Raw: r}
+	resp := &Response{Writer: w}
+
+	if validRequestPath(r.URL.Path, s.config.strictPath) {
+		req.match = s.router.find(r.Method, r.URL.Path)
+		req.Params = req.match.params
+		req.matched = req.match.fullPath
+	} else {
+		req.badPath = true
+	}
+
+	ctx := r.Context()
+	if err := h(ctx, req, resp); err != nil {
+		s.handleError(ctx, req, resp, err)
+	}
+}
+
+// dispatch 是全局链的终端：执行匹配的路由，否则依次处理非法路径、TSR、自动 OPTIONS、405、404。
+// dispatch is the terminal of the global chain: it runs the matched route, otherwise
+// handles bad paths, TSR, automatic OPTIONS, 405 and 404 in that order.
+func (s *Server) dispatch(ctx context.Context, req *Request, resp *Response) error {
+	if h := req.match.handler; h != nil {
+		return h(ctx, req, resp)
+	}
+	if req.badPath {
+		return ErrInvalidRequestPath
+	}
+
+	r := req.Raw
+	if req.match.tsr && r.Method != http.MethodConnect {
+		if target, ok := tsrPath(r.URL.Path); ok {
+			redirectTrailingSlash(resp, r, target)
+			return nil
+		}
+	}
+	if s.config.fixPath && r.Method != http.MethodConnect {
+		if target, ok := s.router.fixedPath(r.Method, r.URL.Path); ok && safeRedirectPath(target) {
+			redirectTrailingSlash(resp, r, target)
+			return nil
+		}
+	}
+	if allow := s.router.allowed(r.URL.Path); len(allow) > 0 {
+		resp.Header().Set("Allow", strings.Join(allowWithOptions(allow), ", "))
+		if r.Method == http.MethodOptions {
+			resp.WriteHeader(http.StatusNoContent)
+			return nil
+		}
+		return ErrMethodNotAllowed
+	}
+	return ErrNotFound
+}
+
+// allowWithOptions 在 Allow 列表中补上自动应答的 OPTIONS。
+// allowWithOptions adds the automatically answered OPTIONS to the Allow list.
+func allowWithOptions(allow []string) []string {
+	for _, m := range allow {
+		if m == http.MethodOptions {
+			return allow
+		}
+	}
+	return append(allow, http.MethodOptions)
+}
+
+// safeRedirectPath 报告 p 是否可作为站内重定向目标（不会被浏览器当作协议相对 URL）。
+// safeRedirectPath reports whether p is a safe same-site redirect target (not a
+// protocol-relative URL to browsers).
+func safeRedirectPath(p string) bool {
+	return len(p) > 0 && p[0] == '/' && (len(p) == 1 || (p[1] != '/' && p[1] != '\\'))
+}
+
+// redirectTrailingSlash 执行站内路径重定向（尾斜杠或路径修正），保留查询串；GET/HEAD 用 301，
+// 其他方法用 308。
+// redirectTrailingSlash performs a same-site path redirect (trailing slash or fixed path),
+// keeping the query string; 301 for GET/HEAD, 308 otherwise.
+func redirectTrailingSlash(resp *Response, r *http.Request, target string) {
+	u := *r.URL
+	u.Path = target
+	u.RawPath = ""
+	u.Scheme, u.Host, u.User = "", "", nil
+	http.Redirect(resp, r, u.String(), tsrStatus(r.Method))
+}
+
+// handleError 处理请求执行过程中的错误。响应已提交时无法再改写，只记录日志。
+// handleError handles errors during request execution. Once the response is committed it
+// can no longer be rewritten, so the error is only logged.
+func (s *Server) handleError(ctx context.Context, req *Request, resp *Response, err error) {
+	if resp.hijacked {
+		s.logf("ghttp: %s %s: error after the connection was hijacked: %s",
+			wire.LogToken(req.Raw.Method), wire.LogToken(req.Raw.URL.Path), wire.LogToken(err.Error()))
+		return
+	}
+	if resp.written {
+		s.logf("ghttp: %s %s: error after response was committed: %s",
+			wire.LogToken(req.Raw.Method), wire.LogToken(req.Raw.URL.Path), wire.LogToken(err.Error()))
+		return
+	}
+	s.config.errorHandler(ctx, req, resp, err)
+}
+
+// logf 输出框架内部告警：优先 WithLogger（Warnf），其次 WithErrorLog，最后 log 包。
+// logf emits framework warnings: WithLogger (Warnf) first, then WithErrorLog, then the log package.
+func (s *Server) logf(format string, args ...any) {
+	if s.config.logger != nil {
+		s.config.logger.Warnf(format, args...)
+		return
+	}
+	if s.config.errorLog != nil {
+		s.config.errorLog.Printf(format, args...)
+		return
+	}
+	log.Printf(format, args...)
+}
+
+// defaultErrorHandler 是默认的错误处理器：按 StatusFromError 选择状态码，写出 JSON ErrorResponse。
+// defaultErrorHandler is the default error handler: it picks the status via
+// StatusFromError and writes a JSON ErrorResponse.
+func defaultErrorHandler(_ context.Context, _ *Request, resp *Response, err error) {
+	if err == nil || resp.written {
+		return
+	}
+	body := ErrorResponseOf(err)
+	_ = writeJSON(resp, body.Status, body)
 }

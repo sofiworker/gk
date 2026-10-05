@@ -1,216 +1,223 @@
 package ghttp
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
+
+	"github.com/sofiworker/gk/ghttp/wire"
 )
 
-// 注册期错误(骨架阶段先声明哨兵,后续阶段填充校验逻辑)。
-// Registration-time errors (sentinels declared now; validation logic lands in
-// later stages).
-var (
-	// ErrEmptyPath 表示注册路径为空或不以 "/" 开头。
-	// ErrEmptyPath indicates an empty path or one not starting with "/".
-	ErrEmptyPath = errors.New("ghttp: path must start with '/'")
+// HTTPError 表示 HTTP 错误，包含状态码、消息和底层原因。
+// HTTPError represents an HTTP error with status code, message, and underlying cause.
+type HTTPError struct {
+	// Status 是 HTTP 状态码。
+	// Status is the HTTP status code.
+	Status int
 
-	// ErrDuplicateRoute 表示同一 method + path 被重复注册。
-	// ErrDuplicateRoute indicates the same method + path was registered twice.
-	ErrDuplicateRoute = errors.New("ghttp: duplicate route registration")
+	// Message 是面向客户端的错误消息。
+	// Message is the client-facing error message.
+	Message string
 
-	// ErrInvalidParam 表示参数名非法或重复。
-	// ErrInvalidParam indicates an illegal or duplicated parameter name.
-	ErrInvalidParam = errors.New("ghttp: invalid path parameter")
-
-	// ErrCatchAllPosition 表示 catch-all 段不在路径末尾。
-	// ErrCatchAllPosition indicates a catch-all segment is not the last one.
-	ErrCatchAllPosition = errors.New("ghttp: catch-all must be the final segment")
-
-	// ErrMissingOutput 表示 typed 端点未声明输出契约。
-	// ErrMissingOutput indicates a typed endpoint declared no output contract.
-	ErrMissingOutput = errors.New("ghttp: endpoint declares no output spec")
-
-	// ErrMissingCodec 表示 Body 来源未提供 codec。
-	// ErrMissingCodec indicates a Body source was given no codec.
-	ErrMissingCodec = errors.New("ghttp: body source requires a codec")
-)
-
-// 请求期错误(骨架阶段先声明,后续接入统一错误链)。
-// Request-time errors (declared now; wired into the unified error chain later).
-var (
-	// ErrInvalidRequestPath 表示请求路径非法(空段 / dot 段 / 非法转义 /
-	// strict 下的尾斜杠),对应 400。
-	// ErrInvalidRequestPath indicates an invalid request path (empty / dot
-	// segment, invalid escape, or a trailing slash under strict), mapping to 400.
-	ErrInvalidRequestPath = errors.New("ghttp: invalid request path")
-
-	// ErrInvalidInput 表示输入解析失败(路径参数类型不符 / 请求体解码失败等),
-	// 对应 400。阶段 4 接入统一错误链后据此映射状态码。
-	// ErrInvalidInput indicates input parsing failure (path param type mismatch,
-	// body decode failure, etc.), mapping to 400. Stage 4's unified error chain
-	// maps the status from it.
-	ErrInvalidInput = errors.New("ghttp: invalid input")
-)
-
-// 运行期/服务错误。
-// Runtime/server errors.
-var (
-	// ErrNotReady 表示就绪门闸尚未置为就绪,由 Ready 探针据此返回 503。
-	// ErrNotReady indicates a readiness gate is not yet ready; the Ready probe
-	// returns 503 based on it.
-	ErrNotReady = errors.New("ghttp: not ready")
-
-	// ErrShuttingDown 是 RunGraceful 收到停止信号后置就绪门闸的不就绪原因,使 Ready
-	// 探针返回 503,让负载均衡器摘流。
-	// ErrShuttingDown is the not-ready cause RunGraceful sets on the readiness gate
-	// after a stop signal, so the Ready probe returns 503 and the load balancer
-	// drains traffic.
-	ErrShuttingDown = errors.New("ghttp: shutting down")
-
-	// ErrServerClosed 是 Serve 系方法在正常关闭后返回的哨兵,等价于
-	// http.ErrServerClosed。导出以供调用方 errors.Is 判断"正常关闭"而非异常。
-	// ErrServerClosed is the sentinel returned by the Serve family after a clean
-	// shutdown; it aliases http.ErrServerClosed. Exported so callers can errors.Is
-	// it to distinguish a normal close from a failure.
-	ErrServerClosed = http.ErrServerClosed
-
-	// ErrServerStarted 表示 Server 已启动,再次启动(重复启动)失败。
-	// ErrServerStarted indicates the Server was already started, so starting it
-	// again fails.
-	ErrServerStarted = errors.New("ghttp: server already started")
-
-	// ErrServerNotStartable 表示 Server 已关闭(经 Shutdown 或 Close),不可再启动。
-	// 与 ErrServerClosed 区分:后者表示一次正常关闭的【结果】,本错误表示生命周期
-	// 阶段错误——试图复用一个已终结的 Server。
-	// ErrServerNotStartable indicates the Server is already closed (via Shutdown or
-	// Close) and cannot be started again. Distinct from ErrServerClosed: the latter
-	// is the OUTCOME of a clean close, while this is a lifecycle error — attempting
-	// to reuse a terminated Server.
-	ErrServerNotStartable = errors.New("ghttp: server already closed")
-
-	// ErrRegistrationAfterStart 表示在服务已开始接收请求后尝试注册端点，被拒绝。
-	// 路由树是无锁读的结构，运行期写会与匹配路径构成数据竞争（race detector 直接判
-	// 死），因此宁可显式拒绝，也不留"多数时候能用、压测时随机崩"的陷阱。确需热注册请
-	// 显式走 COW 或另建实例。
-	// ErrRegistrationAfterStart refuses an endpoint registration after the server
-	// began accepting requests. The route tree is read lock-free, so a runtime write
-	// races with matching (the race detector rightly fails). Refusing explicitly beats
-	// a "works until load-tested" trap; use copy-on-write or a second instance if hot
-	// registration is genuinely required.
-	ErrRegistrationAfterStart = errors.New("ghttp: cannot register after the server started serving")
-
-	// ErrTLSConfig 表示 TLS 配置不足:RunTLS/ServeTLS 既未注入含证书的
-	// TLSConfig,也未提供 certFile/keyFile。调用方可经 errors.Is 判定 TLS 校验失败。
-	// ErrTLSConfig indicates insufficient TLS configuration: RunTLS/ServeTLS was
-	// given neither a TLSConfig with certificates nor certFile/keyFile. Callers can
-	// errors.Is it to detect a TLS-validation failure.
-	ErrTLSConfig = errors.New("ghttp: TLS requires certFile and keyFile, or a TLSConfig")
-
-	// ErrHandlerPanic 是无 Recovery 中间件时,最外层兜底 recover 把 handler panic
-	// 收敛成的错误(经统一错误链写 500)。调用方可经 errors.Is 区分 panic 与普通错误。
-	// ErrHandlerPanic is the error the outermost safety-net recover collapses a
-	// handler panic into when no Recovery middleware is present (written as 500 via
-	// the unified error chain). Callers can errors.Is it to distinguish a panic from
-	// an ordinary error.
-	ErrHandlerPanic = errors.New("ghttp: handler panicked")
-
-	// ErrUnsupportedMediaType 表示请求的 Content-Type 与端点声明的
-	// RequestDecoder.ContentType() 不符,对应 415。由统一错误链据此映射状态码。
-	// ErrUnsupportedMediaType indicates the request Content-Type does not match
-	// the endpoint's declared RequestDecoder.ContentType(), mapping to 415. The
-	// unified error chain maps the status from it.
-	ErrUnsupportedMediaType = errors.New("ghttp: unsupported media type")
-
-	// ErrRequestEntityTooLarge 表示请求体超过 LimitBody 配置的上限,对应 413。
-	// ErrRequestEntityTooLarge indicates the body exceeds the LimitBody cap,
-	// mapping to 413.
-	ErrRequestEntityTooLarge = errors.New("ghttp: request entity too large")
-
-	// ErrRateLimitExceeded 表示请求因 RateLimit 中间件被拒绝,对应 429 Too Many Requests。
-	// 调用方可经 errors.Is 判定,自定义错误渲染器亦可据此区分限流与其它 4xx。
-	// ErrRateLimitExceeded indicates the request was rejected by the RateLimit middleware,
-	// mapping to 429 Too Many Requests. Callers can errors.Is it, and a custom error renderer
-	// can distinguish throttling from other 4xx cases.
-	ErrRateLimitExceeded = errors.New("ghttp: rate limit exceeded")
-
-	// ErrCSRFTokenInvalid 表示 CSRF 校验失败(token 缺失、不匹配或来源不可信),对应 403。
-	// 统一用一个哨兵而不区分具体原因:向客户端区分"缺 token"与"token 错"会泄露防护细节。
-	// ErrCSRFTokenInvalid indicates CSRF verification failed (token missing, mismatched,
-	// or untrusted origin), mapping to 403. A single sentinel covers every cause on
-	// purpose: telling a client "missing" from "mismatched" would leak protection detail.
-	ErrCSRFTokenInvalid = errors.New("ghttp: CSRF verification failed")
-
-	// ErrNotHijackable 表示底层 http.ResponseWriter 不支持连接接管(不实现
-	// http.Hijacker),因此无法进行 WebSocket 升级等需要夺取原始连接的操作。
-	// 常见于被不透传 Hijack 的中间件包裹、或运行在不支持 hijack 的服务器上。
-	// ErrNotHijackable indicates the underlying http.ResponseWriter does not
-	// support connection takeover (it does not implement http.Hijacker), so
-	// operations needing the raw connection such as a WebSocket upgrade cannot
-	// proceed. Typically caused by a middleware that does not pass Hijack through,
-	// or a server that does not support hijacking.
-	ErrNotHijackable = errors.New("ghttp: response writer does not support hijacking")
-
-	// ErrRequestTimeout 表示请求处理超过了 Timeout 中间件设定的时限,对应 504。
-	// 选 504 而非 503:503 表示"整个服务不可用",而这里是【单个请求】超时,上游/服务本身
-	// 仍然健康;504 Gateway Timeout 才准确表达"我等下游等超时了"。调用方可 errors.Is 它
-	// 来区分超时与其它失败,并在 WithErrorHook 中打点告警。
-	// ErrRequestTimeout indicates request handling exceeded the Timeout middleware's
-	// limit, mapping to 504.
-	// 504 rather than 503: 503 says "the whole service is unavailable", whereas this is
-	// a SINGLE request timing out while the service itself stays healthy; 504 Gateway
-	// Timeout accurately expresses "I waited for the downstream and it timed out".
-	// Callers can errors.Is it to tell a timeout from other failures and alert on it via
-	// WithErrorHook.
-	ErrRequestTimeout = errors.New("ghttp: request handling timed out")
-)
-
-// panicErr 把 recover 到的 panic 值包成错误,同时保持 errors.Is(err, ErrHandlerPanic)
-// 成立。它让 onError 钩子与日志能拿到真正的 panic 原因:此前兜底 recover 直接丢弃该值
-// (`_ = rec`),不挂 Recovery 中间件时排障只剩一句 "handler panicked",既无原因也无
-// 类型,是生产排障黑洞。
-// panicErr wraps a recovered panic value into an error while keeping
-// errors.Is(err, ErrHandlerPanic) true. It lets the onError hook and logs see the real
-// panic cause: the safety-net recover previously discarded that value (`_ = rec`), so
-// without a Recovery middleware debugging was left with just "handler panicked" — no
-// cause, no type — a production blind spot.
-type panicErr struct {
-	// value 是 recover() 的原始返回值。
-	// value is the raw recover() return value.
-	value any
+	// Cause 是底层错误原因（内部使用，不直接暴露给客户端）。
+	// Cause is the underlying error cause (internal use, not directly exposed to client).
+	Cause error
 }
 
-// Error 实现 error。
-// Error implements error.
-func (e *panicErr) Error() string {
-	return fmt.Sprintf("%s: %v", ErrHandlerPanic.Error(), e.value)
-}
-
-// Is 让 errors.Is(err, ErrHandlerPanic) 对包装后的错误仍然成立。
-// Is keeps errors.Is(err, ErrHandlerPanic) true for the wrapped error.
-func (e *panicErr) Is(target error) bool { return target == ErrHandlerPanic }
-
-// PanicValue 返回被包装的 panic 值,供调用方类型断言原始原因。
-// PanicValue returns the wrapped panic value so callers can type-assert the cause.
-func (e *panicErr) PanicValue() any { return e.value }
-
-// panicError 构造 panicErr;value 为 nil 时退回裸哨兵。
-// panicError builds a panicErr; a nil value falls back to the bare sentinel.
-func panicError(value any) error {
-	if value == nil {
-		return ErrHandlerPanic
+// Error 实现 error 接口。
+// Error implements the error interface.
+func (e HTTPError) Error() string {
+	if e.Cause != nil {
+		return fmt.Sprintf("HTTP %d: %s (cause: %v)", e.Status, e.Message, e.Cause)
 	}
-	return &panicErr{value: value}
+	return fmt.Sprintf("HTTP %d: %s", e.Status, e.Message)
 }
 
-// PanicValueOf 从错误链中提取 panic 原始值。err 非 panic 错误时返回 (nil, false)。
-// 供 onError 钩子与日志记录真正的 panic 原因。
-// PanicValueOf extracts the original panic value from an error chain, returning
-// (nil, false) when err is not a panic error. Intended for onError hooks and logs to
-// record the real panic cause.
-func PanicValueOf(err error) (any, bool) {
-	var pe *panicErr
-	if errors.As(err, &pe) {
-		return pe.value, true
+// Unwrap 实现错误链，支持 errors.Is 和 errors.Unwrap。
+// Unwrap implements error chaining, supporting errors.Is and errors.Unwrap.
+func (e HTTPError) Unwrap() error {
+	return e.Cause
+}
+
+// Is 让 HTTPError 按状态码参与 errors.Is：errors.Is(err, ErrNotFound) 对链上任意 404 HTTPError 成立，
+// 与 Message、Cause 无关。
+// Is makes HTTPError match by status in errors.Is: errors.Is(err, ErrNotFound) holds for any
+// 404 HTTPError in the chain, regardless of Message and Cause.
+func (e HTTPError) Is(target error) bool {
+	t, ok := target.(HTTPError)
+	return ok && t.Status == e.Status
+}
+
+// HTTPStatus 实现 StatusCoder，返回 HTTP 状态码。
+// HTTPStatus implements StatusCoder and returns the HTTP status code.
+func (e HTTPError) HTTPStatus() int {
+	return e.Status
+}
+
+// StatusCoder 是携带 HTTP 状态码的错误契约，与 wire.StatusCoder 及 client.StatusCoder 是同一类型。
+// StatusCoder is the contract for errors carrying an HTTP status; it is the same type as
+// wire.StatusCoder and client.StatusCoder.
+type StatusCoder = wire.StatusCoder
+
+// 编译期断言 HTTPError 满足状态码契约。
+// Compile-time assertion that HTTPError satisfies the status contract.
+var _ StatusCoder = HTTPError{}
+
+// 预定义的常见 HTTP 错误。
+// Predefined common HTTP errors.
+var (
+	// ErrBadRequest 表示 400 Bad Request。
+	// ErrBadRequest represents 400 Bad Request.
+	ErrBadRequest = HTTPError{
+		Status:  http.StatusBadRequest,
+		Message: "bad request",
 	}
-	return nil, false
+
+	// ErrInvalidInput 表示输入非法（参数缺失、类型转换失败、请求体格式错误），映射为 400。
+	// 业务代码可用 fmt.Errorf("%w: ...", ErrInvalidInput) 包装，响应中只返回本错误的 Message。
+	// ErrInvalidInput marks invalid input (missing parameter, conversion failure, malformed
+	// body) and maps to 400. Wrap it with fmt.Errorf("%w: ...", ErrInvalidInput); only this
+	// error's Message is sent to the client.
+	ErrInvalidInput = HTTPError{
+		Status:  http.StatusBadRequest,
+		Message: "invalid input",
+	}
+
+	// ErrUnauthorized 表示 401 Unauthorized。
+	// ErrUnauthorized represents 401 Unauthorized.
+	ErrUnauthorized = HTTPError{
+		Status:  http.StatusUnauthorized,
+		Message: "unauthorized",
+	}
+
+	// ErrForbidden 表示 403 Forbidden。
+	// ErrForbidden represents 403 Forbidden.
+	ErrForbidden = HTTPError{
+		Status:  http.StatusForbidden,
+		Message: "forbidden",
+	}
+
+	// ErrNotFound 表示 404 Not Found。
+	// ErrNotFound represents 404 Not Found.
+	ErrNotFound = HTTPError{
+		Status:  http.StatusNotFound,
+		Message: "not found",
+	}
+
+	// ErrMethodNotAllowed 表示 405 Method Not Allowed。
+	// ErrMethodNotAllowed represents 405 Method Not Allowed.
+	ErrMethodNotAllowed = HTTPError{
+		Status:  http.StatusMethodNotAllowed,
+		Message: "method not allowed",
+	}
+
+	// ErrRequestTimeout 表示 408 Request Timeout。
+	// ErrRequestTimeout represents 408 Request Timeout.
+	ErrRequestTimeout = HTTPError{
+		Status:  http.StatusRequestTimeout,
+		Message: "request timeout",
+	}
+
+	// ErrRequestEntityTooLarge 表示 413 Request Entity Too Large。
+	// ErrRequestEntityTooLarge represents 413 Request Entity Too Large.
+	ErrRequestEntityTooLarge = HTTPError{
+		Status:  http.StatusRequestEntityTooLarge,
+		Message: "request entity too large",
+	}
+
+	// ErrUnsupportedMediaType 表示 415 Unsupported Media Type。
+	// ErrUnsupportedMediaType represents 415 Unsupported Media Type.
+	ErrUnsupportedMediaType = HTTPError{
+		Status:  http.StatusUnsupportedMediaType,
+		Message: "unsupported media type",
+	}
+
+	// ErrInternalServerError 表示 500 Internal Server Error。
+	// ErrInternalServerError represents 500 Internal Server Error.
+	ErrInternalServerError = HTTPError{
+		Status:  http.StatusInternalServerError,
+		Message: "internal server error",
+	}
+
+	// ErrServiceUnavailable 表示 503 Service Unavailable。
+	// ErrServiceUnavailable represents 503 Service Unavailable.
+	ErrServiceUnavailable = HTTPError{
+		Status:  http.StatusServiceUnavailable,
+		Message: "service unavailable",
+	}
+)
+
+// BadRequest 创建 400 Bad Request 错误。
+// BadRequest creates a 400 Bad Request error.
+func BadRequest(msg string) HTTPError {
+	return HTTPError{
+		Status:  http.StatusBadRequest,
+		Message: msg,
+	}
+}
+
+// Unauthorized 创建 401 Unauthorized 错误。
+// Unauthorized creates a 401 Unauthorized error.
+func Unauthorized(msg string) HTTPError {
+	return HTTPError{
+		Status:  http.StatusUnauthorized,
+		Message: msg,
+	}
+}
+
+// Forbidden 创建 403 Forbidden 错误。
+// Forbidden creates a 403 Forbidden error.
+func Forbidden(msg string) HTTPError {
+	return HTTPError{
+		Status:  http.StatusForbidden,
+		Message: msg,
+	}
+}
+
+// NotFound 创建 404 Not Found 错误。
+// NotFound creates a 404 Not Found error.
+func NotFound(msg string) HTTPError {
+	return HTTPError{
+		Status:  http.StatusNotFound,
+		Message: msg,
+	}
+}
+
+// InternalServerError 创建 500 Internal Server Error 错误。
+// InternalServerError creates a 500 Internal Server Error error.
+func InternalServerError(msg string) HTTPError {
+	return HTTPError{
+		Status:  http.StatusInternalServerError,
+		Message: msg,
+	}
+}
+
+// ErrorResponse 是错误的 JSON 响应格式。
+// ErrorResponse is the JSON response format for errors.
+type ErrorResponse struct {
+	// Error 是错误消息。
+	// Error is the error message.
+	Error string `json:"error"`
+
+	// Status 是 HTTP 状态码。
+	// Status is the HTTP status code.
+	Status int `json:"status,omitempty"`
+
+	// Code 是业务错误码（可选）。
+	// Code is the business error code (optional).
+	Code string `json:"code,omitempty"`
+}
+
+// ToErrorResponse 将 HTTPError 转换为 ErrorResponse。
+// ToErrorResponse converts HTTPError to ErrorResponse.
+func (e HTTPError) ToErrorResponse() ErrorResponse {
+	return ErrorResponse{
+		Error:  e.Message,
+		Status: e.Status,
+	}
+}
+
+// WriteErrorJSON 将错误以 JSON 格式写入响应。
+// WriteErrorJSON writes the error to the response in JSON format.
+func WriteErrorJSON(resp *Response, err HTTPError) error {
+	return WriteJSON(resp, err.Status, err.ToErrorResponse())
 }

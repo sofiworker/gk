@@ -28,6 +28,7 @@ resp, err := c.R().SetQueryParam("id", 1).SetResult(&user).Get("/users")
 | **Unreplayable bodies are refused** | With retries enabled and a body that cannot be replayed, `ErrBodyNotReplayable` is returned **before the first attempt** — never a silent resend of an empty body |
 | **Zero assumptions about the server's shape** | No implicit envelope; structured error bodies are wired in explicitly via `WithErrorDecoder` |
 | **The standard library comes first** | Inject `*http.Client` / `http.RoundTripper` / `*net.Dialer` / `DialContext` / `http.CookieJar` / `CheckRedirect`, or degrade this Client into an `http.RoundTripper` |
+| **Does not link the server** | This package never imports the `ghttp` parent; the wire-format layer shared with the server (strict decoding, media types, SSE, single-line log fields, `StatusCoder`) lives in the public package [`ghttp/wire`](../wire/README.md) |
 
 ---
 

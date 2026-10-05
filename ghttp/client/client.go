@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"time"
 
-	internalcodec "github.com/sofiworker/gk/ghttp/internal/codec"
+	"github.com/sofiworker/gk/ghttp/wire"
 )
 
 // defaultResponseBodyLimit 是响应体读入内存的默认上限。取 32 MiB：足够容纳常规 API 的
@@ -620,9 +620,9 @@ func cloneValues(src url.Values) url.Values {
 	return dst
 }
 
-// mediaTypeOf 是 internal/codec.MediaType 的包内简写，供本包多处归一化使用。
-// mediaTypeOf is the in-package shorthand for internal/codec.MediaType.
-func mediaTypeOf(contentType string) string { return internalcodec.MediaType(contentType) }
+// mediaTypeOf 是 wire.MediaType 的包内简写，供本包多处归一化使用。
+// mediaTypeOf is the in-package shorthand for wire.MediaType.
+func mediaTypeOf(contentType string) string { return wire.MediaType(contentType) }
 
 // readAllLimited 读取 r 至多 limit 字节；limit <= 0 表示不限。
 // 超出时返回 ErrBodyTooLarge，并且【只】读到 limit 就不再继续，避免把超限部分也读进内存。

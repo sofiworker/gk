@@ -8,15 +8,15 @@ import (
 	"net/http"
 	"time"
 
-	internalsse "github.com/sofiworker/gk/ghttp/internal/sse"
+	"github.com/sofiworker/gk/ghttp/wire"
 	"github.com/sofiworker/gk/gretry"
 )
 
-// 本文件实现 client 侧的 Server-Sent Events 消费。线格式解析复用 ghttp/internal/sse
-// （与 server 的写端共享同一份规范实现），本文件只管连接建立、迭代与生命周期。
+// 本文件实现 client 侧的 Server-Sent Events 消费。线格式解析复用 ghttp/wire
+// （与 server 侧及用户代码共享同一份规范实现），本文件只管连接建立、迭代与生命周期。
 // This file implements client-side Server-Sent Events consumption. Wire-format parsing
-// reuses ghttp/internal/sse (one specification implementation shared with the server's
-// writer); this file handles connection setup, iteration and lifetime.
+// reuses ghttp/wire (one specification implementation shared with the server side and
+// user code); this file handles connection setup, iteration and lifetime.
 
 // SSEEvent 是一个已解析的 SSE 事件。
 // SSEEvent is one parsed SSE event.
@@ -100,7 +100,7 @@ func (c *Client) SSE(ctx context.Context, rawURL string, opts ...RequestOption) 
 // until the next real event or the end of the stream. Callers needing heartbeat
 // visibility should bound their ctx instead of relying on empty events.
 func (s *SSEStream) Next() (SSEEvent, error) {
-	ev, err := internalsse.ReadEvent(s.reader)
+	ev, err := wire.ReadSSEEvent(s.reader)
 	if err != nil {
 		return SSEEvent{}, err
 	}

@@ -1,114 +1,379 @@
 package ghttp
 
 import (
+	"bytes"
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
 
-// TestLimitBody_ContentLengthExceeded 验证 Content-Length 超限时中间件返回 413 哨兵错误。
-//
-// 断言从原先的 resp.Status()==413 改为"不提交响应 + 返回 ErrRequestEntityTooLarge":
-// 旧行为在中间件里手动 WriteHeader(413) 并返回 ErrInvalidInput(被分类成 400),
-// 客户端、onError 钩子、响应体三方不一致。中间件现在只返回错误、不碰响应,
-// 状态码由统一错误链单点决定,故这里改断言错误语义与"响应未提交"。
-func TestLimitBody_ContentLengthExceeded(t *testing.T) {
-	mw := LimitBody(100) // max 100 bytes
-	inner := false
-	handler := mw(func(ctx context.Context, req *Request, resp *Response) error {
-		inner = true
-		return nil
-	})
-
-	rec := httptest.NewRecorder()
-	req := &Request{Request: httptest.NewRequest(http.MethodPost, "/", strings.NewReader("x"))}
-	req.Header.Set("Content-Length", "200")
-	resp := &Response{ResponseWriter: rec}
-
-	err := handler(context.Background(), req, resp)
-	if err == nil {
-		t.Fatal("expected error for oversized body")
-	}
-	if !errors.Is(err, ErrRequestEntityTooLarge) {
-		t.Errorf("err = %v, want errors.Is(err, ErrRequestEntityTooLarge)", err)
-	}
-	if errors.Is(err, ErrInvalidInput) {
-		t.Errorf("err = %v, must NOT be ErrInvalidInput (that classified to 400)", err)
-	}
-	// 中间件必须把响应完全交给错误链:任何提前提交都会绕过统一 JSON 错误体。
-	if resp.Written() {
-		t.Errorf("resp.Written() = true, want false (middleware must not commit the response)")
-	}
-	if status, code := classifyError(err); status != http.StatusRequestEntityTooLarge || code != "request_entity_too_large" {
-		t.Errorf("classifyError = (%d,%q), want (413,%q)", status, code, "request_entity_too_large")
-	}
-	if inner {
-		t.Error("terminal handler must not run for an oversized body")
-	}
+// mockResponseWriter 是用于基准测试的轻量级 ResponseWriter。
+// mockResponseWriter is a lightweight ResponseWriter for benchmarking.
+type mockResponseWriter struct {
+	header     http.Header
+	statusCode int
+	written    int
 }
 
-// TestLimitBody_NoCLWithMaxBytesReader 验证无 Content-Length 时 Body 被包成
-// MaxBytesReader，读超限返回 *http.MaxBytesError,且该错误可被分类成 413。
-//
-// 原用例全是 t.Log 无任何断言(REVIEW 已指出),这里补成真断言:既守住
-// MaxBytesReader 确实被挂上,也守住其错误类型仍是错误链 413 分支的输入。
-func TestLimitBody_NoCLWithMaxBytesReader(t *testing.T) {
-	mw := LimitBody(100) // max 100 bytes
-	var readErr error
-	var readN int
-	handler := mw(func(ctx context.Context, req *Request, resp *Response) error {
-		var b [200]byte
-		readN, readErr = io.ReadFull(req.Body, b[:])
-		return readErr
-	})
-
-	rec := httptest.NewRecorder()
-	largePayload := strings.Repeat("x", 200)
-	req := &Request{Request: httptest.NewRequest(http.MethodPost, "/", strings.NewReader(largePayload))}
-	// httptest.NewRequest 只填 req.ContentLength、不设 Content-Length 头,故 CL 分支
-	// 不会命中,请求必然走到 MaxBytesReader；显式删头是为了不依赖该实现细节。
-	req.Header.Del("Content-Length")
-
-	err := handler(context.Background(), req, &Response{ResponseWriter: rec})
-	if err == nil {
-		t.Fatal("expected error: reading 200 bytes through a 100-byte MaxBytesReader must fail")
+func (m *mockResponseWriter) Header() http.Header {
+	if m.header == nil {
+		m.header = make(http.Header)
 	}
-	var mbe *http.MaxBytesError
-	if !errors.As(err, &mbe) {
-		t.Fatalf("err = %v (%T), want an *http.MaxBytesError in the chain", err, err)
-	}
-	if mbe.Limit != 100 {
-		t.Errorf("MaxBytesError.Limit = %d, want 100", mbe.Limit)
-	}
-	// 读到的字节数不得超过上限:证明 Body 真的被截断,而非原样透传。
-	if readN > 100 {
-		t.Errorf("read %d bytes, want <= 100 (body must be capped)", readN)
-	}
-	if status, code := classifyError(err); status != http.StatusRequestEntityTooLarge || code != "request_entity_too_large" {
-		t.Errorf("classifyError = (%d,%q), want (413,%q)", status, code, "request_entity_too_large")
-	}
+	return m.header
 }
 
-// TestLimitBody_ValidSize 验证未超限时正常通过。
-func TestLimitBody_ValidSize(t *testing.T) {
-	mw := LimitBody(200)
-	handler := mw(func(ctx context.Context, req *Request, resp *Response) error {
-		return nil
+func (m *mockResponseWriter) Write(b []byte) (int, error) {
+	m.written += len(b)
+	return len(b), nil
+}
+
+func (m *mockResponseWriter) WriteHeader(statusCode int) {
+	m.statusCode = statusCode
+}
+
+func (m *mockResponseWriter) reset() {
+	m.header = nil
+	m.statusCode = 0
+	m.written = 0
+}
+
+// TestRecovery 测试 Recovery 中间件。
+// TestRecovery tests Recovery middleware.
+func TestRecovery(t *testing.T) {
+	s := NewServer()
+	s.Use(Recovery())
+
+	handler := func(ctx context.Context, req *Request, resp *Response) error {
+		panic("test panic")
+	}
+
+	err := s.Register(Route{
+		Method:          http.MethodGet,
+		Path:            "/panic",
+		compiledHandler: handler,
 	})
-
-	rec := httptest.NewRecorder()
-	req := &Request{Request: httptest.NewRequest(http.MethodPost, "/", strings.NewReader("small payload"))}
-	req.Header.Set("Content-Length", "5")
-
-	err := handler(context.Background(), req, &Response{ResponseWriter: rec})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Register failed: %v", err)
 	}
-	if rec.Code != 0 && rec.Code != http.StatusOK {
-		t.Errorf("expected ok, got %d", rec.Code)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/panic", nil)
+	s.ServeHTTP(w, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected status 500, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if body != `{"error":"internal server error","status":500}` {
+		t.Errorf("unexpected body '%s'", body)
+	}
+}
+
+// TestRecoveryCustomHandler 测试自定义 Recovery 处理器。
+// TestRecoveryCustomHandler tests custom Recovery handler.
+func TestRecoveryCustomHandler(t *testing.T) {
+	s := NewServer()
+
+	customHandlerCalled := false
+	customHandler := func(ctx context.Context, req *Request, resp *Response, rec any) {
+		customHandlerCalled = true
+		resp.WriteHeader(http.StatusServiceUnavailable)
+		resp.Write([]byte("custom recovery"))
+	}
+
+	s.Use(RecoveryWithHandler(io.Discard, customHandler))
+
+	handler := func(ctx context.Context, req *Request, resp *Response) error {
+		panic("test panic")
+	}
+
+	err := s.Register(Route{
+		Method:          http.MethodGet,
+		Path:            "/panic",
+		compiledHandler: handler,
+	})
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/panic", nil)
+	s.ServeHTTP(w, r)
+
+	if !customHandlerCalled {
+		t.Error("custom handler was not called")
+	}
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected status 503, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if body != "custom recovery" {
+		t.Errorf("expected 'custom recovery', got '%s'", body)
+	}
+}
+
+// TestLogger 测试 Logger 中间件。
+// TestLogger tests Logger middleware.
+func TestLogger(t *testing.T) {
+	s := NewServer()
+
+	var logBuf bytes.Buffer
+	s.Use(AccessLogWithWriter(&logBuf))
+
+	handler := func(ctx context.Context, req *Request, resp *Response) error {
+		resp.Write([]byte("OK"))
+		return nil
+	}
+
+	err := s.Register(Route{
+		Method:          http.MethodGet,
+		Path:            "/test",
+		compiledHandler: handler,
+	})
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/test", nil)
+	s.ServeHTTP(w, r)
+
+	logOutput := logBuf.String()
+	if logOutput == "" {
+		t.Error("logger did not write any output")
+	}
+
+	// 验证日志包含关键信息
+	// Verify log contains key information
+	if !strings.Contains(logOutput, "GET") {
+		t.Error("log should contain HTTP method")
+	}
+	if !strings.Contains(logOutput, "/test") {
+		t.Error("log should contain path")
+	}
+	if !strings.Contains(logOutput, "200") {
+		t.Error("log should contain status code")
+	}
+}
+
+// TestLoggerSkipPaths 测试 Logger 跳过指定路径。
+// TestLoggerSkipPaths tests Logger skipping specified paths.
+func TestLoggerSkipPaths(t *testing.T) {
+	s := NewServer()
+
+	var logBuf bytes.Buffer
+	s.Use(AccessLogWithConfig(AccessLogConfig{
+		Output:    &logBuf,
+		SkipPaths: []string{"/health"},
+	}))
+
+	handler := func(ctx context.Context, req *Request, resp *Response) error {
+		resp.Write([]byte("OK"))
+		return nil
+	}
+
+	s.Register(Route{Method: http.MethodGet, Path: "/health", compiledHandler: handler})
+	s.Register(Route{Method: http.MethodGet, Path: "/test", compiledHandler: handler})
+
+	// 请求 /health（应跳过日志）
+	// Request /health (should skip logging)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/health", nil)
+	s.ServeHTTP(w, r)
+
+	if logBuf.Len() > 0 {
+		t.Error("logger should skip /health path")
+	}
+
+	// 请求 /test（应记录日志）
+	// Request /test (should log)
+	logBuf.Reset()
+	w = httptest.NewRecorder()
+	r = httptest.NewRequest(http.MethodGet, "/test", nil)
+	s.ServeHTTP(w, r)
+
+	if logBuf.Len() == 0 {
+		t.Error("logger should log /test path")
+	}
+}
+
+// TestLoggerWithError 测试 Logger 记录错误。
+// TestLoggerWithError tests Logger logging errors.
+func TestLoggerWithError(t *testing.T) {
+	s := NewServer()
+
+	var logBuf bytes.Buffer
+	s.Use(AccessLogWithWriter(&logBuf))
+
+	handler := func(ctx context.Context, req *Request, resp *Response) error {
+		return BadRequest("test error")
+	}
+
+	err := s.Register(Route{
+		Method:          http.MethodGet,
+		Path:            "/error",
+		compiledHandler: handler,
+	})
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/error", nil)
+	s.ServeHTTP(w, r)
+
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "error:") {
+		t.Error("log should contain error message")
+	}
+}
+
+// TestLoggerLineInjection 测试错误文本与 panic 值中的换行被转义，无法伪造额外日志行。
+// TestLoggerLineInjection tests that newlines in error text and panic values are escaped
+// so they cannot forge extra log lines.
+func TestLoggerLineInjection(t *testing.T) {
+	const forged = "x\n2026/01/01 - 00:00:00 | 200 | admin login ok"
+
+	tests := []struct {
+		name    string
+		handler RawHandlerFunc
+		wrap    func(io.Writer) Middleware
+	}{
+		{
+			name: "logger error text",
+			handler: func(ctx context.Context, req *Request, resp *Response) error {
+				return BadRequest(req.Raw.URL.Query().Get("q"))
+			},
+			wrap: AccessLogWithWriter,
+		},
+		{
+			name: "recovery panic value",
+			handler: func(ctx context.Context, req *Request, resp *Response) error {
+				panic(req.Raw.URL.Query().Get("q"))
+			},
+			wrap: RecoveryWithWriter,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var logBuf bytes.Buffer
+			s := NewServer()
+			s.Use(tt.wrap(&logBuf))
+			if err := s.Register(Raw(http.MethodGet, "/e", tt.handler)); err != nil {
+				t.Fatalf("Register failed: %v", err)
+			}
+
+			r := httptest.NewRequest(http.MethodGet, "/e", nil)
+			r.URL.RawQuery = "q=" + url.QueryEscape(forged)
+			s.ServeHTTP(httptest.NewRecorder(), r)
+
+			if strings.Contains(logBuf.String(), "\n2026/01/01") {
+				t.Fatalf("forged log line written:\n%s", logBuf.String())
+			}
+			if !strings.Contains(logBuf.String(), `x\n2026/01/01`) {
+				t.Errorf("escaped value missing from log:\n%s", logBuf.String())
+			}
+		})
+	}
+}
+
+// TestMultipleMiddleware 测试多个中间件组合。
+// TestMultipleMiddleware tests multiple middleware combination.
+func TestMultipleMiddleware(t *testing.T) {
+	s := NewServer()
+
+	var logBuf bytes.Buffer
+	s.Use(Recovery(), AccessLogWithWriter(&logBuf))
+
+	handler := func(ctx context.Context, req *Request, resp *Response) error {
+		resp.Write([]byte("OK"))
+		return nil
+	}
+
+	err := s.Register(Route{
+		Method:          http.MethodGet,
+		Path:            "/test",
+		compiledHandler: handler,
+	})
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/test", nil)
+	s.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+
+	if logBuf.Len() == 0 {
+		t.Error("logger should have logged the request")
+	}
+}
+
+// BenchmarkRecovery 测试 Recovery 中间件性能。
+// BenchmarkRecovery benchmarks Recovery middleware performance.
+func BenchmarkRecovery(b *testing.B) {
+	s := NewServer()
+	s.Use(Recovery())
+
+	handler := func(ctx context.Context, req *Request, resp *Response) error {
+		resp.Write([]byte("OK"))
+		return nil
+	}
+
+	s.Register(Route{
+		Method:          http.MethodGet,
+		Path:            "/test",
+		compiledHandler: handler,
+	})
+
+	w := &mockResponseWriter{}
+	r, _ := http.NewRequest(http.MethodGet, "/test", nil)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		w.reset()
+		s.ServeHTTP(w, r)
+	}
+}
+
+// BenchmarkLogger 测试 Logger 中间件性能。
+// BenchmarkLogger benchmarks Logger middleware performance.
+func BenchmarkLogger(b *testing.B) {
+	s := NewServer()
+	s.Use(AccessLogWithWriter(io.Discard))
+
+	handler := func(ctx context.Context, req *Request, resp *Response) error {
+		resp.Write([]byte("OK"))
+		return nil
+	}
+
+	s.Register(Route{
+		Method:          http.MethodGet,
+		Path:            "/test",
+		compiledHandler: handler,
+	})
+
+	w := &mockResponseWriter{}
+	r, _ := http.NewRequest(http.MethodGet, "/test", nil)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		w.reset()
+		s.ServeHTTP(w, r)
 	}
 }

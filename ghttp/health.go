@@ -2,284 +2,189 @@ package ghttp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// ===========================================================================
-// 健康检查：为容器编排（K8s liveness/readiness probe）与负载均衡探测提供标准端点。
-//   - Health：存活探针，恒 200，表明进程在运行；
-//   - Ready：就绪探针，并行运行注册的 Checker，任一失败即 503，表明暂不可接流量。
-// 响应体为 JSON，便于运维观测各依赖项状态。
-// Health checks: standard endpoints for container orchestration (K8s liveness/
-// readiness probes) and load-balancer health polling.
-//   - Health: a liveness probe, always 200, signaling the process is running;
-//   - Ready: a readiness probe, running all registered Checkers concurrently; any
-//     failure yields 503, signaling "not ready to receive traffic".
-// The body is JSON for operational observability of each dependency's status.
-// ===========================================================================
+// 健康检查状态字面量。
+// Health status literals.
+const (
+	HealthStatusOK          = "ok"
+	HealthStatusUnavailable = "unavailable"
+	// HealthCheckFailed 是非 verbose 模式下单项失败的摘要。
+	// HealthCheckFailed is the per-check summary for failures when not verbose.
+	HealthCheckFailed = "failed"
+)
 
-// Checker 是一个具名健康检查项：Check 返回 nil 表示健康，非 nil 表示不健康。
-// Checker is a named health check: Check returns nil when healthy, non-nil otherwise.
-type Checker struct {
-	// Name 是检查项名称，出现在就绪响应的 JSON 中。
-	// Name is the check's name, surfaced in the readiness JSON.
-	Name string
-	// Check 执行一次健康探测，应尊重 ctx 取消/超时。
-	// Check runs one probe and should honor ctx cancellation/timeout.
-	Check func(ctx context.Context) error
-}
+// DefaultHealthCheckTimeout 是单项检查的默认超时。
+// DefaultHealthCheckTimeout is the default per-check timeout.
+const DefaultHealthCheckTimeout = 2 * time.Second
 
-// Health 在 path 注册存活探针（GET/HEAD），恒返回 200 与 {"status":"ok"}。
-// 用于 K8s livenessProbe：只表明进程存活，不检查依赖。
-// Health registers a liveness probe (GET/HEAD) at path, always returning 200 with
-// {"status":"ok"}. For a K8s livenessProbe: it only signals the process is alive
-// and does not check dependencies.
-func Health(m *Server, path string) error {
-	handler := func(ctx context.Context, req *Request, resp *Response) error {
-		writeJSON(resp, http.StatusOK, map[string]string{"status": "ok"})
-		return nil
-	}
-	return registerProbe(m, path, handler)
-}
+// HealthOption 配置 Health（WithFunc 风格）。
+// HealthOption configures Health (WithFunc style).
+type HealthOption func(*Health)
 
-// Ready 在 path 注册就绪探针（GET/HEAD）：依次运行 checks，全部通过返回 200，
-// 任一失败返回 503。响应 JSON 含各检查项状态。用于 K8s readinessProbe。
-// checkTimeout<=0 时对每个 check 不加超时。
-// Ready registers a readiness probe (GET/HEAD) at path: it runs checks in order,
-// returning 200 if all pass and 503 if any fails. The JSON body reports each
-// check's status. For a K8s readinessProbe. A checkTimeout<=0 imposes no per-check
-// timeout.
-func Ready(m *Server, path string, checkTimeout time.Duration, checks ...Checker) error {
-	return ReadyWith(m, path, checkTimeout, true, checks...)
-}
-
-// ReadyWith 与 Ready 相同，并决定是否把【失败原因原文】写进响应 JSON。
-// details=true（Ready 的默认）报原因但强制单行限长；details=false 只报 "fail"。
-//
-// 两种模式都是合理选择，取决于探测端点的可达范围：原因文本常含依赖的地址与
-// 凭据线索（`dial tcp 10.0.3.7:5432: connection refused`、含 DSN 片段的解析错误），
-// 对公网可达的探测端点应改用 details=false 把内部拓扑收在服务端日志里；
-// 而仅对集群内网开放时，原因（含本包自身的 ErrShuttingDown="draining"）是有价值的
-// 诊断信息，默认保留。
-// ReadyWith is Ready with a switch for whether the raw failure reason goes into the
-// response JSON. details=true (Ready's default) reports the reason but forces it onto
-// one bounded line; details=false reports only "fail".
-//
-// Either choice is legitimate depending on the endpoint's reachability: reason text
-// routinely carries dependency addresses and credential hints
-// (`dial tcp 10.0.3.7:5432: connection refused`, parse errors embedding DSN fragments),
-// so a probe reachable from the public internet should use details=false and keep the
-// internal topology in server logs. When the probe is cluster-internal only, the
-// reason — including this package's own ErrShuttingDown="draining" — is valuable
-// diagnostic information, hence the default keeps it.
-func ReadyWith(m *Server, path string, checkTimeout time.Duration, details bool, checks ...Checker) error {
-	if err := validateCheckers(checks); err != nil {
-		return err
-	}
-	handler := func(ctx context.Context, req *Request, resp *Response) error {
-		result := runChecks(ctx, checkTimeout, checks, details)
-		code := http.StatusOK
-		if !result.healthy {
-			code = http.StatusServiceUnavailable
+// WithHealthCheckTimeout 设置单项检查超时；d<=0 时忽略。
+// WithHealthCheckTimeout sets the per-check timeout; ignored when d<=0.
+func WithHealthCheckTimeout(d time.Duration) HealthOption {
+	return func(h *Health) {
+		if d > 0 {
+			h.timeout = d
 		}
-		writeJSON(resp, code, result.body())
-		return nil
 	}
-	return registerProbe(m, path, handler)
 }
 
-// readyResult 汇总一次就绪检查的整体健康与各项明细。
-// readyResult aggregates the overall health and per-check details of one readiness run.
-type readyResult struct {
-	healthy bool
-	checks  map[string]string // name -> "ok" 或错误消息 / "ok" or the error message
+// WithHealthVerbose 控制 readiness 响应是否暴露错误文本；默认 false，仅返回 "failed"。
+// WithHealthVerbose controls whether readiness exposes error text; default false (only "failed").
+func WithHealthVerbose(v bool) HealthOption {
+	return func(h *Health) { h.verbose = v }
 }
 
-// body 构造就绪响应的 JSON 结构。
-// body builds the readiness response's JSON structure.
-func (r readyResult) body() map[string]any {
-	status := "ok"
-	if !r.healthy {
-		status = "unavailable"
-	}
-	return map[string]any{"status": status, "checks": r.checks}
+type healthCheck struct {
+	name string
+	fn   func(ctx context.Context) error
 }
 
-// runChecks 并行运行所有检查项，收集结果；每项可加 timeout。
-//
-// 就绪探针常挂在 K8s/LB 的快速失败路径上，且各依赖(数据库、缓存、下游服务)天然相互独立：
-// 串行探测把"单个依赖变慢"放大成"全部依赖逐个排队等超时"的总延迟——3 个 50ms 检查串行
-// 至少 150ms，并行则约 50ms。结果按注册序收集；先落定长切片再建 map，避免并发写 map。
-// runChecks runs all checks concurrently, collecting results; each may get a timeout.
-//
-// Readiness probes sit on the K8s/LB fast-fail path, and the dependencies (DB,
-// cache, downstream services) are naturally independent of each other: sequential
-// probing turns "one slow dependency" into "everything queues behind its timeout" —
-// three 50 ms checks serialize to 150 ms+, concurrent they take about 50 ms.
-// Results are gathered in registration order; they are staged in a fixed-size
-// slice before the map to avoid concurrent map writes.
-func runChecks(ctx context.Context, timeout time.Duration, checks []Checker, details bool) readyResult {
-	type staged struct {
-		name, state string
+// Health 提供 liveness / readiness 探针。零值不可用，请用 NewHealth。
+// Health provides liveness / readiness probes. Use NewHealth; the zero value is unusable.
+type Health struct {
+	timeout time.Duration
+	verbose bool
+	notRdy  atomic.Bool
+
+	mu     sync.RWMutex
+	checks []healthCheck
+}
+
+// HealthReport 是 readiness 响应体。
+// HealthReport is the readiness response body.
+type HealthReport struct {
+	Status string            `json:"status"`
+	Checks map[string]string `json:"checks,omitempty"`
+}
+
+// NewHealth 创建 Health，默认 ready。
+// NewHealth creates a Health, ready by default.
+func NewHealth(opts ...HealthOption) *Health {
+	h := &Health{timeout: DefaultHealthCheckTimeout}
+	for _, o := range opts {
+		if o != nil {
+			o(h)
+		}
 	}
-	states := make([]staged, len(checks))
+	return h
+}
+
+// AddCheck 注册一项就绪检查，并发安全。同名检查结果以后者为准。fn 为 nil 时忽略。
+// AddCheck registers a readiness check; concurrency-safe. With duplicate names the later
+// result wins. A nil fn is ignored.
+func (h *Health) AddCheck(name string, fn func(ctx context.Context) error) {
+	if fn == nil {
+		return
+	}
+	h.mu.Lock()
+	h.checks = append(h.checks, healthCheck{name: name, fn: fn})
+	h.mu.Unlock()
+}
+
+// SetReady 设置是否就绪；优雅下线时先 SetReady(false) 摘流量。
+// SetReady sets readiness; call SetReady(false) first on graceful shutdown to drain traffic.
+func (h *Health) SetReady(ready bool) { h.notRdy.Store(!ready) }
+
+// Ready 报告当前 ready 开关（不执行检查）。
+// Ready reports the ready switch (without running checks).
+func (h *Health) Ready() bool { return !h.notRdy.Load() }
+
+// Check 并发执行所有检查并返回报告与是否整体健康。
+// Check runs all checks concurrently and returns the report and overall health.
+func (h *Health) Check(ctx context.Context) (HealthReport, bool) {
+	h.mu.RLock()
+	checks := append([]healthCheck(nil), h.checks...)
+	h.mu.RUnlock()
+
+	results := make([]string, len(checks))
 	var wg sync.WaitGroup
-	wg.Add(len(checks))
 	for i, c := range checks {
+		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			cctx := ctx
-			var cancel context.CancelFunc
-			if timeout > 0 {
-				cctx, cancel = context.WithTimeout(ctx, timeout)
-				defer cancel()
-			}
-			err := c.Check(cctx)
-			switch {
-			case err == nil:
-				states[i] = staged{name: c.Name, state: "ok"}
-			case details:
-				// 即便开启细节，也必须压成单行并限长：错误文本可能来自下游（含换行的驱动
-				// 报错、超长 DSN），JSON 里塞整段堆栈既无益也放大响应体。
-				// Even with details on, collapse to one line and bound the length: text
-				// from a downstream (multi-line driver errors, long DSNs) adds nothing
-				// and inflates the response.
-				states[i] = staged{name: c.Name, state: truncateOneLine(err.Error(), maxHealthDetailLen)}
-			default:
-				states[i] = staged{name: c.Name, state: "fail"}
-			}
+			results[i] = h.runOne(ctx, c)
 		}()
 	}
 	wg.Wait()
-	res := readyResult{healthy: true, checks: make(map[string]string, len(checks))}
-	for _, s := range states {
-		if s.state != "ok" {
-			res.healthy = false
-		}
-		res.checks[s.name] = s.state
+
+	ok := h.Ready()
+	rep := HealthReport{}
+	if len(checks) > 0 {
+		rep.Checks = make(map[string]string, len(checks))
 	}
-	return res
-}
-
-// maxHealthDetailLen 限制开启细节时单条原因的长度。
-// maxHealthDetailLen bounds one failure reason's length when details are enabled.
-const maxHealthDetailLen = 200
-
-// validateCheckers 在注册期挡住会导致请求期 panic 或响应歧义的检查项定义。
-// ① Check 为 nil：请求期 `c.Check(cctx)` 空指针 panic，而探针往往是无鉴权的公开端点，
-//
-//	一次构造不良的注册就永久挂死该路径。
-//
-// ② Name 为空或重复：结果 map 以 Name 为键，重名会让后一项静默覆盖前一项，运维看到的
-//
-//	"某依赖 ok" 实际来自另一个依赖——比缺少信息更糟，是给出错误的信息。
-//
-// validateCheckers refuses, at registration, checker definitions that would panic at
-// request time or make the response ambiguous. (1) A nil Check panics on
-// `c.Check(cctx)`, and probes are typically unauthenticated public endpoints, so one bad
-// registration wedges the path permanently. (2) An empty or duplicated Name keys the
-// result map, so a later check silently overwrites an earlier one and "dependency X is
-// ok" in the response actually came from a different dependency — worse than missing
-// information, it is wrong information.
-func validateCheckers(checks []Checker) error {
-	seen := make(map[string]bool, len(checks))
 	for i, c := range checks {
-		if c.Check == nil {
-			return fmt.Errorf("%w: checker %q (index %d) has a nil Check", ErrInvalidParam, c.Name, i)
-		}
-		if c.Name == "" {
-			return fmt.Errorf("%w: checker at index %d has an empty Name", ErrInvalidParam, i)
-		}
-		if seen[c.Name] {
-			return fmt.Errorf("%w: duplicate checker name %q; results are keyed by name and would overwrite each other", ErrInvalidParam, c.Name)
-		}
-		seen[c.Name] = true
-	}
-	return nil
-}
-
-// truncateOneLine 把多行文本折叠为单行并限长。
-// truncateOneLine collapses multi-line text into one line and bounds its length.
-func truncateOneLine(s string, max int) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.ReplaceAll(s, "\r", " ")
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "…"
-}
-
-// registerProbe 为探针路径注册 GET 与 HEAD。
-// registerProbe registers GET and HEAD for a probe path.
-func registerProbe(m *Server, path string, h Handler) error {
-	for _, method := range []string{http.MethodGet, http.MethodHead} {
-		if err := m.RawHandle(method, path, RawHandlerFunc(h)); err != nil {
-			return err
+		rep.Checks[c.name] = results[i]
+		if results[i] != HealthStatusOK {
+			ok = false
 		}
 	}
-	return nil
+	rep.Status = HealthStatusOK
+	if !ok {
+		rep.Status = HealthStatusUnavailable
+	}
+	return rep, ok
 }
 
-// writeJSON 写状态码与 JSON 响应体（探针专用的小工具，避免依赖 typed 输出层）。
-// writeJSON writes a status code and JSON body (a small probe-only helper, avoiding
-// the typed output layer).
-func writeJSON(resp *Response, code int, v any) {
-	resp.Header().Set("Content-Type", "application/json; charset=utf-8")
-	resp.WriteHeader(code)
-	_ = json.NewEncoder(resp).Encode(v)
+// runOne 执行单项检查：带超时，panic 视为失败，不服从 ctx 的检查也不会阻塞响应。
+// runOne runs one check with a timeout; a panic counts as failure and a check ignoring its
+// ctx cannot block the response.
+func (h *Health) runOne(ctx context.Context, c healthCheck) string {
+	cctx, cancel := context.WithTimeout(ctx, h.timeout)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- fmt.Errorf("panic: %v", r)
+			}
+		}()
+		done <- c.fn(cctx)
+	}()
+	var err error
+	select {
+	case err = <-done:
+	case <-cctx.Done():
+		err = cctx.Err()
+	}
+	if err == nil {
+		return HealthStatusOK
+	}
+	if h.verbose {
+		return err.Error()
+	}
+	return HealthCheckFailed
 }
 
-// LivenessChecker 是一个恒健康的检查项构造器，便于把无依赖的组件登记进就绪列表。
-// LivenessChecker builds an always-healthy Checker, handy for registering a
-// dependency-free component in the readiness list.
-func LivenessChecker(name string) Checker {
-	return Checker{Name: name, Check: func(context.Context) error { return nil }}
-}
-
-// ReadinessGate 是一个可运行时切换的就绪门闸：适合“启动完成/开始排水”场景。
-// 它以 Checker 形式接入 Ready，通过 Set 在运行时开关。
-// ReadinessGate is a runtime-toggleable readiness gate for "startup complete / begin
-// draining" scenarios. It plugs into Ready as a Checker and toggles via Set.
-type ReadinessGate struct {
-	mu    sync.RWMutex
-	ready bool
-	err   error
-}
-
-// NewReadinessGate 返回一个初始未就绪的门闸与其 Checker。调用 Set(true,nil) 置为就绪。
-// NewReadinessGate returns an initially-not-ready gate and its Checker. Call
-// Set(true, nil) to mark ready.
-func NewReadinessGate(name string) (*ReadinessGate, Checker) {
-	g := &ReadinessGate{err: ErrNotReady}
-	c := Checker{Name: name, Check: func(context.Context) error {
-		g.mu.RLock()
-		defer g.mu.RUnlock()
-		if g.ready {
-			return nil
+// Routes 返回 liveness 与 readiness 的 GET 路由。liveness 恒 200 {"status":"ok"}；
+// readiness 全部通过且 ready 时 200，否则 503。响应带 Cache-Control: no-store。
+// Routes returns the GET routes for liveness and readiness. Liveness always answers 200
+// {"status":"ok"}; readiness answers 200 only when all checks pass and ready, else 503.
+// Responses carry Cache-Control: no-store.
+func (h *Health) Routes(livePath, readyPath string) []Route {
+	live := func(_ context.Context, _ *Request, resp *Response) error {
+		resp.Header().Set("Cache-Control", "no-store")
+		return writeJSON(resp, http.StatusOK, HealthReport{Status: HealthStatusOK})
+	}
+	ready := func(ctx context.Context, _ *Request, resp *Response) error {
+		rep, ok := h.Check(ctx)
+		status := http.StatusOK
+		if !ok {
+			status = http.StatusServiceUnavailable
 		}
-		return g.err
-	}}
-	return g, c
-}
-
-// Set 切换门闸状态：ready=true 表示就绪；ready=false 时用 cause 作为不就绪原因
-// （nil 时回退到 ErrNotReady）。
-// Set toggles the gate: ready=true marks ready; when ready=false, cause is the
-// not-ready reason (falling back to ErrNotReady when nil).
-func (g *ReadinessGate) Set(ready bool, cause error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.ready = ready
-	if ready {
-		g.err = nil
-	} else if cause != nil {
-		g.err = cause
-	} else {
-		g.err = ErrNotReady
+		resp.Header().Set("Cache-Control", "no-store")
+		return writeJSON(resp, status, rep)
+	}
+	return []Route{
+		Raw(http.MethodGet, livePath, live),
+		Raw(http.MethodGet, readyPath, ready),
 	}
 }

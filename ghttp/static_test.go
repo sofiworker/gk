@@ -3,249 +3,194 @@ package ghttp
 import (
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 )
 
-// mapFS 构造一个内存文件系统供静态服务测试，避免依赖真实磁盘。
-// mapFS builds an in-memory file system for static-serving tests.
-func mapFS() fstest.MapFS {
-	return fstest.MapFS{
-		"index.html":      {Data: []byte("<h1>home</h1>")},
-		"css/app.css":     {Data: []byte("body{}")},
-		"assets/logo.png": {Data: []byte("\x89PNG-fake")},
-		"sub/index.html":  {Data: []byte("<h1>sub</h1>")},
-	}
-}
-
-// TestStaticFS_ServesFile 验证普通文件（非 index.html）可正常服务。
-func TestStaticFS_ServesFile(t *testing.T) {
-	m := New()
-	if err := StaticFS(m, "/static/", mapFS()); err != nil {
-		t.Fatalf("StaticFS: %v", err)
-	}
-	cases := []struct {
-		path, wantBody string
-	}{
-		{"/static/css/app.css", "body{}"},
-		{"/static/assets/logo.png", "\x89PNG-fake"},
-	}
-	for _, c := range cases {
-		rec := httptest.NewRecorder()
-		m.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, c.path, nil))
-		if rec.Code != http.StatusOK {
-			t.Errorf("%s: status=%d, want 200", c.path, rec.Code)
-			continue
-		}
-		if got := rec.Body.String(); got != c.wantBody {
-			t.Errorf("%s: body=%q, want %q", c.path, got, c.wantBody)
-		}
-	}
-}
-
-// TestStaticFS_DirectoryIndex 验证目录请求自动服务其 index.html（含子目录）。
-func TestStaticFS_DirectoryIndex(t *testing.T) {
-	m := New()
-	if err := StaticFS(m, "/static/", mapFS()); err != nil {
-		t.Fatal(err)
-	}
-	cases := []struct {
-		path, wantBody string
-	}{
-		{"/static/", "<h1>home</h1>"},    // 根目录 → index.html
-		{"/static/sub/", "<h1>sub</h1>"}, // 子目录 → sub/index.html
-	}
-	for _, c := range cases {
-		rec := httptest.NewRecorder()
-		m.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, c.path, nil))
-		if rec.Code != http.StatusOK {
-			t.Errorf("%s: status=%d, want 200", c.path, rec.Code)
-			continue
-		}
-		if got := rec.Body.String(); got != c.wantBody {
-			t.Errorf("%s: body=%q, want %q", c.path, got, c.wantBody)
-		}
-	}
-}
-
-// TestStaticFS_NoDirectoryListing 验证无索引的目录默认返回 404（不列目录）。
-func TestStaticFS_NoDirectoryListing(t *testing.T) {
+func staticTestServer(t *testing.T, opts ...StaticOption) *Server {
+	t.Helper()
+	mod := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
 	fsys := fstest.MapFS{
-		"data/a.txt": {Data: []byte("A")},
-		"data/b.txt": {Data: []byte("B")},
+		"a.txt":             {Data: []byte("hello world"), ModTime: mod},
+		"app.js":            {Data: []byte("plain js"), ModTime: mod},
+		"app.js.gz":         {Data: []byte("GZDATA"), ModTime: mod},
+		"app.js.br":         {Data: []byte("BRDATA"), ModTime: mod},
+		"sub/index.html":    {Data: []byte("<h1>sub</h1>"), ModTime: mod},
+		"empty/x.txt":       {Data: []byte("x"), ModTime: mod},
+		"index.html":        {Data: []byte("<h1>root</h1>"), ModTime: mod},
+		"secret/../oops":    {Data: []byte("x")},
+		"unknown.zzzunk":    {Data: []byte("data"), ModTime: mod},
+		"unknown.zzzunk.gz": {Data: []byte("gz"), ModTime: mod},
 	}
-	m := New()
-	if err := StaticFS(m, "/static/", fsys); err != nil {
-		t.Fatal(err)
+	s := NewServer()
+	if err := s.Register(Static("/static", fsys, opts...)...); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	return s
+}
+
+func staticDo(s *Server, method, target string, hdr map[string]string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, target, nil)
+	for k, v := range hdr {
+		req.Header.Set(k, v)
 	}
 	rec := httptest.NewRecorder()
-	m.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/static/data/", nil))
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("dir without index: status=%d, want 404 (no listing)", rec.Code)
+	s.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestStaticServeFile(t *testing.T) {
+	s := staticTestServer(t, WithStaticCacheControl("max-age=60"))
+	rec := staticDo(s, http.MethodGet, "/static/a.txt", nil)
+	if rec.Code != 200 || rec.Body.String() != "hello world" {
+		t.Fatalf("got %d %q", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/plain; charset=utf-8" {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "max-age=60" {
+		t.Errorf("Cache-Control = %q", cc)
 	}
 }
 
-// TestStaticFS_Browsable 验证开启 WithBrowsable 后无索引目录会列出条目。
-func TestStaticFS_Browsable(t *testing.T) {
-	fsys := fstest.MapFS{"data/a.txt": {Data: []byte("A")}}
-	m := New()
-	if err := StaticFS(m, "/static/", fsys, WithBrowsable()); err != nil {
-		t.Fatal(err)
-	}
-	rec := httptest.NewRecorder()
-	m.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/static/data/", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("browsable dir: status=%d, want 200", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "a.txt") {
-		t.Errorf("browsable listing should mention a.txt, got %q", rec.Body.String())
+func TestStaticHead(t *testing.T) {
+	s := staticTestServer(t)
+	rec := staticDo(s, http.MethodHead, "/static/a.txt", nil)
+	if rec.Code != 200 || rec.Body.Len() != 0 || rec.Header().Get("Content-Length") != "11" {
+		t.Fatalf("got %d len=%d cl=%q", rec.Code, rec.Body.Len(), rec.Header().Get("Content-Length"))
 	}
 }
 
-// TestStaticFS_SPAFallback 验证 SPA 回退：未命中路径服务根 index.html。
-func TestStaticFS_SPAFallback(t *testing.T) {
-	m := New()
-	if err := StaticFS(m, "/app/", mapFS(), WithSPAFallback()); err != nil {
-		t.Fatal(err)
-	}
-	// /app/some/client/route 不存在 → 回退到根 index.html。
-	rec := httptest.NewRecorder()
-	m.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/app/some/client/route", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("SPA fallback: status=%d, want 200", rec.Code)
-	}
-	if got := rec.Body.String(); got != "<h1>home</h1>" {
-		t.Errorf("SPA fallback body=%q, want root index", got)
+func TestStaticRange(t *testing.T) {
+	s := staticTestServer(t)
+	rec := staticDo(s, http.MethodGet, "/static/a.txt", map[string]string{"Range": "bytes=0-4"})
+	if rec.Code != http.StatusPartialContent || rec.Body.String() != "hello" {
+		t.Fatalf("got %d %q", rec.Code, rec.Body.String())
 	}
 }
 
-// TestStaticFS_CustomIndex 验证 WithIndexFile 自定义索引名。
-func TestStaticFS_CustomIndex(t *testing.T) {
-	fsys := fstest.MapFS{"main.htm": {Data: []byte("CUSTOM")}}
-	m := New()
-	if err := StaticFS(m, "/static/", fsys, WithIndexFile("main.htm")); err != nil {
-		t.Fatal(err)
+func TestStaticIfModifiedSince(t *testing.T) {
+	s := staticTestServer(t)
+	lm := staticDo(s, http.MethodGet, "/static/a.txt", nil).Header().Get("Last-Modified")
+	if lm == "" {
+		t.Fatal("missing Last-Modified")
 	}
-	rec := httptest.NewRecorder()
-	m.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/static/", nil))
-	if rec.Code != http.StatusOK || rec.Body.String() != "CUSTOM" {
-		t.Errorf("custom index: status=%d body=%q, want 200/CUSTOM", rec.Code, rec.Body.String())
+	rec := staticDo(s, http.MethodGet, "/static/a.txt", map[string]string{"If-Modified-Since": lm})
+	if rec.Code != http.StatusNotModified {
+		t.Fatalf("got %d, want 304", rec.Code)
 	}
 }
 
-// TestStaticFS_NotFound 验证不存在的文件返回 404。
-func TestStaticFS_NotFound(t *testing.T) {
-	m := New()
-	if err := StaticFS(m, "/static/", mapFS()); err != nil {
-		t.Fatal(err)
+func TestStaticDirectory(t *testing.T) {
+	s := staticTestServer(t)
+	if rec := staticDo(s, http.MethodGet, "/static/empty/", nil); rec.Code != 404 {
+		t.Errorf("dir without index: %d", rec.Code)
 	}
-	rec := httptest.NewRecorder()
-	m.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/static/missing.js", nil))
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("status=%d, want 404", rec.Code)
+	if rec := staticDo(s, http.MethodGet, "/static/sub/", nil); rec.Code != 200 || rec.Body.String() != "<h1>sub</h1>" {
+		t.Errorf("dir with index: %d %q", rec.Code, rec.Body.String())
 	}
-}
-
-// TestStaticFS_HeadMethod 验证 HEAD 请求返回头但无 body。
-func TestStaticFS_HeadMethod(t *testing.T) {
-	m := New()
-	if err := StaticFS(m, "/static/", mapFS()); err != nil {
-		t.Fatal(err)
+	if rec := staticDo(s, http.MethodGet, "/static/sub", nil); rec.Code != 200 {
+		t.Errorf("dir without slash: %d", rec.Code)
 	}
-	rec := httptest.NewRecorder()
-	m.ServeHTTP(rec, httptest.NewRequest(http.MethodHead, "/static/css/app.css", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("HEAD status=%d, want 200", rec.Code)
+	if rec := staticDo(s, http.MethodGet, "/static/", nil); rec.Code != 200 || rec.Body.String() != "<h1>root</h1>" {
+		t.Errorf("root: %d %q", rec.Code, rec.Body.String())
 	}
-	if rec.Body.Len() != 0 {
-		t.Errorf("HEAD body len=%d, want 0", rec.Body.Len())
+	off := staticTestServer(t, WithStaticIndex(false))
+	if rec := staticDo(off, http.MethodGet, "/static/sub/", nil); rec.Code != 404 {
+		t.Errorf("index disabled: %d", rec.Code)
 	}
 }
 
-// TestStaticFS_InvalidPrefix 验证 prefix 校验（须首尾均为 "/"）。
-func TestStaticFS_InvalidPrefix(t *testing.T) {
-	m := New()
-	for _, bad := range []string{"", "static/", "/static", "static"} {
-		if err := StaticFS(m, bad, mapFS()); err == nil {
-			t.Errorf("prefix %q should be rejected", bad)
+func TestStaticNotFoundAndTraversal(t *testing.T) {
+	s := staticTestServer(t)
+	for _, target := range []string{
+		"/static/missing.txt",
+		"/static/../a.txt",
+		"/static/%2e%2e/a.txt",
+		"/static/sub/../a.txt",
+		"/static/..%2fa.txt",
+		"/static/%5ca.txt",
+	} {
+		rec := staticDo(s, http.MethodGet, target, nil)
+		if rec.Code == 200 {
+			t.Errorf("%s served 200: %q", target, rec.Body.String())
 		}
 	}
-}
-
-// TestStaticFS_NilFS 验证 nil fsys 被拒绝。
-func TestStaticFS_NilFS(t *testing.T) {
-	m := New()
-	if err := StaticFS(m, "/static/", nil); err == nil {
-		t.Error("nil fsys should be rejected")
+	if rec := staticDo(s, http.MethodGet, "/static/missing.txt", nil); rec.Code != 404 {
+		t.Errorf("missing: %d", rec.Code)
 	}
 }
 
-// TestFile_ServesSingle 验证单文件映射。
-func TestFile_ServesSingle(t *testing.T) {
-	m := New()
-	if err := File(m, "/favicon.ico", "assets/logo.png", mapFS()); err != nil {
-		t.Fatalf("File: %v", err)
-	}
-	rec := httptest.NewRecorder()
-	m.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/favicon.ico", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d, want 200", rec.Code)
-	}
-	if got := rec.Body.String(); got != "\x89PNG-fake" {
-		t.Errorf("body=%q, want fake PNG", got)
-	}
-}
-
-// TestFile_InvalidName 验证非法文件名被拒绝。
-func TestFile_InvalidName(t *testing.T) {
-	m := New()
-	for _, bad := range []string{"", "../etc/passwd", "/abs/path"} {
-		if err := File(m, "/x", bad, mapFS()); err == nil {
-			t.Errorf("file name %q should be rejected", bad)
-		}
-	}
-}
-
-// TestStatic_DiskDir 验证 Static 挂载真实磁盘目录（用 t.TempDir）。
-func TestStatic_DiskDir(t *testing.T) {
-	dir := t.TempDir()
-	if err := writeTempFile(dir, "hello.txt", "world"); err != nil {
-		t.Fatal(err)
-	}
-	m := New()
-	if err := Static(m, "/files/", dir); err != nil {
-		t.Fatalf("Static: %v", err)
-	}
-	rec := httptest.NewRecorder()
-	m.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/files/hello.txt", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d, want 200", rec.Code)
-	}
-	if got := rec.Body.String(); got != "world" {
-		t.Errorf("body=%q, want %q", got, "world")
-	}
-}
-
-// TestJoinFSPath 单测路径拼接辅助。
-func TestJoinFSPath(t *testing.T) {
-	cases := []struct{ dir, elem, want string }{
-		{".", "index.html", "index.html"},
-		{"", "index.html", "index.html"},
-		{"sub", "index.html", "sub/index.html"},
-		{"a/b", "c.txt", "a/b/c.txt"},
+func TestStaticName(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+		ok   bool
+	}{
+		{"", ".", true}, {"/", ".", true}, {"/a/b.txt", "a/b.txt", true},
+		{"a/", "a", true}, {"/../x", "", false}, {"a/./b", "", false},
+		{"a\\b", "", false}, {"a//b", "", false},
 	}
 	for _, c := range cases {
-		if got := joinFSPath(c.dir, c.elem); got != c.want {
-			t.Errorf("joinFSPath(%q,%q)=%q, want %q", c.dir, c.elem, got, c.want)
+		got, ok := staticName(c.in)
+		if got != c.want || ok != c.ok {
+			t.Errorf("staticName(%q) = %q,%v want %q,%v", c.in, got, ok, c.want, c.ok)
 		}
 	}
 }
 
-// writeTempFile 在 dir 下写一个测试文件。
-// writeTempFile writes a test file under dir.
-func writeTempFile(dir, name, content string) error {
-	return os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
+func TestStaticPrecompressed(t *testing.T) {
+	s := staticTestServer(t, WithStaticPrecompressed())
+
+	rec := staticDo(s, http.MethodGet, "/static/app.js", map[string]string{"Accept-Encoding": "gzip, br"})
+	if rec.Body.String() != "BRDATA" || rec.Header().Get("Content-Encoding") != "br" {
+		t.Errorf("br: %q enc=%q", rec.Body.String(), rec.Header().Get("Content-Encoding"))
+	}
+	if ct := rec.Header().Get("Content-Type"); ct == "" || ct[:4] != "text" && ct[:11] != "application" {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	if rec.Header().Get("Vary") != "Accept-Encoding" {
+		t.Errorf("Vary = %q", rec.Header().Get("Vary"))
+	}
+
+	rec = staticDo(s, http.MethodGet, "/static/app.js", map[string]string{"Accept-Encoding": "gzip"})
+	if rec.Body.String() != "GZDATA" || rec.Header().Get("Content-Encoding") != "gzip" {
+		t.Errorf("gzip: %q", rec.Body.String())
+	}
+
+	rec = staticDo(s, http.MethodGet, "/static/app.js", map[string]string{"Accept-Encoding": "br;q=0, gzip;q=0"})
+	if rec.Body.String() != "plain js" || rec.Header().Get("Content-Encoding") != "" {
+		t.Errorf("rejected: %q", rec.Body.String())
+	}
+	if rec.Header().Get("Vary") != "Accept-Encoding" {
+		t.Errorf("Vary on plain = %q", rec.Header().Get("Vary"))
+	}
+
+	rec = staticDo(s, http.MethodGet, "/static/unknown.zzzunk", map[string]string{"Accept-Encoding": "gzip"})
+	if rec.Header().Get("Content-Type") != "application/octet-stream" || rec.Body.String() != "gz" {
+		t.Errorf("unknown ext: ct=%q body=%q", rec.Header().Get("Content-Type"), rec.Body.String())
+	}
+
+	// 未启用预压缩时忽略 .gz。
+	plain := staticTestServer(t)
+	rec = staticDo(plain, http.MethodGet, "/static/app.js", map[string]string{"Accept-Encoding": "gzip"})
+	if rec.Body.String() != "plain js" {
+		t.Errorf("disabled precompressed served %q", rec.Body.String())
+	}
+}
+
+func TestStaticAccepts(t *testing.T) {
+	cases := []struct {
+		h, c string
+		want bool
+	}{
+		{"gzip, br", "br", true}, {"gzip;q=0", "gzip", false}, {"", "gzip", false},
+		{"GZIP", "gzip", true}, {"br;q=0.5", "br", true}, {"deflate", "gzip", false},
+	}
+	for _, c := range cases {
+		if got := staticAccepts(c.h, c.c); got != c.want {
+			t.Errorf("staticAccepts(%q,%q)=%v", c.h, c.c, got)
+		}
+	}
 }

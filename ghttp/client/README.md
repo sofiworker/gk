@@ -28,6 +28,7 @@ resp, err := c.R().SetQueryParam("id", 1).SetResult(&user).Get("/users")
 | **不可重放的 body 直接拒绝** | 开启重试但 body 无法重放时，在**发出第一次请求之前**返回 `ErrBodyNotReplayable`，绝不静默重发空 body |
 | **对服务端响应格式零假设** | 没有隐式 envelope；结构化错误体经 `WithErrorDecoder` 显式接入 |
 | **标准库是第一公民** | 可注入 `*http.Client` / `http.RoundTripper` / `*net.Dialer` / `DialContext` / `http.CookieJar` / `CheckRedirect`，也能把本 Client 退化成 `http.RoundTripper` |
+| **不链入 server** | 本包不 import `ghttp` 父包；与 server 共享的线格式层（严格解码、media-type、SSE、日志单行化、`StatusCoder`）位于公开包 [`ghttp/wire`](../wire/README.md) |
 
 ---
 

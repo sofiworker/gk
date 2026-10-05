@@ -3,7 +3,18 @@ package client
 import (
 	"errors"
 	"fmt"
+
+	"github.com/sofiworker/gk/ghttp/wire"
 )
+
+// StatusCoder 是携带 HTTP 状态码的错误契约，与 wire.StatusCoder 及 ghttp.StatusCoder 是同一类型。
+// StatusCoder is the contract for errors carrying an HTTP status; it is the same type as
+// wire.StatusCoder and ghttp.StatusCoder.
+type StatusCoder = wire.StatusCoder
+
+// 编译期断言 *Error 满足状态码契约。
+// Compile-time assertion that *Error satisfies the status contract.
+var _ StatusCoder = (*Error)(nil)
 
 // 本文件定义 client 的错误模型：传输错误与 HTTP 状态错误统一收敛为 *Error，
 // 且错误里带得走整个 *Response（响应体仍可读）。
@@ -64,13 +75,14 @@ var (
 // Error 是一次失败请求的统一错误。传输层失败时 StatusCode 为 0；HTTP 状态失败时
 // StatusCode 非 0 且 Response 非 nil。
 //
-// 它实现 httperr.StatusCoder（即 ghttp.StatusCoder），因此 server 侧按状态码分支的
-// 断言代码在 client 侧原样可用。
+// 它实现 wire.StatusCoder（即 ghttp.StatusCoder 与本包的 StatusCoder），因此按状态码
+// 分支的代码（如 wire.StatusOf）在 server 与 client 两侧原样可用。
 // Error is the unified error for a failed request. On a transport failure StatusCode
 // is 0; on an HTTP status failure StatusCode is non-zero and Response is non-nil.
 //
-// It implements httperr.StatusCoder (i.e. ghttp.StatusCoder), so server-side branching
-// code written against the status contract works unchanged on the client.
+// It implements wire.StatusCoder (i.e. ghttp.StatusCoder and this package's
+// StatusCoder), so status-based branching (such as wire.StatusOf) works unchanged on
+// both the server and the client.
 type Error struct {
 	// Op 是发起本次请求的方法名（"Get"/"Post"/…），便于日志归因。
 	// Op is the method that issued the request ("Get"/"Post"/…), for log attribution.

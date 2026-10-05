@@ -43,15 +43,16 @@
 //
 // # 包边界 / Package boundary
 //
-// 本包不 import ghttp 父包，因此只使用 client 的程序不会链入 server 框架。真正需要共享
-// 的内核（严格 JSON/XML 解码、Content-Type 规范化、日志脱敏、HTTP 状态码契约）位于
-// ghttp/internal/*，两侧各自引用；其中 httperr.StatusCoder 经类型别名在本包导出，与 server
-// 侧是同一个类型。
+// 本包不 import ghttp 父包，因此只使用 client 的程序不会链入 server 框架。两端共享的
+// 线格式层（严格 JSON/XML 解码、Content-Type 规范化、SSE 线格式、日志单行化、HTTP 状态码
+// 契约）位于公开包 ghttp/wire，依赖方向是两端都指向 wire；StatusCoder 经类型别名在本包
+// 导出，与 server 侧及 wire.StatusCoder 是同一个类型。
 // This package does not import the ghttp parent, so a program using only the client
-// does not link the server framework. The kernels genuinely worth sharing (strict
-// JSON/XML decoding, Content-Type normalization, log sanitization, the HTTP status
-// contract) live in ghttp/internal/* and are referenced by both sides; httperr.StatusCoder
-// is alias-exported here and is the very same type as on the server side.
+// does not link the server framework. The wire-format layer shared by both sides
+// (strict JSON/XML decoding, Content-Type normalization, the SSE wire format,
+// single-line log fields, the HTTP status contract) lives in the public package
+// ghttp/wire, and both sides depend on it; StatusCoder is alias-exported here and is the
+// very same type as on the server side and wire.StatusCoder.
 //
 // # 简洁示例 / Short example
 //

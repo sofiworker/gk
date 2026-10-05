@@ -1,2 +1,0 @@
-ghttp k6 fixture: ASCII and Unicode 中文 🐱
-0123456789abcdefghijklmnopqrstuvwxyz
