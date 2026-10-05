@@ -39,7 +39,7 @@ func (in RequestInput) PathValue(name string) *Value {
 
 // QueryValue 返回查询参数的类型安全访问器（单值）。
 // QueryValue returns a type-safe accessor for query parameters (single value).
-func (in RequestInput) QueryValue(name string) *Value {
+func (in RequestInput) QueryValue(name string) Value {
 	return QueryValue(in.req, name)
 }
 

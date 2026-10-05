@@ -83,6 +83,31 @@ type Server struct {
 	hooksErr error
 }
 
+var requestPool = sync.Pool{New: func() any { return new(Request) }}
+var responsePool = sync.Pool{New: func() any { return new(Response) }}
+
+func acquireRequest(r *http.Request) *Request {
+	req := requestPool.Get().(*Request)
+	*req = Request{Raw: r}
+	return req
+}
+
+func releaseRequest(req *Request) {
+	*req = Request{}
+	requestPool.Put(req)
+}
+
+func acquireResponse(w http.ResponseWriter) *Response {
+	resp := responsePool.Get().(*Response)
+	*resp = Response{Writer: w}
+	return resp
+}
+
+func releaseResponse(resp *Response) {
+	*resp = Response{}
+	responsePool.Put(resp)
+}
+
 // ErrRegistrationAfterStart 表示服务启动后尝试注册路由。
 // ErrRegistrationAfterStart indicates attempting to register routes after server start.
 var ErrRegistrationAfterStart = errors.New("ghttp: cannot register routes after server started")
@@ -313,8 +338,10 @@ func (s *Server) frozenHandler() Handler {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h := s.frozenHandler()
 
-	req := &Request{Raw: r}
-	resp := &Response{Writer: w}
+	req := acquireRequest(r)
+	resp := acquireResponse(w)
+	defer releaseRequest(req)
+	defer releaseResponse(resp)
 
 	if validRequestPath(r.URL.Path, s.config.strictPath) {
 		req.match = s.router.find(r.Method, r.URL.Path)

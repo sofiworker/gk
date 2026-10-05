@@ -2,7 +2,9 @@ package ghttp
 
 import (
 	"fmt"
+	"net/url"
 	"strconv"
+	"strings"
 )
 
 // Value 是单值访问器，提供类型安全的参数访问。
@@ -34,7 +36,7 @@ func newNamedValue(name, raw string, exists bool) *Value {
 
 // missing 返回参数缺失错误，包装 ErrInvalidInput（映射为 400）。
 // missing returns the missing-parameter error wrapping ErrInvalidInput (maps to 400).
-func (v *Value) missing() error {
+func (v Value) missing() error {
 	return fmt.Errorf("%w: parameter %q is missing", ErrInvalidInput, v.name)
 }
 
@@ -62,13 +64,13 @@ func newNamedValues(name string, raw []string) *Values {
 
 // Exists 返回参数是否存在。
 // Exists returns whether the parameter exists.
-func (v *Value) Exists() bool {
+func (v Value) Exists() bool {
 	return v.exists
 }
 
 // String 返回字符串值。
 // String returns the string value.
-func (v *Value) String() (string, error) {
+func (v Value) String() (string, error) {
 	if !v.exists {
 		return "", v.missing()
 	}
@@ -77,7 +79,7 @@ func (v *Value) String() (string, error) {
 
 // Int 将参数转换为 int。
 // Int converts the parameter to int.
-func (v *Value) Int() (int, error) {
+func (v Value) Int() (int, error) {
 	if !v.exists {
 		return 0, v.missing()
 	}
@@ -93,7 +95,7 @@ func (v *Value) Int() (int, error) {
 
 // Int64 将参数转换为 int64。
 // Int64 converts the parameter to int64.
-func (v *Value) Int64() (int64, error) {
+func (v Value) Int64() (int64, error) {
 	if !v.exists {
 		return 0, v.missing()
 	}
@@ -109,7 +111,7 @@ func (v *Value) Int64() (int64, error) {
 
 // Float64 将参数转换为 float64。
 // Float64 converts the parameter to float64.
-func (v *Value) Float64() (float64, error) {
+func (v Value) Float64() (float64, error) {
 	if !v.exists {
 		return 0, v.missing()
 	}
@@ -128,7 +130,7 @@ func (v *Value) Float64() (float64, error) {
 //
 // 空字符串返回 false，非空字符串按 strconv.ParseBool 规则解析。
 // Empty string returns false, non-empty strings are parsed according to strconv.ParseBool rules.
-func (v *Value) Bool() (bool, error) {
+func (v Value) Bool() (bool, error) {
 	if !v.exists {
 		return false, v.missing()
 	}
@@ -144,7 +146,7 @@ func (v *Value) Bool() (bool, error) {
 
 // IntOr 将参数转换为 int，转换失败返回默认值。
 // IntOr converts the parameter to int, returning the default value on failure.
-func (v *Value) IntOr(defaultValue int) int {
+func (v Value) IntOr(defaultValue int) int {
 	val, err := v.Int()
 	if err != nil {
 		return defaultValue
@@ -154,7 +156,7 @@ func (v *Value) IntOr(defaultValue int) int {
 
 // Int64Or 将参数转换为 int64，转换失败返回默认值。
 // Int64Or converts the parameter to int64, returning the default value on failure.
-func (v *Value) Int64Or(defaultValue int64) int64 {
+func (v Value) Int64Or(defaultValue int64) int64 {
 	val, err := v.Int64()
 	if err != nil {
 		return defaultValue
@@ -164,7 +166,7 @@ func (v *Value) Int64Or(defaultValue int64) int64 {
 
 // Float64Or 将参数转换为 float64，转换失败返回默认值。
 // Float64Or converts the parameter to float64, returning the default value on failure.
-func (v *Value) Float64Or(defaultValue float64) float64 {
+func (v Value) Float64Or(defaultValue float64) float64 {
 	val, err := v.Float64()
 	if err != nil {
 		return defaultValue
@@ -174,7 +176,7 @@ func (v *Value) Float64Or(defaultValue float64) float64 {
 
 // BoolOr 将参数转换为 bool，转换失败返回默认值。
 // BoolOr converts the parameter to bool, returning the default value on failure.
-func (v *Value) BoolOr(defaultValue bool) bool {
+func (v Value) BoolOr(defaultValue bool) bool {
 	val, err := v.Bool()
 	if err != nil {
 		return defaultValue
@@ -245,13 +247,30 @@ func PathValue(req *Request, name string) *Value {
 
 // QueryValue 返回查询参数的类型安全访问器（单值，取第一个）。
 // QueryValue returns a type-safe accessor for query parameters (single value, the first one).
-func QueryValue(req *Request, name string) *Value {
-	vals, exists := req.Query()[name]
-	val := ""
-	if len(vals) > 0 {
-		val = vals[0]
+func QueryValue(req *Request, name string) Value {
+	raw := req.Raw.URL.RawQuery
+	for len(raw) > 0 {
+		part := raw
+		if i := strings.IndexByte(raw, '&'); i >= 0 {
+			part, raw = raw[:i], raw[i+1:]
+		} else {
+			raw = ""
+		}
+		key, val := part, ""
+		if i := strings.IndexByte(part, '='); i >= 0 {
+			key, val = part[:i], part[i+1:]
+		}
+		decodedKey, err := url.QueryUnescape(key)
+		if err != nil || decodedKey != name {
+			continue
+		}
+		decodedValue, err := url.QueryUnescape(val)
+		if err != nil {
+			continue
+		}
+		return Value{name: name, raw: decodedValue, exists: true}
 	}
-	return newNamedValue(name, val, exists)
+	return Value{name: name}
 }
 
 // QueryValues 返回查询参数的多值访问器。
