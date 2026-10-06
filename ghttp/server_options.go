@@ -39,6 +39,8 @@ type serverConfig struct {
 	maxBodyBytes      int64
 	strictPath        bool
 	fixPath           bool
+	validatePath      bool
+	methodNotAllowed  bool
 	tlsConfig         *tls.Config
 	protocols         *http.Protocols
 	http2             *http.HTTP2Config
@@ -61,6 +63,8 @@ func defaultServerConfig() serverConfig {
 		shutdownTimeout:   DefaultShutdownTimeout,
 		maxHeaderBytes:    1 << 20,
 		maxBodyBytes:      DefaultMaxBodyBytes,
+		validatePath:      true,
+		methodNotAllowed:  true,
 		errorHandler:      defaultErrorHandler,
 	}
 }
@@ -126,6 +130,25 @@ func WithMaxBodyBytes(n int64) ServerOption {
 // "." and ".." segments are always rejected.
 func WithStrictPath() ServerOption {
 	return func(c *serverConfig) { c.strictPath = true }
+}
+
+// WithPathValidation enables or disables request path validation. Disabling it
+// is intended only for trusted upstreams and removes the validation scan from
+// the hot path; callers must ensure paths are already normalized and safe.
+func WithPathValidation(enabled bool) ServerOption {
+	return func(c *serverConfig) { c.validatePath = enabled }
+}
+
+// WithUnsafeSkipPathValidation disables request path validation for trusted
+// traffic. It is an explicit performance escape hatch with security tradeoffs.
+func WithUnsafeSkipPathValidation() ServerOption {
+	return WithPathValidation(false)
+}
+
+// WithMethodNotAllowed controls automatic 405/Allow handling. When disabled,
+// method misses are treated as ordinary 404 misses and the Allow scan is skipped.
+func WithMethodNotAllowed(enabled bool) ServerOption {
+	return func(c *serverConfig) { c.methodNotAllowed = enabled }
 }
 
 // WithRedirectFixedPath 开启路径修正重定向：路由未命中时，先清理多余的 '/'（如 "/a//b"），

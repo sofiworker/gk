@@ -90,32 +90,43 @@ func joinPaths(prefix, rel string) string {
 
 // validRequestPath 校验请求路径：必须以 '/' 开头，不得含 "." 或 ".." 段与控制字符；
 // strict 时额外拒绝空段（"//"）。
+//
+// 实现为单遍紧循环 + 定长 needle：循环内同时检查控制字符并记录是否出现 '.'
+// （无 '.' 则不可能有 "."/".." 段）；点段必然包含子串 "/."，以其作门控后再用
+// "/./"、"/../"、后缀 "/."、"/.." 四个定长匹配判定；内部空段与子串 "//" 一一对应
+// （尾部单个 '/' 的空段允许保留）。等价性由 TestValidRequestPathEquivalence 穷举验证。
+//
 // validRequestPath validates a request path: it must start with '/', contain no "." or
 // ".." segments and no control characters; strict additionally rejects empty segments
 // ("//").
+//
+// It is one tight loop plus fixed needles: the loop checks control characters and notes
+// whether '.' appears (a path without '.' cannot contain "."/".." segments); every dot
+// segment contains the substring "/.", which gates the fixed needles "/./", "/../" and
+// the suffixes "/.", "/.."; an interior empty segment corresponds exactly to the
+// substring "//" (a single trailing '/' stays allowed). Equivalence with the original
+// implementation is exhaustively verified by TestValidRequestPathEquivalence.
 func validRequestPath(p string, strict bool) bool {
 	if p == "" || p[0] != '/' {
 		return false
 	}
-	start := 1
-	for i := 1; i <= len(p); i++ {
-		if i < len(p) {
-			c := p[i]
-			if c < 0x20 || c == 0x7f {
-				return false
-			}
-			if c != '/' {
-				continue
-			}
-		}
-		seg := p[start:i]
-		switch {
-		case seg == "." || seg == "..":
-			return false
-		case seg == "" && strict && i < len(p):
+	hasDot := false
+	for i := 1; i < len(p); i++ {
+		c := p[i]
+		if c < 0x20 || c == 0x7f {
 			return false
 		}
-		start = i + 1
+		if c == '.' {
+			hasDot = true
+		}
+	}
+	if hasDot && strings.Contains(p, "/.") &&
+		(strings.Contains(p, "/./") || strings.Contains(p, "/../") ||
+			strings.HasSuffix(p, "/.") || strings.HasSuffix(p, "/..")) {
+		return false
+	}
+	if strict && strings.Contains(p, "//") {
+		return false
 	}
 	return true
 }

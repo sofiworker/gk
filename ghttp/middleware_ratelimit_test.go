@@ -3,6 +3,7 @@ package ghttp
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"sync"
 	"sync/atomic"
@@ -74,6 +75,25 @@ func TestRateLimit_CustomKey(t *testing.T) {
 	_, _ = rlCall(h, "1.1.1.1:1")
 	if _, err := rlCall(h, "9.9.9.9:1"); err == nil {
 		t.Fatal("expected shared key limit")
+	}
+}
+
+func TestRateLimit_RejectHandler(t *testing.T) {
+	h := RateLimit(0, 1, WithRateLimitRejectHandler(func(_ context.Context, _ *Request, resp *Response) error {
+		resp.WriteHeader(http.StatusTeapot)
+		_, err := resp.Write([]byte("limited"))
+		return err
+	}))(rlOK)
+	first := httptest.NewRecorder()
+	if err := h(context.Background(), &Request{Raw: httptest.NewRequest(http.MethodGet, "/", nil)}, &Response{Writer: first}); err != nil {
+		t.Fatalf("first request error: %v", err)
+	}
+	second := httptest.NewRecorder()
+	if err := h(context.Background(), &Request{Raw: httptest.NewRequest(http.MethodGet, "/", nil)}, &Response{Writer: second}); err != nil {
+		t.Fatalf("rejected request error: %v", err)
+	}
+	if second.Code != http.StatusTeapot || second.Body.String() != "limited" || second.Header().Get("Retry-After") == "" {
+		t.Fatalf("response = %d %q Retry-After=%q", second.Code, second.Body.String(), second.Header().Get("Retry-After"))
 	}
 }
 

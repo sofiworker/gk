@@ -77,6 +77,16 @@ func (v Value) String() (string, error) {
 	return v.raw, nil
 }
 
+// MustString returns the string value and panics when the value is missing.
+// It is intended for handlers whose route contract guarantees the parameter.
+func (v Value) MustString() string {
+	value, err := v.String()
+	if err != nil {
+		panic(err)
+	}
+	return value
+}
+
 // Int 将参数转换为 int。
 // Int converts the parameter to int.
 func (v Value) Int() (int, error) {
@@ -91,6 +101,15 @@ func (v Value) Int() (int, error) {
 		return 0, convErr(v.name, v.raw, "int", err)
 	}
 	return n, nil
+}
+
+// MustInt returns the integer value and panics when it is missing or invalid.
+func (v Value) MustInt() int {
+	value, err := v.Int()
+	if err != nil {
+		panic(err)
+	}
+	return value
 }
 
 // Int64 将参数转换为 int64。
@@ -109,6 +128,15 @@ func (v Value) Int64() (int64, error) {
 	return n, nil
 }
 
+// MustInt64 returns the int64 value and panics when it is missing or invalid.
+func (v Value) MustInt64() int64 {
+	value, err := v.Int64()
+	if err != nil {
+		panic(err)
+	}
+	return value
+}
+
 // Float64 将参数转换为 float64。
 // Float64 converts the parameter to float64.
 func (v Value) Float64() (float64, error) {
@@ -123,6 +151,15 @@ func (v Value) Float64() (float64, error) {
 		return 0, convErr(v.name, v.raw, "float64", err)
 	}
 	return n, nil
+}
+
+// MustFloat64 returns the float64 value and panics when it is missing or invalid.
+func (v Value) MustFloat64() float64 {
+	value, err := v.Float64()
+	if err != nil {
+		panic(err)
+	}
+	return value
 }
 
 // Bool 将参数转换为 bool。
@@ -142,6 +179,15 @@ func (v Value) Bool() (bool, error) {
 		return false, convErr(v.name, v.raw, "bool", err)
 	}
 	return b, nil
+}
+
+// MustBool returns the boolean value and panics when it is missing or invalid.
+func (v Value) MustBool() bool {
+	value, err := v.Bool()
+	if err != nil {
+		panic(err)
+	}
+	return value
 }
 
 // IntOr 将参数转换为 int，转换失败返回默认值。

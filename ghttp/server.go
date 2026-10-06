@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -83,32 +84,18 @@ type Server struct {
 	hooksErr error
 }
 
-var requestPool = sync.Pool{New: func() any { return new(Request) }}
-var responsePool = sync.Pool{New: func() any { return new(Response) }}
-
-func acquireRequest(r *http.Request) *Request {
-	req := requestPool.Get().(*Request)
-	paramsBuf := req.paramsBuf[:0]
-	*req = Request{Raw: r, paramsBuf: paramsBuf}
-	return req
+// reqRespPair 将 Request 与 Response 成对池化：两者生命周期完全一致（同一次请求中
+// 成对获取与归还，见 ServeHTTP），单池把每请求的池操作从 2 Get + 2 Put 减为一组，
+// 且两对象内存相邻。
+// reqRespPair pools Request and Response together: their lifecycles are identical
+// (acquired and released as one pair per request, see ServeHTTP), so a single pool
+// halves the pool operations and keeps the two objects adjacent in memory.
+type reqRespPair struct {
+	req  Request
+	resp Response
 }
 
-func releaseRequest(req *Request) {
-	paramsBuf := req.paramsBuf[:0]
-	*req = Request{paramsBuf: paramsBuf}
-	requestPool.Put(req)
-}
-
-func acquireResponse(w http.ResponseWriter) *Response {
-	resp := responsePool.Get().(*Response)
-	*resp = Response{Writer: w}
-	return resp
-}
-
-func releaseResponse(resp *Response) {
-	*resp = Response{}
-	responsePool.Put(resp)
-}
+var reqRespPool = sync.Pool{New: func() any { return new(reqRespPair) }}
 
 // ErrRegistrationAfterStart 表示服务启动后尝试注册路由。
 // ErrRegistrationAfterStart indicates attempting to register routes after server start.
@@ -282,7 +269,7 @@ func (s *Server) prepare(prefix string, defaults []Option, r Route) (preparedRou
 	if limit == 0 {
 		limit = s.config.maxBodyBytes
 	}
-	if limit > 0 {
+	if limit > 0 && routeMayReadBody(r.meta, o) {
 		h = limitBody(limit, h)
 	}
 	info := RouteInfo{Method: r.Method, Path: path, Kind: r.meta.kind, BodyType: r.meta.bodyType,
@@ -305,6 +292,30 @@ func limitBody(limit int64, next Handler) Handler {
 		}
 		return next(ctx, req, resp)
 	}
+}
+
+// routeMayReadBody 报告该路由的处理链是否可能读取请求体。typed NoData 端点与 Procedure
+// 从不读取 body（见 newRequestOf：lazyBody 为空），而 MaxBytesReader 只在读取时才生效，
+// 因此对这些路由跳过 limitBody 包装层是行为等价的。注意 RFC 9110 §9.3.1：GET 请求体是
+// SHOULD NOT 而非禁止，语义未定义，所以不能按方法跳过——POST/PUT 上同样存在不读 body 的
+// NoData 端点，这里按"是否可证明不读"判断，与方法无关。Raw 路由可能直接读 Raw.Body，
+// 带路由级中间件时中间件也可能读 body，两者一律保守地保留包装。
+// routeMayReadBody reports whether the route's handler chain may read the request body.
+// Typed NoData endpoints and Procedures never read it (see newRequestOf: lazyBody is nil),
+// and MaxBytesReader only takes effect on read, so skipping the limitBody wrapper is
+// behavior-equivalent for them. Note RFC 9110 §9.3.1: a GET body is SHOULD NOT, not
+// forbidden, with no defined semantics — so the decision is made per route's provable
+// reads, not per method (NoData endpoints exist on POST/PUT too). Raw routes may read
+// Raw.Body directly, and route-level middlewares may read the body as well; both keep
+// the wrapper conservatively.
+func routeMayReadBody(meta routeMeta, o routeOptions) bool {
+	if meta.kind == RouteRaw || meta.kind == RouteWebSocket || len(o.middleware) > 0 {
+		return true
+	}
+	if meta.kind == RouteProcedure {
+		return false
+	}
+	return meta.bodyType != reflect.TypeFor[NoDataType]()
 }
 
 // frozenHandler 固化并返回全局处理链；首次调用时标记服务已启动。
@@ -340,12 +351,22 @@ func (s *Server) frozenHandler() Handler {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h := s.frozenHandler()
 
-	req := acquireRequest(r)
-	resp := acquireResponse(w)
-	defer releaseRequest(req)
-	defer releaseResponse(resp)
+	p := reqRespPool.Get().(*reqRespPair)
+	req, resp := &p.req, &p.resp
+	paramsBuf := req.paramsBuf[:0]
+	*req = Request{Raw: r, paramsBuf: paramsBuf}
+	*resp = Response{Writer: w}
+	defer func() {
+		// 归还前清空字段，避免池内对象持有上一次请求的引用（Raw、query 等）；
+		// 保留 paramsBuf 容量供下次复用。
+		// Clear fields before returning to the pool so it retains no references from
+		// the last request (Raw, query, ...); keep the params buffer capacity.
+		p.req = Request{paramsBuf: p.req.paramsBuf[:0]}
+		p.resp = Response{}
+		reqRespPool.Put(p)
+	}()
 
-	if validRequestPath(r.URL.Path, s.config.strictPath) {
+	if !s.config.validatePath || validRequestPath(r.URL.Path, s.config.strictPath) {
 		req.match = s.router.findWithParams(r.Method, r.URL.Path, &req.paramsBuf)
 		if req.match.params != nil {
 			req.Params = req.match.params
@@ -387,13 +408,15 @@ func (s *Server) dispatch(ctx context.Context, req *Request, resp *Response) err
 			return nil
 		}
 	}
-	if allow := s.router.allowed(r.URL.Path); len(allow) > 0 {
-		resp.Header().Set("Allow", strings.Join(allowWithOptions(allow), ", "))
-		if r.Method == http.MethodOptions {
-			resp.WriteHeader(http.StatusNoContent)
-			return nil
+	if s.config.methodNotAllowed {
+		if allow := s.router.allowed(r.URL.Path); len(allow) > 0 {
+			resp.Header().Set("Allow", strings.Join(allowWithOptions(allow), ", "))
+			if r.Method == http.MethodOptions {
+				resp.WriteHeader(http.StatusNoContent)
+				return nil
+			}
+			return ErrMethodNotAllowed
 		}
-		return ErrMethodNotAllowed
 	}
 	if h := s.config.notFoundHandler; h != nil {
 		return h(ctx, req, resp)

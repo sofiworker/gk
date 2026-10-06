@@ -94,6 +94,9 @@ func OpenAPIDocument(s *Server, opts ...OpenAPIOption) (map[string]any, error) {
 
 	paths := map[string]any{}
 	for _, r := range s.Routes() {
+		if r.Doc.Hidden {
+			continue
+		}
 		if r.Kind == RouteRaw && !cfg.includeRaw {
 			continue
 		}
@@ -501,6 +504,8 @@ func (b *oaBuilder) responses(r RouteInfo) map[string]any {
 		return map[string]any{"204": map[string]any{"description": "No Content"}}
 	}
 	switch r.Kind {
+	case RouteWebSocket:
+		return map[string]any{"101": map[string]any{"description": "WebSocket protocol upgrade"}}
 	case RouteRaw:
 		return map[string]any{"200": map[string]any{"description": "Raw response"}}
 	case RouteAction, RouteProcedure:

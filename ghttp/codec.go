@@ -43,6 +43,28 @@ func (f OutputFunc[O]) Encode(ctx context.Context, resp *Response, v O) error {
 	return f(ctx, resp, v)
 }
 
+// These values are shared like gin's render package. The slices are installed
+// only for framework-owned content types; callers that mutate the raw header
+// map assume responsibility for that mutation, just as with http.Header itself.
+var (
+	jsonContentTypeHeader = []string{"application/json; charset=utf-8"}
+	xmlContentTypeHeader  = []string{"application/xml; charset=utf-8"}
+	textContentTypeHeader = []string{"text/plain; charset=utf-8"}
+)
+
+func setContentTypeHeader(h http.Header, contentType string) {
+	switch contentType {
+	case "application/json; charset=utf-8":
+		h["Content-Type"] = jsonContentTypeHeader
+	case "application/xml; charset=utf-8":
+		h["Content-Type"] = xmlContentTypeHeader
+	case "text/plain; charset=utf-8":
+		h["Content-Type"] = textContentTypeHeader
+	default:
+		h["Content-Type"] = []string{contentType}
+	}
+}
+
 // JSONInput 返回严格 JSON 输入：媒体类型须为 application/json（缺省放行），拒绝空体、未知字段
 // 与尾随内容。错误映射同 ReadJSON。
 // JSONInput returns a strict JSON input: the media type must be application/json (a
@@ -125,7 +147,10 @@ func writeBody(resp *Response, status int, contentType string, body []byte) erro
 		resp.WriteHeader(status)
 		return nil
 	}
-	resp.Header().Set("Content-Type", contentType)
+	// Content-Type is a fixed, already-canonical HTTP header name. Common
+	// framework-owned values use shared immutable slices, matching gin's render
+	// path and avoiding one small allocation per response.
+	setContentTypeHeader(resp.Header(), contentType)
 	resp.WriteHeader(status)
 	_, err := resp.Write(body)
 	return err

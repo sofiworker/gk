@@ -526,3 +526,40 @@ func TestRequestInput_ValueMethods(t *testing.T) {
 		}
 	})
 }
+
+func TestValueMustMethods(t *testing.T) {
+	valid := newNamedValue("id", "42", true)
+	if valid.MustString() != "42" || valid.MustInt() != 42 || valid.MustInt64() != 42 || valid.MustFloat64() != 42 {
+		t.Fatal("unexpected Must conversion result")
+	}
+	if !newNamedValue("enabled", "true", true).MustBool() {
+		t.Fatal("MustBool returned false for true")
+	}
+	for name, value := range map[string]Value{
+		"missing string": {name: "id"},
+		"invalid int":    {name: "id", raw: "x", exists: true},
+		"invalid int64":  {name: "id", raw: "x", exists: true},
+		"invalid float":  {name: "id", raw: "x", exists: true},
+		"invalid bool":   {name: "id", raw: "x", exists: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("Must method did not panic")
+				}
+			}()
+			switch name {
+			case "missing string":
+				value.MustString()
+			case "invalid int":
+				value.MustInt()
+			case "invalid int64":
+				value.MustInt64()
+			case "invalid float":
+				value.MustFloat64()
+			case "invalid bool":
+				value.MustBool()
+			}
+		})
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -24,9 +25,12 @@ var ErrRouteConflict = errors.New("ghttp: route conflict")
 // 注册非并发安全，由 Server.mu 保护；查找在启动后只读，可并发。
 // Registration is not concurrency-safe and is guarded by Server.mu; lookups are read-only after start.
 type router struct {
-	// trees 按 HTTP 方法存储路由树
-	// trees stores route trees by HTTP method
-	trees    map[string]*radixNode
+	// trees 按 HTTP 方法存储路由树。方法数量很小（通常 1–9 个），查找路径上的
+	// 线性扫描比 map 哈希更快。
+	// trees stores route trees by HTTP method. The method count is tiny (usually
+	// 1–9), so the lookup path's linear scan beats a map access.
+	trees []methodTree
+
 	catchAll map[string][]catchAllRoute
 
 	// maxParams 是所有路由中参数数量的最大值，用于预分配
@@ -36,6 +40,24 @@ type router struct {
 	// skippedPool 复用回溯栈，避免每次查找分配
 	// skippedPool reuses backtracking stacks to avoid per-lookup allocation
 	skippedPool sync.Pool
+}
+
+// methodTree 是单个 HTTP 方法的路由树。
+// methodTree is one HTTP method's route tree.
+type methodTree struct {
+	method string
+	root   *radixNode
+}
+
+// treeFor 返回方法的路由树；不存在时返回 nil。
+// treeFor returns the tree for a method, or nil when absent.
+func (r *router) treeFor(method string) *radixNode {
+	for i := range r.trees {
+		if r.trees[i].method == method {
+			return r.trees[i].root
+		}
+	}
+	return nil
 }
 
 type catchAllRoute struct {
@@ -69,7 +91,6 @@ type routeMatch struct {
 // newRouter creates a new router.
 func newRouter() *router {
 	return &router{
-		trees:    make(map[string]*radixNode),
 		catchAll: make(map[string][]catchAllRoute),
 	}
 }
@@ -88,8 +109,8 @@ func (r *router) addRoute(route Route) error {
 		return fmt.Errorf("ghttp: nil handler for %s %s", route.Method, path)
 	}
 
-	root, ok := r.trees[route.Method]
-	if !ok {
+	root := r.treeFor(route.Method)
+	if root == nil {
 		root = &radixNode{fullPath: "/"}
 	}
 
@@ -113,8 +134,8 @@ func (r *router) addRoute(route Route) error {
 
 	// 仅在插入成功后登记新树，避免失败时留下空树
 	// Only record a new tree after a successful insert to avoid leaving an empty tree
-	if !ok {
-		r.trees[route.Method] = root
+	if r.treeFor(route.Method) == nil {
+		r.trees = append(r.trees, methodTree{method: route.Method, root: root})
 	}
 	if n := countParams(path); n > r.maxParams {
 		r.maxParams = n
@@ -152,7 +173,7 @@ func (r *router) lookup(method, path string) routeMatch {
 // handler exists (for example, while building Allow for a 405). It deliberately
 // does not create a Params slice, so a miss does not escape a local buffer.
 func (r *router) lookupNoParams(method, path string) routeMatch {
-	root := r.trees[method]
+	root := r.treeFor(method)
 	if root == nil {
 		return r.lookupCatchAllNoParams(method, path)
 	}
@@ -197,7 +218,7 @@ func (r *router) lookupCatchAllNoParams(method, requestPath string) routeMatch {
 }
 
 func (r *router) lookupWithParams(method, path string, params *Params) routeMatch {
-	root := r.trees[method]
+	root := r.treeFor(method)
 	if root == nil {
 		return r.lookupCatchAll(method, path)
 	}
@@ -289,12 +310,12 @@ func (r *router) findWithParams(method, path string, params *Params) routeMatch 
 func (r *router) allowed(path string) []string {
 	var methods []string
 	hasGet, hasHead := false, false
-	for method := range r.trees {
-		if r.lookupNoParams(method, path).handler == nil {
+	for _, t := range r.trees {
+		if r.lookupNoParams(t.method, path).handler == nil {
 			continue
 		}
-		methods = append(methods, method)
-		switch method {
+		methods = append(methods, t.method)
+		switch t.method {
 		case http.MethodGet:
 			hasGet = true
 		case http.MethodHead:
@@ -302,7 +323,9 @@ func (r *router) allowed(path string) []string {
 		}
 	}
 	for method := range r.catchAll {
-		if m := r.lookupCatchAll(method, path); m.handler != nil {
+		// 同一方法可能同时存在树内 catch-all 与回退表条目，去重避免 Allow 重复
+		// one method may have both an in-tree catch-all and a fallback entry; dedupe
+		if m := r.lookupCatchAll(method, path); m.handler != nil && !slices.Contains(methods, method) {
 			methods = append(methods, method)
 		}
 	}
@@ -378,9 +401,9 @@ func tsrStatus(method string) int {
 // repaired path, or false when nothing can be fixed or the result equals the input. HEAD
 // falls back to the GET tree.
 func (r *router) fixedPath(method, p string) (string, bool) {
-	root := r.trees[method]
+	root := r.treeFor(method)
 	if root == nil && method == http.MethodHead {
-		root = r.trees[http.MethodGet]
+		root = r.treeFor(http.MethodGet)
 	}
 	if root == nil {
 		return "", false

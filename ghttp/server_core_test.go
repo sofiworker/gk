@@ -173,6 +173,8 @@ func TestCoreServerDefaults(t *testing.T) {
 		{"shutdownTimeout", s.config.shutdownTimeout, DefaultShutdownTimeout},
 		{"addr", s.config.addr, ":8080"},
 		{"strictPath", s.config.strictPath, false},
+		{"validatePath", s.config.validatePath, true},
+		{"methodNotAllowed", s.config.methodNotAllowed, true},
 		{"errorHandler set", s.config.errorHandler != nil, true},
 	}
 	for _, tt := range tests {
@@ -195,6 +197,28 @@ func TestCoreServerDefaults(t *testing.T) {
 	s3 := NewServer(WithNotFoundHandler(nil))
 	if s3.config.notFoundHandler != nil {
 		t.Error("nil not-found handler should use the default")
+	}
+}
+
+func TestCoreServerEscapeOptions(t *testing.T) {
+	s := coreNewServer(t, []ServerOption{
+		WithUnsafeSkipPathValidation(),
+		WithMethodNotAllowed(false),
+	}, Get("/x", apiNoData("ok")))
+	if s.config.validatePath {
+		t.Fatal("WithUnsafeSkipPathValidation did not disable validation")
+	}
+	if s.config.methodNotAllowed {
+		t.Fatal("WithMethodNotAllowed(false) did not disable 405 handling")
+	}
+	if rec := coreDo(s, http.MethodPost, "/x", ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("disabled method-not-allowed status = %d, want 404", rec.Code)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/x/../x", nil)
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound && rec.Code != http.StatusOK {
+		t.Fatalf("skip validation status = %d", rec.Code)
 	}
 }
 

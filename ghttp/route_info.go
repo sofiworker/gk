@@ -16,6 +16,8 @@ const (
 	RouteAction    RouteKind = "action"
 	RouteProcedure RouteKind = "procedure"
 	RouteRaw       RouteKind = "raw"
+	// RouteWebSocket identifies routes whose handler owns the WebSocket upgrade.
+	RouteWebSocket RouteKind = "websocket"
 )
 
 // RouteDoc 是路由的文档信息，供 OpenAPI 等工具使用，不影响请求处理。
@@ -27,6 +29,7 @@ type RouteDoc struct {
 	OperationID string
 	Tags        []string
 	Deprecated  bool
+	Hidden      bool
 }
 
 // RouteInfo 描述一个已注册的路由。BodyType/ResultType 为 nil 表示没有 body / 没有结果
@@ -84,6 +87,19 @@ func WithOperationID(id string) Option {
 // WithDeprecated marks the route deprecated.
 func WithDeprecated() Option {
 	return func(o *routeOptions) { o.doc.Deprecated = true }
+}
+
+// WithOpenAPIHidden excludes the route from generated OpenAPI documents while
+// keeping it registered and callable.
+func WithOpenAPIHidden() Option {
+	return func(o *routeOptions) { o.doc.Hidden = true }
+}
+
+// WithOpenAPIExpose explicitly controls whether the route is emitted in
+// generated OpenAPI documents. It is equivalent to WithOpenAPIHidden when
+// expose is false.
+func WithOpenAPIExpose(expose bool) Option {
+	return func(o *routeOptions) { o.doc.Hidden = !expose }
 }
 
 // Routes 返回已注册路由的快照，按路径再按方法排序。

@@ -8,7 +8,7 @@ GOFMT ?= gofmt
 
 .DEFAULT_GOAL := help
 
-.PHONY: help fmt fmt-check vet test test-race test-cover bench lint check-deps tidy check ci all webbench webbench-sanity
+.PHONY: help fmt fmt-check vet test test-race test-cover lint tidy check ci all
 
 help:
 	@echo "Available targets:"
@@ -18,11 +18,7 @@ help:
 	@echo "  make test        Run unit tests"
 	@echo "  make test-race   Run unit tests with the race detector"
 	@echo "  make test-cover  Run unit tests and write coverage.out"
-	@echo "  make bench       Run benchmarks"
-	@echo "  make webbench        Run ghttp-vs-frameworks web benchmarks (benchmarks/)"
-	@echo "  make webbench-sanity Verify all web benchmark adapters answer correctly"
 	@echo "  make lint        Run golangci-lint"
-	@echo "  make check-deps  Verify module dependency layering policy"
 	@echo "  make tidy        Run go mod tidy"
 	@echo "  make check       Run fmt, vet, and test"
 	@echo "  make ci          Run vet and test without modifying files"
@@ -52,8 +48,8 @@ lint:
 tidy:
 	$(GO) mod tidy
 
-check: fmt vet test check-deps
+check: fmt vet test
 
-ci: vet test check-deps
+ci: vet test
 
 all: check

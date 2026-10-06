@@ -210,6 +210,29 @@ func TestOpenAPIRawOption(t *testing.T) {
 	}
 }
 
+func TestOpenAPIHiddenRoute(t *testing.T) {
+	s := NewServer()
+	if err := s.Register(
+		Get("/visible", oaGet(oaAddr{})),
+		Get("/hidden", oaGet(oaAddr{}), WithOpenAPIHidden()),
+		Get("/explicit-hidden", oaGet(oaAddr{}), WithOpenAPIExpose(false)),
+	); err != nil {
+		t.Fatal(err)
+	}
+	doc := oaDoc(t, s)
+	if oaMissing(doc, "paths", "/visible", "get") {
+		t.Fatal("visible route missing")
+	}
+	for _, p := range []string{"/hidden", "/explicit-hidden"} {
+		if !oaMissing(doc, "paths", p) {
+			t.Fatalf("hidden route %s was exposed", p)
+		}
+	}
+	if rec := coreDo(s, http.MethodGet, "/hidden", ""); rec.Code != http.StatusOK {
+		t.Fatalf("hidden route status = %d", rec.Code)
+	}
+}
+
 func TestOpenAPISchemas(t *testing.T) {
 	doc := oaDoc(t, oaServer(t))
 	schemas := oaAt(t, doc, "components", "schemas")

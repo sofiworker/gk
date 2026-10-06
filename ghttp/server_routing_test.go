@@ -261,7 +261,7 @@ func TestRouterFailedInsertLeavesNoTree(t *testing.T) {
 	if err := r.addRoute(Route{Method: http.MethodPut, Path: "/a/:", compiledHandler: h}); err == nil {
 		t.Fatal("expected error")
 	}
-	if _, ok := r.trees[http.MethodPut]; ok {
+	if r.treeFor(http.MethodPut) != nil {
 		t.Error("tree recorded after failed insert")
 	}
 }

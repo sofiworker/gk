@@ -29,6 +29,7 @@ type rlConfig struct {
 	key     func(*Request) string
 	clock   func() time.Time
 	idleTTL time.Duration
+	reject  Handler
 }
 
 // RateLimitOption 配置 RateLimit 中间件。
@@ -61,6 +62,12 @@ func WithRateLimitClock(fn func() time.Time) RateLimitOption {
 // Cleanup is lazy (swept on the request path once per TTL); no background goroutine.
 func WithRateLimitIdleTTL(d time.Duration) RateLimitOption {
 	return func(c *rlConfig) { c.idleTTL = d }
+}
+
+// WithRateLimitRejectHandler customizes the response for rejected requests.
+// Retry-After is set before the handler runs; nil restores the default error path.
+func WithRateLimitRejectHandler(handler Handler) RateLimitOption {
+	return func(c *rlConfig) { c.reject = handler }
 }
 
 // rlLimiter 是并发安全的令牌桶集合。
@@ -139,6 +146,9 @@ func RateLimit(rate float64, burst int, opts ...RateLimitOption) Middleware {
 				secs = 1
 			}
 			resp.Header().Set("Retry-After", strconv.FormatInt(secs, 10))
+			if cfg.reject != nil {
+				return cfg.reject(ctx, req, resp)
+			}
 			return ErrTooManyRequests
 		}
 	}
