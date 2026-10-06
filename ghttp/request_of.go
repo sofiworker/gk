@@ -70,7 +70,7 @@ type lazyBodyData[T BodyConstraint] struct {
 	data        T
 	decodeOnce  sync.Once
 	decodeError error
-	decoder     func(context.Context, *Request) (T, error)
+	decoder     Input[T]
 	req         *Request
 }
 
@@ -86,7 +86,7 @@ func (r *RequestOf[T]) Data(ctx context.Context) (T, error) {
 	}
 	r.lazyBody.decodeOnce.Do(func() {
 		if r.lazyBody.decoder != nil {
-			r.lazyBody.data, r.lazyBody.decodeError = r.lazyBody.decoder(ctx, r.lazyBody.req)
+			r.lazyBody.data, r.lazyBody.decodeError = r.lazyBody.decoder.Decode(ctx, r.lazyBody.req)
 		}
 	})
 	return r.lazyBody.data, r.lazyBody.decodeError
@@ -106,7 +106,7 @@ func newRequestOf[T BodyConstraint](req *Request, in Input[T]) RequestOf[T] {
 	if _, noData := any(zero).(NoDataType); noData {
 		return RequestOf[T]{RequestInput: RequestInput{req: req}}
 	}
-	lb := &lazyBodyData[T]{req: req, decoder: in.Decode}
+	lb := &lazyBodyData[T]{req: req, decoder: in}
 	return RequestOf[T]{
 		RequestInput: RequestInput{req: req},
 		lazyBody:     lb,

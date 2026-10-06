@@ -4,11 +4,63 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+// TestRequestOfCopiesShareDecoder verifies lazy and concurrent caching across
+// value copies, including custom input errors and the first caller's context.
+func TestRequestOfCopiesShareDecoder(t *testing.T) {
+	type body struct{ Name string }
+	decodeErr := errors.New("custom decode failed")
+	for _, wantErr := range []error{nil, decodeErr} {
+		name := "success"
+		if wantErr != nil {
+			name = "error"
+		}
+		t.Run(name, func(t *testing.T) {
+			req := &Request{Raw: httptest.NewRequest("POST", "/custom", nil)}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var calls atomic.Int32
+			in := InputFunc[body](func(gotCtx context.Context, gotReq *Request) (body, error) {
+				calls.Add(1)
+				if gotCtx != ctx || gotReq != req {
+					t.Error("decoder received a different context or request")
+				}
+				return body{Name: "custom"}, wantErr
+			})
+			original := newRequestOf(req, in)
+			copyBeforeDecode := original
+			if calls.Load() != 0 {
+				t.Fatal("body decoded before Data")
+			}
+			var wg sync.WaitGroup
+			for i := 0; i < 32; i++ {
+				wg.Add(1)
+				go func(r RequestOf[body]) {
+					defer wg.Done()
+					got, err := r.Data(ctx)
+					if got.Name != "custom" || err != wantErr {
+						t.Errorf("Data() = %+v, %v; want custom, %v", got, err, wantErr)
+					}
+				}(copyBeforeDecode)
+			}
+			wg.Wait()
+			copyAfterDecode := original
+			if _, err := copyAfterDecode.Data(context.Background()); err != wantErr {
+				t.Fatalf("cached error = %v, want %v", err, wantErr)
+			}
+			if got := calls.Load(); got != 1 {
+				t.Fatalf("decoder called %d times, want 1", got)
+			}
+		})
+	}
+}
 
 // TestRequestOf_LazyBodyDecoding 测试 lazy body 解码
 // TestRequestOf_LazyBodyDecoding tests lazy body decoding

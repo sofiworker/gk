@@ -6,6 +6,41 @@ import (
 	"testing"
 )
 
+// TestRouterStaticLookupWithoutScratch guards the allocation-free static lookup,
+// including misses and trailing-slash recommendations.
+func TestRouterStaticLookupWithoutScratch(t *testing.T) {
+	r := newRouter()
+	h := func(context.Context, *Request, *Response) error { return nil }
+	for _, path := range []string{"/", "/users", "/users/list", "/files/"} {
+		if err := r.addRoute(Route{Method: "GET", Path: path, compiledHandler: h}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tt := range []struct {
+		path     string
+		fullPath string
+		tsr      bool
+	}{
+		{"/", "/", false},
+		{"/users", "/users", false},
+		{"/users/list", "/users/list", false},
+		{"/users/", "", true},
+		{"/files", "", true},
+		{"/users/missing", "", false},
+		{"/missing", "", false},
+	} {
+		t.Run(tt.path, func(t *testing.T) {
+			got := r.lookup("GET", tt.path)
+			if got.fullPath != tt.fullPath || got.tsr != tt.tsr || (got.handler != nil) != (tt.fullPath != "") || len(got.params) != 0 {
+				t.Fatalf("lookup(%q) = %+v", tt.path, got)
+			}
+			if allocs := testing.AllocsPerRun(100, func() { got = r.lookup("GET", tt.path) }); allocs != 0 {
+				t.Errorf("lookup allocated %g times, want 0", allocs)
+			}
+		})
+	}
+}
+
 // TestRouter_StaticRoutes 测试静态路由匹配
 // TestRouter_StaticRoutes tests static route matching
 func TestRouter_StaticRoutes(t *testing.T) {

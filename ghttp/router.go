@@ -150,16 +150,15 @@ func (r *router) lookup(method, path string) routeMatch {
 		return r.lookupCatchAll(method, path)
 	}
 
-	var params Params
-	var pp *Params
-	if r.maxParams > 0 {
-		params = make(Params, 0, r.maxParams)
-		pp = &params
+	var value nodeValue
+	if r.maxParams == 0 {
+		value = root.getValue(path, nil, nil, false)
+	} else {
+		params := make(Params, 0, r.maxParams)
+		skipped := r.getSkipped()
+		value = root.getValue(path, &params, skipped, false)
+		r.putSkipped(skipped)
 	}
-
-	skipped := r.getSkipped()
-	value := root.getValue(path, pp, skipped, false)
-	r.putSkipped(skipped)
 
 	m := routeMatch{handler: value.handler, fullPath: value.fullPath, tsr: value.tsr}
 	if value.handler != nil && value.params != nil {

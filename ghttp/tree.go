@@ -423,6 +423,13 @@ type skippedNode struct {
 	paramsCount int16
 }
 
+func lenOrZero(nodes *[]skippedNode) int {
+	if nodes == nil {
+		return 0
+	}
+	return len(*nodes)
+}
+
 // getValue 返回注册到给定路径的处理器。
 // getValue returns the handle registered with the given path (key).
 func (n *radixNode) getValue(path string, params *Params, skippedNodes *[]skippedNode, unescape bool) (value nodeValue) {
@@ -430,7 +437,9 @@ func (n *radixNode) getValue(path string, params *Params, skippedNodes *[]skippe
 
 	// 在入口时重置跳过节点栈。
 	// Reset the skipped-nodes stack on entry.
-	*skippedNodes = (*skippedNodes)[:0]
+	if skippedNodes != nil {
+		*skippedNodes = (*skippedNodes)[:0]
+	}
 
 walk: // 遍历树的外层循环
 	for {
@@ -446,7 +455,7 @@ walk: // 遍历树的外层循环
 					if c == idxc {
 						// 保存跳过的节点以便回溯
 						// Save skipped nodes for backtracking
-						if n.wildChild {
+						if n.wildChild && skippedNodes != nil {
 							index := len(*skippedNodes)
 							*skippedNodes = (*skippedNodes)[:index+1]
 							(*skippedNodes)[index] = skippedNode{
@@ -471,7 +480,7 @@ walk: // 遍历树的外层循环
 
 				if !n.wildChild {
 					if path != "/" {
-						for length := len(*skippedNodes); length > 0; length-- {
+						for length := lenOrZero(skippedNodes); length > 0; length-- {
 							skippedNode := (*skippedNodes)[length-1]
 							*skippedNodes = (*skippedNodes)[:length-1]
 							if strings.HasSuffix(skippedNode.path, path) {
@@ -588,7 +597,7 @@ walk: // 遍历树的外层循环
 
 		if path == prefix {
 			if n.handler == nil && path != "/" {
-				for length := len(*skippedNodes); length > 0; length-- {
+				for length := lenOrZero(skippedNodes); length > 0; length-- {
 					skippedNode := (*skippedNodes)[length-1]
 					*skippedNodes = (*skippedNodes)[:length-1]
 					if strings.HasSuffix(skippedNode.path, path) {
@@ -635,7 +644,7 @@ walk: // 遍历树的外层循环
 				path == prefix[:len(prefix)-1] && n.handler != nil)
 
 		if !value.tsr && path != "/" {
-			for length := len(*skippedNodes); length > 0; length-- {
+			for length := lenOrZero(skippedNodes); length > 0; length-- {
 				skippedNode := (*skippedNodes)[length-1]
 				*skippedNodes = (*skippedNodes)[:length-1]
 				if strings.HasSuffix(skippedNode.path, path) {
