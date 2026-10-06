@@ -46,6 +46,7 @@ type serverConfig struct {
 	errorLog          *log.Logger
 	logger            Logger
 	errorHandler      func(context.Context, *Request, *Response, error)
+	notFoundHandler   Handler
 }
 
 // defaultServerConfig 返回默认配置。
@@ -203,4 +204,13 @@ func WithLogger(l Logger) ServerOption {
 // StatusFromError and ErrorResponseOf expose the default mapping for reuse.
 func WithErrorHandler(handler func(context.Context, *Request, *Response, error)) ServerOption {
 	return func(c *serverConfig) { c.errorHandler = handler }
+}
+
+// WithNotFoundHandler 设置路由未命中时的处理器；nil 表示使用默认的纯文本 404。
+// 它只处理路由未命中，业务 handler 主动返回 ErrNotFound 仍走 WithErrorHandler。
+// WithNotFoundHandler sets the handler for unmatched routes; nil restores the
+// default plain-text 404. It only handles routing misses; an application handler
+// returning ErrNotFound still goes through WithErrorHandler.
+func WithNotFoundHandler(handler Handler) ServerOption {
+	return func(c *serverConfig) { c.notFoundHandler = handler }
 }

@@ -149,7 +149,9 @@ srv.With(ghttp.WithValidator(myValidator))               // 也可用于 Group �
 
 ## 错误映射
 
-handler 返回 error，由统一错误处理器写出 JSON：`{"error":"...","status":N,"code":"..."}`。
+handler 返回 error，由统一错误处理器写出 JSON：`{"error":"...","status":N,"code":"..."}`。路由未命中时默认直写
+`404 page not found` 纯文本响应；可用 `WithNotFoundHandler` 替换路由级 404，业务 handler 主动返回
+`ErrNotFound` 仍按 JSON 错误处理。
 
 | 错误 | 状态 |
 |---|---:|
@@ -195,14 +197,14 @@ handler 返回 error，由统一错误处理器写出 JSON：`{"error":"...","st
 
 ## Server 选项
 
-`WithAddr`、`WithReadTimeout`、`WithReadHeaderTimeout`（默认 10s）、`WithWriteTimeout`、`WithIdleTimeout`、`WithShutdownTimeout`（默认 30s）、`WithMaxHeaderBytes`、`WithMaxBodyBytes`（默认 32 MiB）、`WithStrictPath`、`WithRedirectFixedPath`（清理 `//` 与大小写不敏感匹配后重定向，默认关闭）、`WithTLSConfig`、`WithProtocols`、`WithH2C`、`WithHTTP2Config`、`WithBaseContext`、`WithLogger`、`WithErrorLog`、`WithErrorHandler`。
+`WithAddr`、`WithReadTimeout`、`WithReadHeaderTimeout`（默认 10s）、`WithWriteTimeout`、`WithIdleTimeout`、`WithShutdownTimeout`（默认 30s）、`WithMaxHeaderBytes`、`WithMaxBodyBytes`（默认 32 MiB）、`WithStrictPath`、`WithRedirectFixedPath`（清理 `//` 与大小写不敏感匹配后重定向，默认关闭）、`WithTLSConfig`、`WithProtocols`、`WithH2C`、`WithHTTP2Config`、`WithBaseContext`、`WithLogger`、`WithErrorLog`、`WithErrorHandler`、`WithNotFoundHandler`。
 
 生命周期：`Run`/`RunTLS`/`Serve`/`ServeTLS`/`RunContext`/`ServeContext`/`Shutdown`/`Close`。`Shutdown`/`Close` 之后再启动会返回 `ErrServerClosed`。`OnShutdown(fn)` 注册关闭钩子，在途请求结束后按注册的逆序执行一次。
 
 ## 破坏性变更（相对此前的 ghttp）
 
 - 旧 server 实现整体移除，由 v3 核心替代。
-- 默认错误响应改为 JSON `ErrorResponse`，并且不再回显内部错误文本；`Recovery` 默认改走统一错误链。
+- 默认业务错误响应为 JSON `ErrorResponse`，并且不再回显内部错误文本；路由未命中默认改为纯文本直写，`Recovery` 默认改走统一错误链。
 - `ReadJSON`：body 超限返回 413，错误文案改变；`RequestOf` 默认解码返回 `HTTPError`（拒绝空体、未知字段、媒体类型不符）；`isJSONContentType` 已删除。
 - `Value` 的错误包装 `ErrInvalidInput`（映射为 400），不再是裸字符串错误（以前映射为 500）。
 - `HeaderValue` 的存在性按头是否出现判断，空值头也视为存在。

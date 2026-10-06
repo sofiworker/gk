@@ -192,6 +192,38 @@ func TestCoreServerDefaults(t *testing.T) {
 	if s2.config.errorHandler == nil {
 		t.Error("nil error handler should fall back to default")
 	}
+	s3 := NewServer(WithNotFoundHandler(nil))
+	if s3.config.notFoundHandler != nil {
+		t.Error("nil not-found handler should use the default")
+	}
+}
+
+// TestCoreDefaultNotFoundResponse verifies unmatched routes use a compact plain response.
+func TestCoreDefaultNotFoundResponse(t *testing.T) {
+	rec := coreDo(NewServer(), http.MethodGet, "/missing", "")
+	if rec.Code != http.StatusNotFound || rec.Body.String() != "404 page not found" {
+		t.Fatalf("response = %d %q", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
+		t.Fatalf("Content-Type = %q", got)
+	}
+}
+
+// TestCoreCustomNotFoundHandler verifies only routing misses use the dedicated handler.
+func TestCoreCustomNotFoundHandler(t *testing.T) {
+	s := coreNewServer(t, []ServerOption{WithNotFoundHandler(func(_ context.Context, _ *Request, resp *Response) error {
+		resp.WriteHeader(http.StatusNotFound)
+		_, err := resp.Write([]byte("custom miss"))
+		return err
+	})}, Raw(http.MethodGet, "/x", func(context.Context, *Request, *Response) error {
+		return ErrNotFound
+	}))
+	if rec := coreDo(s, http.MethodGet, "/missing", ""); rec.Code != http.StatusNotFound || rec.Body.String() != "custom miss" {
+		t.Fatalf("routing miss = %d %q", rec.Code, rec.Body.String())
+	}
+	if rec := coreDo(s, http.MethodGet, "/x", ""); rec.Code != http.StatusNotFound || rec.Header().Get("Content-Type") != "application/json; charset=utf-8" {
+		t.Fatalf("application 404 = %d %q %q", rec.Code, rec.Body.String(), rec.Header().Get("Content-Type"))
+	}
 }
 
 // TestCoreRegisterValidation 测试注册期校验：method、handler、路径、选项与输入输出。
@@ -506,8 +538,11 @@ func TestCoreDispatchThroughGlobalMiddleware(t *testing.T) {
 		{
 			name: "404", method: http.MethodGet, target: "/nope", wantStatus: 404,
 			check: func(t *testing.T, rec *httptest.ResponseRecorder) {
-				if er := coreErrBody(t, rec); er.Status != 404 || er.Error != "not found" {
-					t.Errorf("body = %+v", er)
+				if got := rec.Body.String(); got != "404 page not found" {
+					t.Errorf("body = %q", got)
+				}
+				if got := rec.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
+					t.Errorf("Content-Type = %q", got)
 				}
 			},
 		},

@@ -21,6 +21,11 @@ type Request struct {
 	// Params are path parameters (matched from radix tree)
 	Params Params
 
+	// paramsBuf is the pooled backing storage used during route matching. It is
+	// kept separate from Params so handler code cannot replace the reusable
+	// buffer and make the pool retain application-owned memory.
+	paramsBuf Params
+
 	// matched 是匹配到的路由模板（用于日志和观测）
 	// matched is the matched route template (for logging and observability)
 	matched string

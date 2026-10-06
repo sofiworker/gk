@@ -88,12 +88,14 @@ var responsePool = sync.Pool{New: func() any { return new(Response) }}
 
 func acquireRequest(r *http.Request) *Request {
 	req := requestPool.Get().(*Request)
-	*req = Request{Raw: r}
+	paramsBuf := req.paramsBuf[:0]
+	*req = Request{Raw: r, paramsBuf: paramsBuf}
 	return req
 }
 
 func releaseRequest(req *Request) {
-	*req = Request{}
+	paramsBuf := req.paramsBuf[:0]
+	*req = Request{paramsBuf: paramsBuf}
 	requestPool.Put(req)
 }
 
@@ -344,8 +346,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer releaseResponse(resp)
 
 	if validRequestPath(r.URL.Path, s.config.strictPath) {
-		req.match = s.router.find(r.Method, r.URL.Path)
-		req.Params = req.match.params
+		req.match = s.router.findWithParams(r.Method, r.URL.Path, &req.paramsBuf)
+		if req.match.params != nil {
+			req.Params = req.match.params
+		} else {
+			req.Params = req.paramsBuf[:0]
+		}
 		req.matched = req.match.fullPath
 	} else {
 		req.badPath = true
@@ -389,7 +395,10 @@ func (s *Server) dispatch(ctx context.Context, req *Request, resp *Response) err
 		}
 		return ErrMethodNotAllowed
 	}
-	return ErrNotFound
+	if h := s.config.notFoundHandler; h != nil {
+		return h(ctx, req, resp)
+	}
+	return errRouteNotFound
 }
 
 // allowWithOptions 在 Allow 列表中补上自动应答的 OPTIONS。
@@ -460,6 +469,25 @@ func defaultErrorHandler(_ context.Context, _ *Request, resp *Response, err erro
 	if err == nil || resp.written {
 		return
 	}
+	if errors.Is(err, errRouteNotFound) {
+		_ = defaultNotFoundHandler(nil, nil, resp)
+		return
+	}
 	body := ErrorResponseOf(err)
 	_ = writeJSON(resp, body.Status, body)
+}
+
+var (
+	errRouteNotFound        = fmt.Errorf("%w: route not found", ErrNotFound)
+	defaultNotFoundBody     = []byte("404 page not found")
+	defaultPlainContentType = []string{"text/plain; charset=utf-8"}
+)
+
+// defaultNotFoundHandler writes the compact plain-text response used by the
+// default NoRoute path. The body and header value are immutable package data.
+func defaultNotFoundHandler(_ context.Context, _ *Request, resp *Response) error {
+	resp.Header()["Content-Type"] = defaultPlainContentType
+	resp.WriteHeader(http.StatusNotFound)
+	_, err := resp.Write(defaultNotFoundBody)
+	return err
 }

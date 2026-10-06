@@ -145,6 +145,58 @@ func canonicalRoutePath(p string) (string, error) {
 // lookup 在指定方法的树中查找路径。
 // lookup looks up a path in the tree of the given method.
 func (r *router) lookup(method, path string) routeMatch {
+	return r.lookupWithParams(method, path, nil)
+}
+
+// lookupNoParams matches a route when the caller only needs to know whether a
+// handler exists (for example, while building Allow for a 405). It deliberately
+// does not create a Params slice, so a miss does not escape a local buffer.
+func (r *router) lookupNoParams(method, path string) routeMatch {
+	root := r.trees[method]
+	if root == nil {
+		return r.lookupCatchAllNoParams(method, path)
+	}
+	if r.maxParams == 0 {
+		value := root.getValue(path, nil, nil, false)
+		return routeMatch{handler: value.handler, fullPath: value.fullPath, tsr: value.tsr}
+	}
+	skipped := r.getSkipped()
+	value := root.getValue(path, nil, skipped, false)
+	r.putSkipped(skipped)
+	m := routeMatch{handler: value.handler, fullPath: value.fullPath, tsr: value.tsr}
+	if m.handler == nil {
+		if fallback := r.lookupCatchAll(method, path); fallback.handler != nil {
+			return fallback
+		}
+	}
+	return m
+}
+
+func (r *router) lookupCatchAllNoParams(method, requestPath string) routeMatch {
+	var best *catchAllRoute
+	for i := range r.catchAll[method] {
+		candidate := &r.catchAll[method][i]
+		if !strings.HasPrefix(requestPath, candidate.prefix) {
+			continue
+		}
+		if strings.HasSuffix(candidate.prefix, "/") {
+			if len(requestPath) <= len(candidate.prefix)-1 {
+				continue
+			}
+		} else if len(requestPath) <= len(candidate.prefix) || requestPath[len(candidate.prefix)] != '/' {
+			continue
+		}
+		if best == nil || len(candidate.prefix) > len(best.prefix) {
+			best = candidate
+		}
+	}
+	if best == nil {
+		return routeMatch{}
+	}
+	return routeMatch{handler: best.handler, fullPath: best.path}
+}
+
+func (r *router) lookupWithParams(method, path string, params *Params) routeMatch {
 	root := r.trees[method]
 	if root == nil {
 		return r.lookupCatchAll(method, path)
@@ -154,9 +206,12 @@ func (r *router) lookup(method, path string) routeMatch {
 	if r.maxParams == 0 {
 		value = root.getValue(path, nil, nil, false)
 	} else {
-		params := make(Params, 0, r.maxParams)
+		if params == nil {
+			var local Params
+			params = &local
+		}
 		skipped := r.getSkipped()
-		value = root.getValue(path, &params, skipped, false)
+		value = root.getValue(path, params, skipped, false)
 		r.putSkipped(skipped)
 	}
 
@@ -213,9 +268,16 @@ func (r *router) match(method, path string) (Handler, Params, string) {
 // find 匹配路由并保留 TSR 信息；HEAD 在无显式路由时回退到 GET。
 // find matches a route and keeps TSR info; HEAD falls back to GET without an explicit route.
 func (r *router) find(method, path string) routeMatch {
-	m := r.lookup(method, path)
+	return r.findWithParams(method, path, nil)
+}
+
+func (r *router) findWithParams(method, path string, params *Params) routeMatch {
+	m := r.lookupWithParams(method, path, params)
 	if m.handler == nil && method == http.MethodHead {
-		if g := r.lookup(http.MethodGet, path); g.handler != nil || (!m.tsr && g.tsr) {
+		if params != nil {
+			*params = (*params)[:0]
+		}
+		if g := r.lookupWithParams(http.MethodGet, path, params); g.handler != nil || (!m.tsr && g.tsr) {
 			return g
 		}
 	}
@@ -228,7 +290,7 @@ func (r *router) allowed(path string) []string {
 	var methods []string
 	hasGet, hasHead := false, false
 	for method := range r.trees {
-		if r.lookup(method, path).handler == nil {
+		if r.lookupNoParams(method, path).handler == nil {
 			continue
 		}
 		methods = append(methods, method)

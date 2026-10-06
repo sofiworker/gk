@@ -12,11 +12,11 @@
 |---|---:|---:|---:|
 | StdlibMux（GET /ping，ServeMux 对照） | 70.4 | 16 | 1 |
 | RawGET（框架最低开销） | 54.5 | 0 | 0 |
-| SimpleGET（typed，返回小 struct） | 296 | 96 | 4 |
-| SimpleGETParallel（8 核，ns/op 为墙钟均摊） | 150 | 96 | 4 |
-| GETWithPath（1 个路径参数 + Int64） | 400 | 152 | 6 |
-| GETWithQuery（3 个查询参数） | 417 | 96 | 4 |
-| POSTJSON（解码 + 输出） | 1320 | 946 | 13 |
+| SimpleGET (typed small struct) | 278 | 96 | 4 |
+| SimpleGETParallel (8 workers) | 143 | 96 | 4 |
+| GETWithPath (one path parameter) | 355 | 96 | 4 |
+| GETWithQuery (one query parameter) | 391 | 96 | 4 |
+| POSTJSON (decode and encode) | 1284 | 946 | 13 |
 | EarlyReturn（lazy，403 提前返回） | 630 | 424 | 9 |
 | EarlyReturnEager（先解码再校验，403） | 1450 | 1034 | 16 |
 | MiddlewareStack（Recovery+RequestID+SecureHeaders+Observe） | 985 | 688 | 17 |
@@ -25,16 +25,16 @@
 | Routing/Param2 | 142 | 120 | 2 |
 | Routing/Param3Deep | 163 | 120 | 2 |
 | Routing/CatchAll | 136 | 120 | 2 |
-| NotFound（404） | 589 | 264 | 7 |
+| NotFound (404) | 114 | 0 | 0 |
 | MethodNotAllowed（405） | 772 | 416 | 12 |
 
 ## 分析
 
-Raw 路径在可复用 writer 基准中为 54.5 ns / 0 allocs；typed 路径的主要成本来自 JSON 编解码，而不是路由树。静态路由已走无参数 lookup 分支，路由树在独立基准中为 129 ns / 2 allocs（含请求与响应包装）；参数路由保持 131 ns / 2 allocs，未因静态优化回归。并行版本墙钟约 132 ns/op，说明池化请求/响应和路由 lookup 没有引入全局锁竞争。
+Raw ?????? writer ????? 54.5 ns / 0 allocs?typed ????????? JSON ??????????????? Request ??????????????????????? lookup ?? Params???????????????????
 
-POSTJSON 的主要分配来自标准库 JSON decoder/encoder、`http.MaxBytesReader` 和 typed body 状态；当前为 930 B / 12 allocs。静态 typed GET 为 80 B / 3 allocs，其中 JSON 编码路径的反射值、编码结果和 body 拷贝仍是主要来源。路由查找自身不再为静态路径创建参数或回溯栈；参数路径仅按最大参数数分配参数切片。
+POSTJSON ???? 946 B / 13 allocs?????????? JSON decoder/encoder?http.MaxBytesReader ? typed body ????? typed GET ???? 96 B / 4 allocs?JSON ???????????
 
-GETWithQuery 使用值返回的 `QueryValue` 和惰性扫描；在当前基准中只比静态 GET 多一笔分配，避免了完整 `url.Values` map 和每个 accessor 的堆分配。MiddlewareStack 的主要成本仍来自 RequestID 的 context/request 包装和多个安全响应头；NotFound/MethodNotAllowed 的成本来自错误响应 JSON 与 Allow 列表生成。
+GETWithQuery ?????? QueryValue ??????????? 96 B / 4 allocs?MiddlewareStack ???????? RequestID ? context/request ???????????MethodNotAllowed ????????? JSON ? Allow ??????? 404 ????????????
 
 ### Lazy 收益
 
