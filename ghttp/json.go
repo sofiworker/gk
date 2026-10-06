@@ -1,7 +1,6 @@
 package ghttp
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,11 +15,7 @@ import (
 // 自动设置 Content-Type 为 application/json; charset=utf-8。
 // Automatically sets Content-Type to application/json; charset=utf-8.
 func WriteJSON(resp *Response, status int, v any) error {
-	body, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Errorf("failed to encode JSON: %w", err)
-	}
-	return writeBody(resp, status, "application/json; charset=utf-8", body)
+	return writeJSON(resp, status, v)
 }
 
 // ReadJSON 从请求体读取并解析 JSON 数据。

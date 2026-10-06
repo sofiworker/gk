@@ -1,11 +1,13 @@
 package ghttp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"net/http"
+	"sync"
 
 	"github.com/sofiworker/gk/ghttp/wire"
 )
@@ -110,12 +112,24 @@ func TextOutput() Output[string] {
 // writeJSON 序列化后再写出 JSON 响应。
 // writeJSON encodes first and then writes a JSON response.
 func writeJSON(resp *Response, status int, data any) error {
-	body, err := json.Marshal(data)
-	if err != nil {
+	buf := jsonOutputBuffers.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer func() {
+		// Do not retain unusually large responses in the pool.
+		if buf.Cap() <= 64<<10 {
+			buf.Reset()
+			jsonOutputBuffers.Put(buf)
+		}
+	}()
+	if err := json.NewEncoder(buf).Encode(data); err != nil {
 		return fmt.Errorf("ghttp: encode JSON response: %w", err)
 	}
-	return writeBody(resp, status, "application/json; charset=utf-8", body)
+	body := buf.Bytes()
+	// Encoder adds one newline; Marshal (the previous implementation) does not.
+	return writeBody(resp, status, "application/json; charset=utf-8", body[:len(body)-1])
 }
+
+var jsonOutputBuffers = sync.Pool{New: func() any { return new(bytes.Buffer) }}
 
 // writeBody 设置 Content-Type、写状态码与响应体。204/304 等不允许带体的状态只写状态码。
 // writeBody sets Content-Type and writes the status and body. Statuses that forbid a body
