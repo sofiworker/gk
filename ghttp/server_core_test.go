@@ -624,7 +624,7 @@ func TestCoreBodyLimit(t *testing.T) {
 		{name: "Server 超限 413 / over server limit 413", opts: []ServerOption{WithMaxBodyBytes(8)}, route: Raw(http.MethodPost, "/x", coreReadAll()), body: big, wantStatus: 413},
 		{name: "路由放宽 / route raises limit", opts: []ServerOption{WithMaxBodyBytes(8)}, route: Raw(http.MethodPost, "/x", coreReadAll(), WithBodyLimit(128)), body: big, wantStatus: 200},
 		{name: "路由收紧 / route lowers limit", route: Raw(http.MethodPost, "/x", coreReadAll(), WithBodyLimit(4)), body: big, wantStatus: 413},
-		{name: "路由 -1 不限 / route -1 unlimited", opts: []ServerOption{WithMaxBodyBytes(8)}, route: Raw(http.MethodPost, "/x", coreReadAll(), WithBodyLimit(-1)), body: big, wantStatus: 200},
+		{name: "路由 WithUnlimitedBody 不限 / route unlimited helper", opts: []ServerOption{WithMaxBodyBytes(8)}, route: Raw(http.MethodPost, "/x", coreReadAll(), WithUnlimitedBody()), body: big, wantStatus: 200},
 		{name: "路由 0 沿用 Server / route 0 inherits", opts: []ServerOption{WithMaxBodyBytes(8)}, route: Raw(http.MethodPost, "/x", coreReadAll(), WithBodyLimit(0)), body: big, wantStatus: 413},
 		{name: "WithMaxBodyBytes(0) 不限 / unlimited", opts: []ServerOption{WithMaxBodyBytes(0)}, route: Raw(http.MethodPost, "/x", coreReadAll()), body: strings.Repeat("b", 64<<10), wantStatus: 200},
 		{name: "WithMaxBodyBytes(-1) 不限 / unlimited", opts: []ServerOption{WithMaxBodyBytes(-1)}, route: Raw(http.MethodPost, "/x", coreReadAll()), body: big, wantStatus: 200},

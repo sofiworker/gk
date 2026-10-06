@@ -109,7 +109,7 @@ v1.Register(ghttp.Get("/x", h, ghttp.WithMiddleware(routeMW)))
 - `QueryValues(name)` 返回 `*Values`，提供 `Strings/IntSlice/Int64Slice/Float64Slice`。
 - `req.Sources()`：原始字符串访问；`req.Request()`：取底层 `*Request`（含 `Raw *http.Request`、`Route()`、`Query()`）。
 - `req.Data(ctx)`：惰性解码 body，`sync.Once` 保证只解码一次；`T` 为 `NoDataType` 时不读取 body。
-- 请求体默认上限 32 MiB（`WithMaxBodyBytes`，路由级 `WithBodyLimit`，`-1` 不限），超限返回 413。
+- 请求体默认上限 32 MiB（`WithMaxBodyBytes`，路由级 `WithBodyLimit`；也可用 `WithUnlimitedBody` 表示不限），超限返回 413。
 
 ### 输入输出格式
 

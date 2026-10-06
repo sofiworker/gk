@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"sync"
 )
 
 // Route 表示一个待注册的路由。由 Method、Get、Raw 等构造，交给 Server.Register 或
@@ -124,6 +125,13 @@ func WithBodyLimit(n int64) Option {
 	return func(o *routeOptions) { o.bodyLimit = n }
 }
 
+// WithUnlimitedBody disables the server-level request-body limit for this
+// route. It is equivalent to WithBodyLimit(-1), but makes the security-relevant
+// choice explicit at the call site.
+func WithUnlimitedBody() Option {
+	return WithBodyLimit(-1)
+}
+
 // WithInput 指定请求体的解码方式（仅路由级）。T 必须与 handler 的 body 类型一致，否则注册失败。
 // WithInput sets how the request body is decoded (route level only). T must match the
 // handler's body type or registration fails.
@@ -193,8 +201,24 @@ func compileEndpoint[T BodyConstraint, O ResponseConstraint](endpoint Endpoint[T
 	if err != nil {
 		return nil, err
 	}
+	var bodyPool sync.Pool
+	bodyPool.New = func() any { return new(lazyBodyData[T]) }
 	return func(ctx context.Context, req *Request, resp *Response) error {
-		result, err := endpoint(ctx, newRequestOf[T](req, in))
+		var typed RequestOf[T]
+		var body *lazyBodyData[T]
+		var zero T
+		if _, noData := any(zero).(NoDataType); noData {
+			typed = RequestOf[T]{RequestInput: RequestInput{req: req}}
+		} else {
+			body = bodyPool.Get().(*lazyBodyData[T])
+			*body = lazyBodyData[T]{req: req, decoder: in}
+			typed = RequestOf[T]{RequestInput: RequestInput{req: req}, lazyBody: body}
+		}
+		result, err := endpoint(ctx, typed)
+		if body != nil {
+			*body = lazyBodyData[T]{}
+			bodyPool.Put(body)
+		}
 		if err != nil {
 			return err
 		}
@@ -215,8 +239,25 @@ func compileAction[T BodyConstraint](action Action[T], o routeOptions) (Handler,
 	if err != nil {
 		return nil, err
 	}
+	var bodyPool sync.Pool
+	bodyPool.New = func() any { return new(lazyBodyData[T]) }
 	return func(ctx context.Context, req *Request, resp *Response) error {
-		if err := action(ctx, newRequestOf[T](req, in)); err != nil {
+		var typed RequestOf[T]
+		var body *lazyBodyData[T]
+		var zero T
+		if _, noData := any(zero).(NoDataType); noData {
+			typed = RequestOf[T]{RequestInput: RequestInput{req: req}}
+		} else {
+			body = bodyPool.Get().(*lazyBodyData[T])
+			*body = lazyBodyData[T]{req: req, decoder: in}
+			typed = RequestOf[T]{RequestInput: RequestInput{req: req}, lazyBody: body}
+		}
+		err := action(ctx, typed)
+		if body != nil {
+			*body = lazyBodyData[T]{}
+			bodyPool.Put(body)
+		}
+		if err != nil {
 			return err
 		}
 		resp.WriteHeader(http.StatusNoContent)
