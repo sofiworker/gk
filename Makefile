@@ -46,22 +46,8 @@ test-cover:
 	$(GO) test -coverprofile=coverage.out $(TESTFLAGS) $(PKGS)
 	$(GO) tool cover -func=coverage.out
 
-bench:
-	$(GO) test $(BENCHFLAGS) $(PKGS)
-
-WEBBENCH_FLAGS ?= -bench=. -benchmem -count=1
-
-webbench:
-	cd benchmarks && $(GO) test -run xxx $(WEBBENCH_FLAGS)
-
-webbench-sanity:
-	cd benchmarks && $(GO) test -run TestScenarioSanity -v
-
 lint:
 	$(GOLANGCI_LINT) run $(PKGS)
-
-check-deps:
-	bash scripts/check-deps.sh
 
 tidy:
 	$(GO) mod tidy

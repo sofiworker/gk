@@ -35,7 +35,3 @@ A collection of Go libraries for building robust applications; packages are inde
 ```bash
 go get github.com/sofiworker/gk
 ```
-
-## Go Version
-
-gk requires Go 1.25.0 or later. Before v1.0.0 the minimum is locked to Go 1.25.0; all Go 1.25 patch releases are expected to compile and test the module.

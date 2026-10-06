@@ -37,6 +37,3 @@
 go get github.com/sofiworker/gk
 ```
 
-## Go 版本
-
-gk 要求 Go 1.25.0 及以上。v1.0.0 之前，最低支持的 Go 版本锁定为 Go 1.25.0；所有 Go 1.25 补丁版本都应能编译并测试本模块。
