@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/sofiworker/gk/gnet/pcap"
-	"github.com/sofiworker/gk/gnet/pcapng"
 	"github.com/sofiworker/gk/gnet/rawcap"
 )
 
@@ -29,7 +28,7 @@ func TestFromPCAP(t *testing.T) {
 
 func TestFromPCAPNG(t *testing.T) {
 	ts := time.Unix(0, 1)
-	p := &pcapng.Packet{InterfaceID: 7, Data: []byte{9}, CapturedLen: 1, OriginalLen: 1, Timestamp: ts}
+	p := &pcap.Packet{InterfaceID: 7, Data: []byte{9}, CapturedLen: 1, OriginalLen: 1, Timestamp: ts}
 	out := FromPCAPNG(p)
 	if out.InterfaceID != 7 || out.CaptureLen != 1 || !out.Timestamp.Equal(ts) {
 		t.Fatalf("unexpected packet: %+v", out)

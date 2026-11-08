@@ -1,4 +1,4 @@
-package pcapng
+package pcap
 
 import (
 	"bytes"
@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-type Reader struct {
+type ngReader struct {
 	r             io.Reader
 	order         binary.ByteOrder
 	section       *SectionHeaderBlock
@@ -23,29 +23,20 @@ type interfaceInfo struct {
 	tsRes time.Duration
 }
 
-type Packet struct {
-	InterfaceID uint32
-	Data        []byte
-	Timestamp   time.Time
-	CapturedLen uint32
-	OriginalLen uint32
-	Options     []Option
-}
-
-func NewReader(r io.Reader) *Reader {
-	return &Reader{
+func newNGReader(r io.Reader) *ngReader {
+	return &ngReader{
 		r:          r,
 		interfaces: make(map[uint32]*interfaceInfo),
 		defaultRes: time.Microsecond,
 	}
 }
 
-func (r *Reader) CurrentSection() *SectionHeaderBlock {
+func (r *ngReader) CurrentSection() *SectionHeaderBlock {
 	return r.section
 }
 
 // InterfaceInfo 返回接口的基本信息（linktype、snaplen、时间精度）。
-func (r *Reader) InterfaceInfo(id uint32) (linkType uint16, snapLen uint32, tsRes time.Duration, ok bool) {
+func (r *ngReader) InterfaceInfo(id uint32) (linkType uint16, snapLen uint32, tsRes time.Duration, ok bool) {
 	info, exists := r.interfaces[id]
 	if !exists || info == nil || info.block == nil {
 		return 0, 0, 0, false
@@ -53,7 +44,7 @@ func (r *Reader) InterfaceInfo(id uint32) (linkType uint16, snapLen uint32, tsRe
 	return info.block.LinkType, info.block.SnapLen, info.tsRes, true
 }
 
-func (r *Reader) NextBlock() (Block, error) {
+func (r *ngReader) NextBlock() (Block, error) {
 	var hdr [8]byte
 	if _, err := io.ReadFull(r.r, hdr[:]); err != nil {
 		if errors.Is(err, io.EOF) {
@@ -158,7 +149,7 @@ func (r *Reader) NextBlock() (Block, error) {
 	}
 }
 
-func (r *Reader) ReadPacket() (*Packet, error) {
+func (r *ngReader) ReadPacket() (*Packet, error) {
 	for {
 		block, err := r.NextBlock()
 		if err != nil {
@@ -171,6 +162,9 @@ func (r *Reader) ReadPacket() (*Packet, error) {
 		}
 
 		info := r.interfaces[epb.InterfaceID]
+		if info == nil {
+			return nil, fmt.Errorf("%w: %d", ErrUnknownInterface, epb.InterfaceID)
+		}
 		tsRes := r.defaultRes
 		if info != nil && info.tsRes != 0 {
 			tsRes = info.tsRes
@@ -178,6 +172,7 @@ func (r *Reader) ReadPacket() (*Packet, error) {
 
 		packet := &Packet{
 			InterfaceID: epb.InterfaceID,
+			LinkType:    uint32(info.block.LinkType),
 			Data:        append([]byte(nil), epb.PacketData...),
 			Timestamp:   epb.Timestamp(tsRes),
 			CapturedLen: epb.CapturedLen,
@@ -188,7 +183,7 @@ func (r *Reader) ReadPacket() (*Packet, error) {
 	}
 }
 
-func (r *Reader) readBody(totalLength uint32, prefix []byte) ([]byte, error) {
+func (r *ngReader) readBody(totalLength uint32, prefix []byte) ([]byte, error) {
 	if totalLength < 12 {
 		return nil, ErrInvalidBlockLength
 	}

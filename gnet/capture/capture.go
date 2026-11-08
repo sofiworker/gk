@@ -11,16 +11,15 @@ import (
 	"time"
 
 	"github.com/sofiworker/gk/gnet/pcap"
-	"github.com/sofiworker/gk/gnet/pcapng"
 	"github.com/sofiworker/gk/gnet/rawcap"
 	"golang.org/x/net/bpf"
 )
 
-type Format string
+type Format = pcap.Format
 
 const (
-	FormatPCAP   Format = "pcap"
-	FormatPCAPNG Format = "pcapng"
+	FormatPCAP   = pcap.FormatPCAP
+	FormatPCAPNG = pcap.FormatPCAPNG
 )
 
 // Config 捕获配置。
@@ -296,44 +295,21 @@ func buildWriter(cfg Config, sources []source) (packetWriter, error) {
 		closer = file
 	}
 
-	switch cfg.Format {
-	case FormatPCAP:
-		if len(sources) != 1 {
-			if closer != nil {
-				_ = closer.Close()
-			}
-			return nil, fmt.Errorf("capture: pcap requires single interface")
-		}
-		writer, err := pcap.NewWriter(w, pcap.WithSnapLen(uint32(cfg.SnapLen)), pcap.WithLinkType(cfg.LinkType))
-		if err != nil {
-			if closer != nil {
-				_ = closer.Close()
-			}
-			return nil, err
-		}
-		return &pcapWriter{writer: writer, closer: closer}, nil
-	case FormatPCAPNG:
-		wr, err := pcapng.NewWriter(w, pcapng.WithDefaultTimestampResolution(time.Microsecond))
-		if err != nil {
-			if closer != nil {
-				_ = closer.Close()
-			}
-			return nil, err
-		}
-		pw := &pcapngWriter{writer: wr, closer: closer, snapLen: uint32(cfg.SnapLen)}
-		for i := range sources {
-			ifaceID, err := wr.AddInterface(uint16(cfg.LinkType), pw.snapLen)
-			if err != nil {
-				_ = pw.Close()
-				return nil, err
-			}
-			sources[i].writerID = ifaceID
-		}
-		return pw, nil
-	default:
+	writer, err := pcap.NewWriter(w, pcap.WithFormat(cfg.Format),
+		pcap.WithSnapLen(uint32(cfg.SnapLen)), pcap.WithLinkType(cfg.LinkType))
+	if err != nil {
 		if closer != nil {
 			_ = closer.Close()
 		}
-		return nil, fmt.Errorf("capture: unsupported format %s", cfg.Format)
+		return nil, err
 	}
+	for i := range sources {
+		id, err := writer.AddInterface(cfg.LinkType, uint32(cfg.SnapLen))
+		if err != nil {
+			_ = writer.Close()
+			return nil, err
+		}
+		sources[i].writerID = id
+	}
+	return &captureWriter{writer: writer}, nil
 }

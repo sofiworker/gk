@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/sofiworker/gk/gnet/layers"
-	"github.com/sofiworker/gk/gnet/pcapng"
+	"github.com/sofiworker/gk/gnet/pcap"
 	"github.com/sofiworker/gk/gnet/rawcap"
 )
 
@@ -63,7 +63,10 @@ func TestLiveCaptureRealTraffic(t *testing.T) {
 		t.Fatalf("open %s: %v", out, err)
 	}
 	defer f.Close()
-	rd := pcapng.NewReader(f)
+	rd, err := pcap.NewReader(f)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var (
 		total int
 		tcp   int
@@ -126,7 +129,10 @@ func TestLiveCaptureBPFFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	rd := pcapng.NewReader(f)
+	rd, err := pcap.NewReader(f)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var total, tcp, nonTCP int
 	for {
 		pkt, err := rd.ReadPacket()

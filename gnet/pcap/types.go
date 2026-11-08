@@ -5,6 +5,14 @@ import (
 	"time"
 )
 
+// Format identifies a capture file format.
+type Format string
+
+const (
+	FormatPCAP   Format = "pcap"
+	FormatPCAPNG Format = "pcapng"
+)
+
 const (
 	MagicNumberMicroseconds        uint32 = 0xa1b2c3d4
 	MagicNumberMicrosecondsSwapped uint32 = 0xd4c3b2a1
@@ -30,9 +38,16 @@ type PacketHeader struct {
 }
 
 type Packet struct {
+	// Header contains the raw classic PCAP record header, when available.
 	Header    PacketHeader
 	Data      []byte
 	Timestamp time.Time
+	// InterfaceID is section-local for PCAPNG and zero for classic PCAP.
+	InterfaceID uint32
+	LinkType    uint32
+	CapturedLen uint32
+	OriginalLen uint32
+	Options     []Option
 }
 
 func (h *FileHeader) IsLittleEndian() bool {
@@ -77,6 +92,9 @@ func (p *Packet) CaptureLength() int {
 }
 
 func (p *Packet) OriginalLength() int {
+	if p.OriginalLen != 0 {
+		return int(p.OriginalLen)
+	}
 	if p.Header.OrigLen == 0 {
 		return len(p.Data)
 	}

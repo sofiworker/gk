@@ -1,4 +1,4 @@
-package pcapng
+package pcap
 
 import (
 	"time"

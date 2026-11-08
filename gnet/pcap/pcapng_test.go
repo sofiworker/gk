@@ -1,4 +1,4 @@
-package pcapng
+package pcap
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 
 func TestPCAPNGReadWrite(t *testing.T) {
 	var buf bytes.Buffer
-	writer, err := NewWriter(&buf, WithDefaultTimestampResolution(time.Nanosecond))
+	writer, err := NewWriter(&buf, WithFormat(FormatPCAPNG), WithDefaultTimestampResolution(time.Nanosecond))
 	if err != nil {
 		t.Fatalf("NewWriter failed: %v", err)
 	}
@@ -26,14 +26,17 @@ func TestPCAPNGReadWrite(t *testing.T) {
 	payload1 := []byte{0x01, 0x02, 0x03, 0x04}
 	payload2 := []byte{0xAA, 0xBB, 0xCC}
 
-	if err := writer.WritePacket(ifaceID, payload1, ts1); err != nil {
+	if err := writer.WritePacket(&Packet{InterfaceID: ifaceID, Data: payload1, Timestamp: ts1}); err != nil {
 		t.Fatalf("WritePacket failed: %v", err)
 	}
-	if err := writer.WritePacket(ifaceID, payload2, ts2); err != nil {
+	if err := writer.WritePacket(&Packet{InterfaceID: ifaceID, Data: payload2, Timestamp: ts2}); err != nil {
 		t.Fatalf("WritePacket failed: %v", err)
 	}
 
-	reader := NewReader(bytes.NewReader(buf.Bytes()))
+	reader, err := NewReader(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	block, err := reader.NextBlock()
 	if err != nil {
@@ -90,7 +93,7 @@ func TestPCAPNGReadWrite(t *testing.T) {
 
 func TestPCAPNGBigEndianRoundTrip(t *testing.T) {
 	var buf bytes.Buffer
-	writer, err := NewWriter(&buf, WithByteOrder(binary.BigEndian))
+	writer, err := NewWriter(&buf, WithFormat(FormatPCAPNG), WithByteOrder(binary.BigEndian))
 	if err != nil {
 		t.Fatalf("NewWriter failed: %v", err)
 	}
@@ -103,11 +106,14 @@ func TestPCAPNGBigEndianRoundTrip(t *testing.T) {
 
 	ts := time.Unix(1_720_000_000, 654321000).UTC()
 	payload := []byte{0x10, 0x20, 0x30}
-	if err := writer.WritePacket(ifaceID, payload, ts); err != nil {
+	if err := writer.WritePacket(&Packet{InterfaceID: ifaceID, Data: payload, Timestamp: ts}); err != nil {
 		t.Fatalf("WritePacket failed: %v", err)
 	}
 
-	reader := NewReader(bytes.NewReader(buf.Bytes()))
+	reader, err := NewReader(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
 	block, err := reader.NextBlock()
 	if err != nil {
 		t.Fatalf("NextBlock failed: %v", err)

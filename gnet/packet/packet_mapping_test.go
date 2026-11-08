@@ -6,7 +6,6 @@ import (
 
 	"github.com/sofiworker/gk/gnet/layers"
 	"github.com/sofiworker/gk/gnet/pcap"
-	"github.com/sofiworker/gk/gnet/pcapng"
 	"github.com/sofiworker/gk/gnet/rawcap"
 )
 
@@ -53,7 +52,7 @@ func TestFromAdapters(t *testing.T) {
 	}
 
 	// pcapng
-	np := &pcapng.Packet{
+	np := &pcap.Packet{
 		Data:        []byte{6},
 		Timestamp:   ts,
 		CapturedLen: 1,

@@ -1,4 +1,4 @@
-package pcapng
+package pcap
 
 import (
 	"bytes"
@@ -8,9 +8,9 @@ import (
 	"golang.org/x/net/bpf"
 )
 
-func TestFilterCopy(t *testing.T) {
+func TestPCAPNGFilterCopy(t *testing.T) {
 	var buf bytes.Buffer
-	w, err := NewWriter(&buf, WithDefaultTimestampResolution(time.Microsecond))
+	w, err := NewWriter(&buf, WithFormat(FormatPCAPNG), WithDefaultTimestampResolution(time.Microsecond))
 	if err != nil {
 		t.Fatalf("NewWriter: %v", err)
 	}
@@ -18,10 +18,10 @@ func TestFilterCopy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddInterface: %v", err)
 	}
-	if err := w.WritePacket(ifaceID, []byte{0x41}, time.Unix(0, 0)); err != nil {
+	if err := w.WritePacket(&Packet{InterfaceID: ifaceID, Data: []byte{0x41}, Timestamp: time.Unix(0, 0)}); err != nil {
 		t.Fatalf("write pkt1: %v", err)
 	}
-	if err := w.WritePacket(ifaceID, []byte{0x42}, time.Unix(0, 0)); err != nil {
+	if err := w.WritePacket(&Packet{InterfaceID: ifaceID, Data: []byte{0x42}, Timestamp: time.Unix(0, 0)}); err != nil {
 		t.Fatalf("write pkt2: %v", err)
 	}
 	_ = w.Close()
@@ -42,7 +42,10 @@ func TestFilterCopy(t *testing.T) {
 		t.Fatalf("expected 1 packet kept, got %d", n)
 	}
 
-	reader := NewReader(bytes.NewReader(out.Bytes()))
+	reader, err := NewReader(bytes.NewReader(out.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
 	pkt, err := reader.ReadPacket()
 	if err != nil {
 		t.Fatalf("ReadPacket: %v", err)

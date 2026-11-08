@@ -6,7 +6,6 @@ import (
 
 	"github.com/sofiworker/gk/gnet/layers"
 	"github.com/sofiworker/gk/gnet/pcap"
-	"github.com/sofiworker/gk/gnet/pcapng"
 	"github.com/sofiworker/gk/gnet/rawcap"
 )
 
@@ -106,18 +105,9 @@ func FromPCAP(pkt *pcap.Packet) *Packet {
 		Timestamp:   pkt.Timestamp,
 		CaptureLen:  len(pkt.Data),
 		OriginalLen: pkt.OriginalLength(), // OrigLen==0 时回退 len(Data)
-	}
-}
-
-func FromPCAPNG(pkt *pcapng.Packet) *Packet {
-	if pkt == nil {
-		return nil
-	}
-	return &Packet{
-		Data:        pkt.Data,
-		Timestamp:   pkt.Timestamp,
-		CaptureLen:  int(pkt.CapturedLen),
-		OriginalLen: int(pkt.OriginalLen),
 		InterfaceID: int(pkt.InterfaceID),
 	}
 }
+
+// FromPCAPNG is an alias for FromPCAP; both formats share pcap.Packet.
+func FromPCAPNG(pkt *pcap.Packet) *Packet { return FromPCAP(pkt) }

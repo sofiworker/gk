@@ -1,4 +1,4 @@
-package pcapng
+package pcap
 
 import (
 	"bufio"
@@ -9,19 +9,7 @@ import (
 	"time"
 )
 
-type WriterOption func(*writerConfig) error
-
-type writerConfig struct {
-	byteOrder     binary.ByteOrder
-	major         uint16
-	minor         uint16
-	sectionLength int64
-	sectionOpts   []Option
-	defaultRes    time.Duration
-	bufferSize    int
-}
-
-type Writer struct {
+type ngWriter struct {
 	w             io.Writer
 	buf           *bufio.Writer
 	order         binary.ByteOrder
@@ -41,30 +29,16 @@ type interfaceWriterInfo struct {
 	tsRes    time.Duration
 }
 
-func NewWriter(w io.Writer, opts ...WriterOption) (*Writer, error) {
-	cfg := writerConfig{
-		byteOrder:     binary.LittleEndian,
-		major:         1,
-		minor:         0,
-		sectionLength: -1,
-		defaultRes:    time.Microsecond,
-	}
-
-	for _, opt := range opts {
-		if err := opt(&cfg); err != nil {
-			return nil, err
-		}
-	}
-
-	writer := &Writer{
+func newNGWriter(w io.Writer, cfg writerConfig) (*ngWriter, error) {
+	writer := &ngWriter{
 		w:             w,
 		order:         cfg.byteOrder,
 		sectionLength: cfg.sectionLength,
 		sectionOpts:   append([]Option(nil), cfg.sectionOpts...),
-		defaultRes:    cfg.defaultRes,
+		defaultRes:    cfg.resolution,
 		interfaces:    make(map[uint32]*interfaceWriterInfo),
-		major:         cfg.major,
-		minor:         cfg.minor,
+		major:         cfg.sectionMajor,
+		minor:         cfg.sectionMinor,
 	}
 
 	if closer, ok := w.(io.Closer); ok {
@@ -83,7 +57,7 @@ func NewWriter(w io.Writer, opts ...WriterOption) (*Writer, error) {
 	return writer, nil
 }
 
-func (w *Writer) writeSectionHeader() error {
+func (w *ngWriter) writeSectionHeader() error {
 	options := encodeOptions(w.sectionOpts, w.order)
 	payloadLen := 4 + 2 + 2 + 8 + len(options)
 	totalLength := uint32(8 + payloadLen + 4)
@@ -116,7 +90,7 @@ func (w *Writer) writeSectionHeader() error {
 	return err
 }
 
-func (w *Writer) AddInterface(linkType uint16, snapLen uint32, opts ...InterfaceOption) (uint32, error) {
+func (w *ngWriter) AddInterface(linkType uint16, snapLen uint32, opts ...InterfaceOption) (uint32, error) {
 	cfg := interfaceConfig{}
 	for _, opt := range opts {
 		if err := opt(&cfg); err != nil {
@@ -174,7 +148,7 @@ func (w *Writer) AddInterface(linkType uint16, snapLen uint32, opts ...Interface
 	return id, nil
 }
 
-func (w *Writer) writeInterfaceBlock(block *InterfaceDescriptionBlock) error {
+func (w *ngWriter) writeInterfaceBlock(block *InterfaceDescriptionBlock) error {
 	options := encodeOptions(block.Options, w.order)
 	payloadLen := 2 + 2 + 4 + len(options)
 	totalLength := uint32(8 + payloadLen + 4)
@@ -192,12 +166,13 @@ func (w *Writer) writeInterfaceBlock(block *InterfaceDescriptionBlock) error {
 	return err
 }
 
-func (w *Writer) WritePacket(interfaceID uint32, data []byte, ts time.Time, opts ...Option) error {
-	info, ok := w.interfaces[interfaceID]
+func (w *ngWriter) WritePacket(pkt *Packet) error {
+	info, ok := w.interfaces[pkt.InterfaceID]
 	if !ok {
-		return fmt.Errorf("pcapng: unknown interface %d", interfaceID)
+		return fmt.Errorf("%w: %d", ErrUnknownInterface, pkt.InterfaceID)
 	}
 
+	ts := pkt.Timestamp
 	if ts.IsZero() {
 		ts = time.Now().UTC()
 	} else {
@@ -214,17 +189,26 @@ func (w *Writer) WritePacket(interfaceID uint32, data []byte, ts time.Time, opts
 		return err
 	}
 
-	origLen := uint32(len(data))
-	capturedLen := origLen
+	origLen := uint32(pkt.OriginalLength())
+	capturedLen := pkt.CapturedLen
+	if capturedLen == 0 {
+		capturedLen = pkt.Header.InclLen
+	}
+	if capturedLen == 0 {
+		capturedLen = uint32(len(pkt.Data))
+	}
+	if capturedLen > uint32(len(pkt.Data)) {
+		return fmt.Errorf("%w: packet data shorter than captured length", ErrInvalidPacket)
+	}
 	if info.snapLen > 0 && capturedLen > info.snapLen {
 		capturedLen = info.snapLen
 	}
 
-	payload := data[:capturedLen]
-	return w.writeEnhancedPacket(interfaceID, high, low, capturedLen, origLen, payload, opts)
+	payload := pkt.Data[:capturedLen]
+	return w.writeEnhancedPacket(pkt.InterfaceID, high, low, capturedLen, origLen, payload, pkt.Options)
 }
 
-func (w *Writer) writeEnhancedPacket(interfaceID, tsHigh, tsLow, capturedLen, originalLen uint32, payload []byte, opts []Option) error {
+func (w *ngWriter) writeEnhancedPacket(interfaceID, tsHigh, tsLow, capturedLen, originalLen uint32, payload []byte, opts []Option) error {
 	padding := (4 - (capturedLen % 4)) % 4
 	options := encodeOptions(opts, w.order)
 	payloadLen := 4 + 4 + 4 + 4 + 4 + int(capturedLen) + int(padding) + len(options)
@@ -249,7 +233,7 @@ func (w *Writer) writeEnhancedPacket(interfaceID, tsHigh, tsLow, capturedLen, or
 	return err
 }
 
-func (w *Writer) Close() error {
+func (w *ngWriter) Close() error {
 	if w.buf != nil {
 		if err := w.buf.Flush(); err != nil {
 			return err
@@ -349,64 +333,6 @@ func WithInterfaceOption(code uint16, value []byte) InterfaceOption {
 func WithInterfaceTimestampResolution(res time.Duration) InterfaceOption {
 	return func(cfg *interfaceConfig) error {
 		cfg.tsResolution = res
-		return nil
-	}
-}
-
-func WithByteOrder(order binary.ByteOrder) WriterOption {
-	return func(cfg *writerConfig) error {
-		if order != binary.BigEndian && order != binary.LittleEndian {
-			return fmt.Errorf("pcapng: unsupported byte order")
-		}
-		cfg.byteOrder = order
-		return nil
-	}
-}
-
-func WithSectionVersion(major, minor uint16) WriterOption {
-	return func(cfg *writerConfig) error {
-		if major == 0 {
-			return fmt.Errorf("pcapng: section version major must be positive")
-		}
-		cfg.major = major
-		cfg.minor = minor
-		return nil
-	}
-}
-
-func WithSectionLength(length int64) WriterOption {
-	return func(cfg *writerConfig) error {
-		cfg.sectionLength = length
-		return nil
-	}
-}
-
-func WithSectionOption(option Option) WriterOption {
-	return func(cfg *writerConfig) error {
-		cfg.sectionOpts = append(cfg.sectionOpts, option)
-		return nil
-	}
-}
-
-func WithDefaultTimestampResolution(res time.Duration) WriterOption {
-	return func(cfg *writerConfig) error {
-		switch res {
-		case time.Microsecond, time.Nanosecond:
-			cfg.defaultRes = res
-			return nil
-		default:
-			return fmt.Errorf("pcapng: unsupported default timestamp resolution %s", res)
-		}
-	}
-}
-
-// WithBuffer 启用带缓冲写入以减少系统调用。
-func WithBuffer(size int) WriterOption {
-	return func(cfg *writerConfig) error {
-		if size <= 0 {
-			return fmt.Errorf("pcapng: buffer size must be positive")
-		}
-		cfg.bufferSize = size
 		return nil
 	}
 }

@@ -41,7 +41,7 @@ gnet (capability layer)
 | `link` | link info (with ethtool) | linux / windows / unsupported | current |
 | `netinfo` | interface view + **connections/IO counters/proto counters** (/proc sources) | linux / depends on subpackages | **M4 ✓** |
 | `packet` | unified packet adapter + layers parse cache (Parse/NetworkLayer/TransportLayer) | cross-platform | **M3 ✓** |
-| `pcap` / `pcapng` | capture file I/O and BPF filtering | cross-platform | current |
+| `pcap` | unified capture file I/O, format detection, and BPF filtering (pcap / pcapng) | cross-platform | current |
 | `rawcap` | live capture: Linux AF_PACKET / **macOS·BSD /dev/bpf** / **Windows npcap dynamic loading** | linux ✓ / bsd·windows cross-compiled (untested) | **M5 ✓** |
 | `route` | route add/delete/list | linux / windows / unsupported | current |
 | `craft` | packet crafting & injection: layers assembly + AF_PACKET/conn backends | linux / cross-platform | **M3 ✓** |
@@ -49,6 +49,61 @@ gnet (capability layer)
 | `replay` | traffic replay: timestamp/pps/multiplier pacing, IP+MAC rewrite (incremental checksums), looped replay | cross-platform | **M4 ✓** |
 | `gateway` | L4 gateway: rule routing + TCP/UDP port forwarding + protocol-aware hooks | cross-platform | **M4 ✓** |
 | `actor` | actor orchestration: Worker conn ownership + serial mailbox (zhenyi zactor model) | cross-platform | **M5 ✓** |
+
+## Unified capture file API
+
+All capture file formats live in `github.com/sofiworker/gk/gnet/pcap`.
+`NewReader(io.Reader)` detects classic pcap (microseconds/nanoseconds, either byte
+order) and pcapng from the file signature without seeking. Both return the same
+`Packet` type. `NewWriter` defaults to classic pcap; use
+`WithFormat(pcap.FormatPCAPNG)` to select pcapng.
+
+```go
+reader, err := pcap.NewReader(input)
+if err != nil {
+    return err
+}
+pkt, err := reader.ReadPacket()
+if err != nil {
+    return err
+}
+
+writer, err := pcap.NewWriter(output, pcap.WithFormat(pcap.FormatPCAPNG))
+if err != nil {
+    return err
+}
+defer writer.Close()
+return writer.WritePacketData(pkt.Data, pkt.Timestamp)
+```
+
+This example writes packet bytes to the default interface. Use
+`WritePacket(*pcap.Packet)` to retain original length, interface ID, and options.
+`Packet` includes `InterfaceID`, `LinkType`, `CapturedLen`, `OriginalLen`, `Options`,
+and the existing classic `Header`. Register multiple pcapng interfaces with
+`AddInterface` (IDs start at zero). If none exist, the first write to interface zero
+registers one using `WithLinkType`, `WithSnapLen`, and `WithTimestampResolution`.
+Classic pcap supports only interface zero.
+
+`InterfaceInfo` reports interfaces already read; pcapng IDs are local to each
+section. `NextBlock`, `CurrentSection`, block types, and section/interface options
+all live in `pcap`. `NextBlock` returns `ErrUnsupportedFormat` for classic pcap.
+`Header` returns a zero value for pcapng; use `CurrentSection` and `InterfaceInfo`
+for its metadata. `FilterCopy` detects and retains the input format, preserving
+pcapng sections, interfaces, packet options, and unknown blocks. Readers do not
+close their input. `Writer.Close` flushes buffers and closes an underlying
+`io.Closer`; `FilterCopy` also closes outputs implementing `io.Closer`.
+Concurrent writes require caller synchronization. Future format implementations
+and dispatch belong in this package, sharing the reader, writer, and packet API.
+
+**Migration (breaking change):** `gnet/pcapng` has been removed. Import `gnet/pcap`;
+`NewReader` now returns `(*Reader, error)`. Add `WithFormat(FormatPCAPNG)` when
+creating a pcapng writer, and replace `WritePacket(id, data, ts, opts...)` with
+`WritePacket(&pcap.Packet{InterfaceID: id, Data: data, Timestamp: ts, Options: opts})`.
+Existing pcapng block, error, section, and interface option names retain their
+names under `pcap`. `AddInterface` now takes a `uint32` link type (pcapng still
+requires it to fit in `uint16`). `capture.Format` and its constants alias the
+shared format definitions. `packet.FromPCAP` and `sniff.NewPcapSource` accept
+both formats; `FromPCAPNG` and `NewPcapngSource` remain as alias entry points.
 
 ## Root package usage (reactor echo)
 

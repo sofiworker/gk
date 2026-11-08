@@ -20,7 +20,6 @@ import (
 	"github.com/sofiworker/gk/gnet/layers"
 	"github.com/sofiworker/gk/gnet/packet"
 	"github.com/sofiworker/gk/gnet/pcap"
-	"github.com/sofiworker/gk/gnet/pcapng"
 )
 
 // Source 是报文来源；流尽返回 io.EOF。
@@ -393,14 +392,14 @@ func (s *SliceSource) Next() (*packet.Packet, error) {
 	return p, nil
 }
 
-// PcapSource 读取 pcap 文件。
-// PcapSource reads a pcap file.
+// PcapSource 读取统一的抓包文件来源。
+// PcapSource reads any capture format supported by pcap.Reader.
 type PcapSource struct {
 	r *pcap.Reader
 }
 
-// NewPcapSource 打开 pcap 文件来源。
-// NewPcapSource opens a pcap file source.
+// NewPcapSource 创建统一的抓包文件来源。
+// NewPcapSource creates a capture file source.
 func NewPcapSource(r *pcap.Reader) *PcapSource { return &PcapSource{r: r} }
 
 // Next 返回下一个报文。
@@ -413,22 +412,8 @@ func (s *PcapSource) Next() (*packet.Packet, error) {
 	return packet.FromPCAP(pkt), nil
 }
 
-// PcapngSource 读取 pcapng 文件。
-// PcapngSource reads a pcapng file.
-type PcapngSource struct {
-	r *pcapng.Reader
-}
+// PcapngSource is an alias for PcapSource; the reader detects both formats.
+type PcapngSource = PcapSource
 
-// NewPcapngSource 打开 pcapng 文件来源。
-// NewPcapngSource opens a pcapng file source.
-func NewPcapngSource(r *pcapng.Reader) *PcapngSource { return &PcapngSource{r: r} }
-
-// Next 返回下一个报文。
-// Next returns the next packet.
-func (s *PcapngSource) Next() (*packet.Packet, error) {
-	pkt, err := s.r.ReadPacket()
-	if err != nil {
-		return nil, err
-	}
-	return packet.FromPCAPNG(pkt), nil
-}
+// NewPcapngSource is an alias for NewPcapSource.
+func NewPcapngSource(r *pcap.Reader) *PcapSource { return NewPcapSource(r) }
