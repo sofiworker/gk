@@ -154,7 +154,9 @@ func TestHTTPError_ResponseWriting(t *testing.T) {
 	resp := &Response{Writer: rec}
 
 	resp.WriteHeader(err.Status)
-	resp.Write([]byte(err.Message))
+	if _, err := resp.Write([]byte(err.Message)); err != nil {
+		t.Fatal(err)
+	}
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("Response status = %d, want %d", rec.Code, http.StatusBadRequest)

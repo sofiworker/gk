@@ -61,8 +61,8 @@ func TestServerRegister(t *testing.T) {
 	s := NewServer()
 
 	handler := func(ctx context.Context, req *Request, resp *Response) error {
-		resp.Write([]byte("OK"))
-		return nil
+		_, err := resp.Write([]byte("OK"))
+		return err
 	}
 
 	route := Route{
@@ -166,8 +166,8 @@ func TestServerServeHTTP(t *testing.T) {
 	s := NewServer()
 
 	handler := func(ctx context.Context, req *Request, resp *Response) error {
-		resp.Write([]byte("Hello"))
-		return nil
+		_, err := resp.Write([]byte("Hello"))
+		return err
 	}
 
 	route := Route{
@@ -234,8 +234,8 @@ func TestMiddlewareExecution(t *testing.T) {
 
 	handler := func(ctx context.Context, req *Request, resp *Response) error {
 		order = append(order, 99)
-		resp.Write([]byte("OK"))
-		return nil
+		_, err := resp.Write([]byte("OK"))
+		return err
 	}
 
 	s.Use(middleware1, middleware2)

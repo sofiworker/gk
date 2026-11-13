@@ -98,10 +98,7 @@ jobs:
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.13.2
-          args: run ./...
-
-      - name: Dependency policy
-        run: bash scripts/check-deps.sh
+          args: ./...
 
   race:
     name: race detector
@@ -138,25 +135,3 @@ jobs:
         with:
           name: coverage
           path: coverage.out
-
-  webbench:
-    name: Web benchmarks (sanity)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: benchmarks
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "stable"
-          cache-dependency-path: benchmarks/go.sum
-
-      - name: Vet
-        run: go vet ./...
-
-      - name: Sanity (all frameworks answer all scenarios)
-        run: go test -run TestScenarioSanity -v

@@ -124,7 +124,7 @@ func (in RequestInput) Request() *Request {
 // Sources returns the raw view of the request inputs, for callers that do not want to
 // materialize a DTO or prefer converting values themselves.
 func (in RequestInput) Sources() Sources {
-	return Sources{req: in.req}
+	return Sources(in)
 }
 
 // Sources 提供 path、query、header、cookie 的原始字符串访问。

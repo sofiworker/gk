@@ -15,7 +15,7 @@ func BenchmarkFileReply_ServeFile(b *testing.B) {
 	reader := bytes.NewReader(content)
 
 	fileReply := FileReply{
-		Reader:      bytes.NewReader(content),
+		Reader:      reader,
 		Name:        "test.txt",
 		ContentType: "text/plain",
 		Size:        int64(len(content)),
@@ -24,7 +24,9 @@ func BenchmarkFileReply_ServeFile(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		reader.Seek(0, 0)
+		if _, err := reader.Seek(0, io.SeekStart); err != nil {
+			b.Fatal(err)
+		}
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/file", nil)
 

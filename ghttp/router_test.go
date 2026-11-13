@@ -47,18 +47,18 @@ func TestRouter_StaticRoutes(t *testing.T) {
 	r := newRouter()
 
 	handler1 := func(ctx context.Context, req *Request, resp *Response) error {
-		resp.Write([]byte("handler1"))
-		return nil
+		_, err := resp.Write([]byte("handler1"))
+		return err
 	}
 
 	handler2 := func(ctx context.Context, req *Request, resp *Response) error {
-		resp.Write([]byte("handler2"))
-		return nil
+		_, err := resp.Write([]byte("handler2"))
+		return err
 	}
 
 	handler3 := func(ctx context.Context, req *Request, resp *Response) error {
-		resp.Write([]byte("handler3"))
-		return nil
+		_, err := resp.Write([]byte("handler3"))
+		return err
 	}
 
 	routes := []Route{
@@ -283,18 +283,18 @@ func TestRouter_RoutePriority(t *testing.T) {
 	r := newRouter()
 
 	staticHandler := func(ctx context.Context, req *Request, resp *Response) error {
-		resp.Write([]byte("static"))
-		return nil
+		_, err := resp.Write([]byte("static"))
+		return err
 	}
 
 	paramHandler := func(ctx context.Context, req *Request, resp *Response) error {
-		resp.Write([]byte("param"))
-		return nil
+		_, err := resp.Write([]byte("param"))
+		return err
 	}
 
 	catchAllHandler := func(ctx context.Context, req *Request, resp *Response) error {
-		resp.Write([]byte("catchall"))
-		return nil
+		_, err := resp.Write([]byte("catchall"))
+		return err
 	}
 
 	routes := []Route{
@@ -540,23 +540,23 @@ func TestRouter_MethodSeparation(t *testing.T) {
 	r := newRouter()
 
 	getHandler := func(ctx context.Context, req *Request, resp *Response) error {
-		resp.Write([]byte("GET"))
-		return nil
+		_, err := resp.Write([]byte("GET"))
+		return err
 	}
 
 	postHandler := func(ctx context.Context, req *Request, resp *Response) error {
-		resp.Write([]byte("POST"))
-		return nil
+		_, err := resp.Write([]byte("POST"))
+		return err
 	}
 
 	putHandler := func(ctx context.Context, req *Request, resp *Response) error {
-		resp.Write([]byte("PUT"))
-		return nil
+		_, err := resp.Write([]byte("PUT"))
+		return err
 	}
 
 	deleteHandler := func(ctx context.Context, req *Request, resp *Response) error {
-		resp.Write([]byte("DELETE"))
-		return nil
+		_, err := resp.Write([]byte("DELETE"))
+		return err
 	}
 
 	routes := []Route{

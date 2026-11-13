@@ -214,7 +214,7 @@ func formPlanFor(t reflect.Type) *formPlan {
 func formBuildPlan(t reflect.Type) *formPlan {
 	p := &formPlan{byName: map[string]*formField{}}
 	st := t
-	if st.Kind() == reflect.Ptr {
+	if st.Kind() == reflect.Pointer {
 		p.ptr = true
 		st = st.Elem()
 	}
@@ -249,11 +249,11 @@ func (p *formPlan) collect(st reflect.Type, prefix []int) error {
 		index := append(append([]int(nil), prefix...), i)
 		if sf.Anonymous && (!hasTag || name == "") {
 			et := sf.Type
-			if et.Kind() == reflect.Ptr {
+			if et.Kind() == reflect.Pointer {
 				et = et.Elem()
 			}
 			if et.Kind() == reflect.Struct && !formIsLeaf(sf.Type) {
-				if !sf.IsExported() && sf.Type.Kind() == reflect.Ptr {
+				if !sf.IsExported() && sf.Type.Kind() == reflect.Pointer {
 					continue // 无法设置未导出的嵌入指针 / cannot set an unexported embedded pointer
 				}
 				if err := p.collect(et, index); err != nil {
@@ -284,7 +284,7 @@ func (p *formPlan) collect(st reflect.Type, prefix []int) error {
 // formIsLeaf 报告 t 是否按单个值解析（TextUnmarshaler 或 time.Time），不应展开。
 // formIsLeaf reports whether t parses as a single value (TextUnmarshaler or time.Time).
 func formIsLeaf(t reflect.Type) bool {
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	return t == formTimeType || reflect.PointerTo(t).Implements(formTextUnmarshal)
@@ -302,9 +302,9 @@ func formSupported(t reflect.Type) bool {
 // formScalarOK 报告标量（或其单层指针）是否受支持。
 // formScalarOK reports whether a scalar (or a single pointer to it) is supported.
 func formScalarOK(t reflect.Type) bool {
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
-		if t.Kind() == reflect.Ptr {
+		if t.Kind() == reflect.Pointer {
 			return false
 		}
 	}
@@ -367,7 +367,7 @@ func (p *formPlan) fill(dst reflect.Value, values url.Values, files map[string][
 // formFieldAlloc walks the index path, allocating embedded pointers as needed.
 func formFieldAlloc(v reflect.Value, index []int) reflect.Value {
 	for _, i := range index {
-		if v.Kind() == reflect.Ptr {
+		if v.Kind() == reflect.Pointer {
 			if v.IsNil() {
 				v.Set(reflect.New(v.Type().Elem()))
 			}
@@ -405,7 +405,7 @@ func formSetField(fv reflect.Value, vals []string) error {
 // non-string types are skipped.
 func formSetScalar(dst reflect.Value, s string) (bool, error) {
 	t := dst.Type()
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		if s == "" && t.Elem().Kind() != reflect.String {
 			return false, nil
 		}

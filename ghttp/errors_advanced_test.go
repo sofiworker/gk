@@ -157,7 +157,9 @@ func TestDefaultErrorHandler_AlreadyWritten(t *testing.T) {
 	// 先写入响应
 	// Write response first
 	rec.WriteHeader(http.StatusOK)
-	rec.Write([]byte("already written"))
+	if _, err := rec.Write([]byte("already written")); err != nil {
+		t.Fatal(err)
+	}
 
 	resp := &Response{Writer: rec, written: true, statusCode: http.StatusOK}
 	ghttpReq := &Request{Raw: req}

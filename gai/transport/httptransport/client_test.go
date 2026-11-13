@@ -17,7 +17,7 @@ func TestTransportBoundaries(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch mode {
 				case "redirect":
-					http.Redirect(w, r, "http://127.0.0.1:1", 302)
+					http.Redirect(w, r, "http://127.0.0.1:1", http.StatusFound)
 				case "status":
 					w.WriteHeader(401)
 				case "large":

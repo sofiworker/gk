@@ -254,7 +254,9 @@ func TestLifecycleServeUseIgnoredAfterStart(t *testing.T) {
 	}
 
 	_ = s.Close()
-	waitServeResult(t, errCh)
+	if err := waitServeResult(t, errCh); !errors.Is(err, ErrServerClosed) {
+		t.Errorf("expected ErrServerClosed, got %v", err)
+	}
 }
 
 // TestLifecycleServeTLS 测试 ServeTLS（含 WithTLSConfig）。
@@ -433,7 +435,9 @@ func TestLifecycleErrorHandler(t *testing.T) {
 				return []ServerOption{WithErrorHandler(func(_ context.Context, _ *Request, resp *Response, err error) {
 					*called = err
 					resp.WriteHeader(http.StatusTeapot)
-					resp.Write([]byte("custom"))
+					if _, err := resp.Write([]byte("custom")); err != nil {
+						t.Errorf("write custom response: %v", err)
+					}
 				})}
 			},
 			wantCode: http.StatusTeapot,

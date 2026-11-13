@@ -488,12 +488,12 @@ func (s *Server) logf(format string, args ...any) {
 // defaultErrorHandler 是默认的错误处理器：按 StatusFromError 选择状态码，写出 JSON ErrorResponse。
 // defaultErrorHandler is the default error handler: it picks the status via
 // StatusFromError and writes a JSON ErrorResponse.
-func defaultErrorHandler(_ context.Context, _ *Request, resp *Response, err error) {
+func defaultErrorHandler(ctx context.Context, req *Request, resp *Response, err error) {
 	if err == nil || resp.written {
 		return
 	}
 	if errors.Is(err, errRouteNotFound) {
-		_ = defaultNotFoundHandler(nil, nil, resp)
+		_ = defaultNotFoundHandler(ctx, req, resp)
 		return
 	}
 	body := ErrorResponseOf(err)

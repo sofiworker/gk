@@ -348,7 +348,9 @@ func TestFormInputConcurrent(t *testing.T) {
 // TestFormPlanCached tests that a type's plan is built once.
 func TestFormPlanCached(t *testing.T) {
 	typ := reflect.TypeOf(formAll{})
-	if formPlanFor(typ) != formPlanFor(typ) {
+	first := formPlanFor(typ)
+	second := formPlanFor(typ)
+	if first != second {
 		t.Error("plan not cached")
 	}
 }

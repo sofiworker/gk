@@ -83,7 +83,9 @@ func TestRecoveryCustomHandler(t *testing.T) {
 	customHandler := func(ctx context.Context, req *Request, resp *Response, rec any) {
 		customHandlerCalled = true
 		resp.WriteHeader(http.StatusServiceUnavailable)
-		resp.Write([]byte("custom recovery"))
+		if _, err := resp.Write([]byte("custom recovery")); err != nil {
+			t.Errorf("write recovery response: %v", err)
+		}
 	}
 
 	s.Use(RecoveryWithHandler(io.Discard, customHandler))
@@ -128,8 +130,8 @@ func TestLogger(t *testing.T) {
 	s.Use(AccessLogWithWriter(&logBuf))
 
 	handler := func(ctx context.Context, req *Request, resp *Response) error {
-		resp.Write([]byte("OK"))
-		return nil
+		_, err := resp.Write([]byte("OK"))
+		return err
 	}
 
 	err := s.Register(Route{
@@ -175,12 +177,16 @@ func TestLoggerSkipPaths(t *testing.T) {
 	}))
 
 	handler := func(ctx context.Context, req *Request, resp *Response) error {
-		resp.Write([]byte("OK"))
-		return nil
+		_, err := resp.Write([]byte("OK"))
+		return err
 	}
 
-	s.Register(Route{Method: http.MethodGet, Path: "/health", compiledHandler: handler})
-	s.Register(Route{Method: http.MethodGet, Path: "/test", compiledHandler: handler})
+	if err := s.Register(Route{Method: http.MethodGet, Path: "/health", compiledHandler: handler}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Register(Route{Method: http.MethodGet, Path: "/test", compiledHandler: handler}); err != nil {
+		t.Fatal(err)
+	}
 
 	// 请求 /health（应跳过日志）
 	// Request /health (should skip logging)
@@ -294,8 +300,8 @@ func TestMultipleMiddleware(t *testing.T) {
 	s.Use(Recovery(), AccessLogWithWriter(&logBuf))
 
 	handler := func(ctx context.Context, req *Request, resp *Response) error {
-		resp.Write([]byte("OK"))
-		return nil
+		_, err := resp.Write([]byte("OK"))
+		return err
 	}
 
 	err := s.Register(Route{
@@ -327,15 +333,17 @@ func BenchmarkRecovery(b *testing.B) {
 	s.Use(Recovery())
 
 	handler := func(ctx context.Context, req *Request, resp *Response) error {
-		resp.Write([]byte("OK"))
-		return nil
+		_, err := resp.Write([]byte("OK"))
+		return err
 	}
 
-	s.Register(Route{
+	if err := s.Register(Route{
 		Method:          http.MethodGet,
 		Path:            "/test",
 		compiledHandler: handler,
-	})
+	}); err != nil {
+		b.Fatal(err)
+	}
 
 	w := &mockResponseWriter{}
 	r, _ := http.NewRequest(http.MethodGet, "/test", nil)
@@ -356,15 +364,17 @@ func BenchmarkLogger(b *testing.B) {
 	s.Use(AccessLogWithWriter(io.Discard))
 
 	handler := func(ctx context.Context, req *Request, resp *Response) error {
-		resp.Write([]byte("OK"))
-		return nil
+		_, err := resp.Write([]byte("OK"))
+		return err
 	}
 
-	s.Register(Route{
+	if err := s.Register(Route{
 		Method:          http.MethodGet,
 		Path:            "/test",
 		compiledHandler: handler,
-	})
+	}); err != nil {
+		b.Fatal(err)
+	}
 
 	w := &mockResponseWriter{}
 	r, _ := http.NewRequest(http.MethodGet, "/test", nil)
