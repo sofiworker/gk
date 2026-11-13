@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/sofiworker/gk/gerr"
 )
@@ -469,6 +470,7 @@ func TestRoutesInfo(t *testing.T) {
 // TestResponseHijack tests Hijack marks the response committed so later errors are only logged.
 func TestResponseHijack(t *testing.T) {
 	l := &r2Logger{}
+	handlerDone := make(chan struct{})
 	s := coreNewServer(t, []ServerOption{WithLogger(l)}, Raw(http.MethodGet, "/up",
 		func(_ context.Context, _ *Request, resp *Response) error {
 			conn, _, err := http.NewResponseController(resp).Hijack()
@@ -482,13 +484,21 @@ func TestResponseHijack(t *testing.T) {
 			_ = conn.Close()
 			return errors.New("after hijack")
 		}))
-	srv := httptest.NewServer(s)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(handlerDone)
+		s.ServeHTTP(w, r)
+	}))
 	defer srv.Close()
 	res, err := http.Get(srv.URL + "/up")
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = res.Body.Close()
+	select {
+	case <-handlerDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not finish after hijacking the connection")
+	}
 	if res.StatusCode != http.StatusTeapot {
 		t.Errorf("status = %d", res.StatusCode)
 	}
