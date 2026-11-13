@@ -85,14 +85,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Lint runs on Go 1.27: the go1.27 build-tagged files (generic methods) are
-      # excluded from a 1.25 toolchain, so a 1.25 lint job would silently never
-      # cover them. golangci-lint must be >= v2.13.0 for Go 1.27 support — older
-      # versions fail to read unified export data and emit bogus typecheck errors.
+      # Go 1.27 includes the build-tagged generic methods in lint coverage.
+      # Pin the toolchain alongside golangci-lint: newer stable patches can emit
+      # unified export data that this linter version cannot decode.
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "stable"
+          go-version: "1.27.1"
 
       - name: Lint
         uses: golangci/golangci-lint-action@v7
