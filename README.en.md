@@ -3,9 +3,8 @@
 > **⚠️ UNDER DEVELOPMENT — DO NOT USE IN PRODUCTION.**
 > This repository is actively developed; APIs are unstable and unverified for production use.
 
-[![Go](https://github.com/sofiworker/gk/actions/workflows/go.yml/badge.svg)](https://github.com/sofiworker/gk/actions/workflows/go.yml)
-[![golangci-lint](https://github.com/sofiworker/gk/actions/workflows/go.yml/badge.svg)](https://golangci-lint.run/)
-[![codecov](https://codecov.io/gh/sofiworker/gk/graph/badge.svg)](https://app.codecov.io/gh/sofiworker/gk)
+[![CI](https://github.com/sofiworker/gk/actions/workflows/go.yml/badge.svg?branch=master&event=push)](https://github.com/sofiworker/gk/actions/workflows/go.yml)
+[![codecov](https://codecov.io/gh/sofiworker/gk/branch/master/graph/badge.svg)](https://app.codecov.io/gh/sofiworker/gk)
 [![Go Reference](https://pkg.go.dev/badge/github.com/sofiworker/gk.svg)](https://pkg.go.dev/github.com/sofiworker/gk)
 
 English | [中文](README.md)
