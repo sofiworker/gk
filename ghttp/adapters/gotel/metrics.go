@@ -2,6 +2,7 @@ package ghttpotel
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/sofiworker/gk/ghttp"
@@ -19,27 +20,40 @@ const (
 )
 
 // Metrics 返回指标中间件。属性仅含 method、route、status_code（低基数）；未匹配路由不带 http.route。
-// 活跃请求数用 Counter 的 +1/-1 表示（gotel 的 Gauge 只有 Record，无法原子增减）。meter 为 nil 时透传。
+// 活跃请求数用 UpDownCounter 的 +1/-1 表示。指标在初始化阶段创建；meter 为 nil 时透传。
 // Metrics returns a metrics middleware. Attributes are limited to method, route and
 // status_code (low cardinality); unmatched routes omit http.route. Active requests use a
-// Counter with +1/-1 since the gotel Gauge only supports Record (no atomic add). A nil
-// meter passes through.
-func Metrics(meter gotel.Meter, opts ...Option) ghttp.Middleware {
+// UpDownCounter with +1/-1. Instruments are created before serving; a nil meter
+// passes through.
+func Metrics(meter gotel.Meter, opts ...Option) (ghttp.Middleware, error) {
 	c := newConfig(opts)
+	if meter == nil {
+		return func(next ghttp.Handler) ghttp.Handler { return next }, nil
+	}
+	attrs := gotel.WithAttributeKeys(AttrMethod, AttrRoute, AttrStatusCode)
+	duration, err := meter.Histogram(MetricRequestDuration, gotel.WithUnit("s"), attrs)
+	if err != nil {
+		return nil, fmt.Errorf("ghttpotel: create request duration: %w", err)
+	}
+	var active gotel.UpDownCounter
+	if c.activeReqs {
+		active, err = meter.UpDownCounter(MetricActiveRequests, gotel.WithAttributeKeys(AttrMethod, AttrRoute))
+		if err != nil {
+			return nil, fmt.Errorf("ghttpotel: create active requests: %w", err)
+		}
+	}
+	var reqBody, respBody gotel.Histogram
+	if c.bodySizes {
+		reqBody, err = meter.Histogram(MetricRequestBody, gotel.WithUnit("By"), attrs)
+		if err != nil {
+			return nil, fmt.Errorf("ghttpotel: create request body size: %w", err)
+		}
+		respBody, err = meter.Histogram(MetricResponseBody, gotel.WithUnit("By"), attrs)
+		if err != nil {
+			return nil, fmt.Errorf("ghttpotel: create response body size: %w", err)
+		}
+	}
 	return func(next ghttp.Handler) ghttp.Handler {
-		if meter == nil {
-			return next
-		}
-		duration := meter.Histogram(MetricRequestDuration, "s")
-		var active gotel.Counter
-		if c.activeReqs {
-			active = meter.Counter(MetricActiveRequests)
-		}
-		var reqBody, respBody gotel.Histogram
-		if c.bodySizes {
-			reqBody = meter.Histogram(MetricRequestBody, "By")
-			respBody = meter.Histogram(MetricResponseBody, "By")
-		}
 		return func(ctx context.Context, req *ghttp.Request, resp *ghttp.Response) error {
 			base := []gotel.KeyValue{gotel.KV(AttrMethod, wire.LogToken(req.Raw.Method))}
 			if route := req.Route(); route != "" {
@@ -63,5 +77,5 @@ func Metrics(meter gotel.Meter, opts ...Option) ghttp.Middleware {
 			}
 			return err
 		}
-	}
+	}, nil
 }

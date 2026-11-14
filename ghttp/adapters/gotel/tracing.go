@@ -57,7 +57,7 @@ func Tracing(tracer gotel.Tracer, opts ...Option) ghttp.Middleware {
 			}
 
 			ctx, _ = tracer.Extract(ctx, HeaderCarrier(req.Raw.Header))
-			ctx, span := tracer.Start(ctx, name)
+			ctx, span := tracer.Start(ctx, name, gotel.WithSpanKind(gotel.SpanKindServer))
 			defer span.End()
 
 			attrs := []gotel.KeyValue{

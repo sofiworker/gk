@@ -25,6 +25,7 @@ func (s fakeSC) Serialize() map[string]string { return map[string]string{"trace"
 type fakeSpan struct {
 	mu       sync.Mutex
 	name     string
+	kind     gotel.SpanKind
 	parent   string
 	sc       fakeSC
 	attrs    map[string]any
@@ -57,10 +58,11 @@ type fakeTracer struct {
 	spans []*fakeSpan
 }
 
-func (t *fakeTracer) Start(ctx context.Context, name string, _ ...gotel.SpanStartOption) (context.Context, gotel.Span) {
+func (t *fakeTracer) Start(ctx context.Context, name string, opts ...gotel.SpanStartOption) (context.Context, gotel.Span) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	sp := &fakeSpan{name: name, attrs: map[string]any{}, sc: fakeSC{trace: "trace-1", span: "span-1"}}
+	sp.kind = gotel.NewSpanStartConfig(opts...).Kind
 	if p, ok := ctx.Value(parentKey{}).(string); ok {
 		sp.parent = p
 		sp.sc.trace = p
@@ -108,8 +110,11 @@ func (i *fakeInstr) Record(_ context.Context, v float64, kv ...gotel.KeyValue) {
 }
 
 type fakeMeter struct {
-	mu     sync.Mutex
-	instrs map[string]*fakeInstr
+	mu       sync.Mutex
+	instrs   map[string]*fakeInstr
+	configs  map[string]gotel.InstrumentConfig
+	failName string
+	failErr  error
 }
 
 func (m *fakeMeter) get(name string) *fakeInstr {
@@ -125,11 +130,41 @@ func (m *fakeMeter) get(name string) *fakeInstr {
 	m.instrs[name] = i
 	return i
 }
-func (m *fakeMeter) Counter(n string, _ ...gotel.InstrumentOption) gotel.Counter { return m.get(n) }
-func (m *fakeMeter) Histogram(n string, _ ...gotel.InstrumentOption) gotel.Histogram {
-	return m.get(n)
+func (m *fakeMeter) instrument(n string, opts ...gotel.InstrumentOption) (*fakeInstr, error) {
+	if n == m.failName {
+		return nil, m.failErr
+	}
+	c, err := gotel.NewInstrumentConfig(n, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if m.configs == nil {
+		m.configs = make(map[string]gotel.InstrumentConfig)
+	}
+	m.configs[n] = c
+	return m.get(n), nil
 }
-func (m *fakeMeter) Gauge(n string, _ ...gotel.InstrumentOption) gotel.Gauge { return m.get(n) }
+func (m *fakeMeter) Counter(n string, opts ...gotel.InstrumentOption) (gotel.Counter, error) {
+	return m.instrument(n, opts...)
+}
+func (m *fakeMeter) UpDownCounter(n string, opts ...gotel.InstrumentOption) (gotel.UpDownCounter, error) {
+	return m.instrument(n, opts...)
+}
+func (m *fakeMeter) Histogram(n string, opts ...gotel.InstrumentOption) (gotel.Histogram, error) {
+	return m.instrument(n, opts...)
+}
+func (m *fakeMeter) Gauge(n string, opts ...gotel.InstrumentOption) (gotel.Gauge, error) {
+	return m.instrument(n, opts...)
+}
+
+func metricsMiddleware(t *testing.T, meter gotel.Meter, opts ...Option) ghttp.Middleware {
+	t.Helper()
+	mw, err := Metrics(meter, opts...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return mw
+}
 
 // ---- helpers ----
 
@@ -185,7 +220,7 @@ func TestTracingSuccess(t *testing.T) {
 		t.Fatalf("spans: %d", len(tr.spans))
 	}
 	sp := tr.spans[0]
-	if sp.name != "GET /users/:id" || !sp.ended {
+	if sp.name != "GET /users/:id" || sp.kind != gotel.SpanKindServer || !sp.ended {
 		t.Fatalf("span: %+v", sp)
 	}
 	want := map[string]any{
@@ -283,7 +318,7 @@ func TestHeaderCarrier(t *testing.T) {
 
 func TestMetrics(t *testing.T) {
 	m := &fakeMeter{}
-	s := newServer(t, Metrics(m))
+	s := newServer(t, metricsMiddleware(t, m))
 	w := do(s, "POST", "/echo", "abcd", nil)
 	if w.Code != 200 {
 		t.Fatalf("status %d", w.Code)
@@ -316,7 +351,7 @@ func TestMetrics(t *testing.T) {
 
 func TestMetricsErrorAndUnmatched(t *testing.T) {
 	m := &fakeMeter{}
-	s := newServer(t, Metrics(m, WithBodySizeMetrics(false), WithActiveRequests(false)))
+	s := newServer(t, metricsMiddleware(t, m, WithBodySizeMetrics(false), WithActiveRequests(false)))
 	do(s, "GET", "/boom", "", nil)
 	do(s, "GET", "/nope", "", nil)
 	dur := m.get(MetricRequestDuration).pts
@@ -337,15 +372,49 @@ func TestMetricsErrorAndUnmatched(t *testing.T) {
 }
 
 func TestMetricsNilMeter(t *testing.T) {
-	s := newServer(t, Metrics(nil))
+	s := newServer(t, metricsMiddleware(t, nil))
 	if w := do(s, "POST", "/echo", "", nil); w.Code != 200 {
 		t.Fatalf("status %d", w.Code)
 	}
 }
 
+func TestMetricsCreationErrors(t *testing.T) {
+	want := errors.New("registration failed")
+	for _, name := range []string{MetricRequestDuration, MetricActiveRequests, MetricRequestBody, MetricResponseBody} {
+		t.Run(name, func(t *testing.T) {
+			m := &fakeMeter{failName: name, failErr: want}
+			mw, err := Metrics(m)
+			if mw != nil || !errors.Is(err, want) {
+				t.Fatalf("middleware/error = %v/%v", mw == nil, err)
+			}
+		})
+	}
+}
+
+func TestMetricsInstrumentSchema(t *testing.T) {
+	m := &fakeMeter{}
+	_ = metricsMiddleware(t, m)
+	for _, name := range []string{MetricRequestDuration, MetricRequestBody, MetricResponseBody} {
+		c := m.configs[name]
+		if len(c.AttributeKeys) != 3 || c.AttributeKeys[2] != AttrStatusCode {
+			t.Fatalf("schema = %+v", c)
+		}
+		wantUnit := "By"
+		if name == MetricRequestDuration {
+			wantUnit = "s"
+		}
+		if c.Unit != wantUnit {
+			t.Fatalf("unit = %q, want %q", c.Unit, wantUnit)
+		}
+	}
+	if c := m.configs[MetricActiveRequests]; len(c.AttributeKeys) != 2 {
+		t.Fatalf("active schema = %+v", c)
+	}
+}
+
 func TestTracingAndMetricsTogether(t *testing.T) {
 	tr, m := &fakeTracer{}, &fakeMeter{}
-	s := newServer(t, Tracing(tr), Metrics(m))
+	s := newServer(t, Tracing(tr), metricsMiddleware(t, m))
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Add(1)

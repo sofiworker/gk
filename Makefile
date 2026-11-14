@@ -8,7 +8,7 @@ GOFMT ?= gofmt
 
 .DEFAULT_GOAL := help
 
-.PHONY: help fmt fmt-check vet test test-race test-cover lint tidy check ci all
+.PHONY: help fmt fmt-check vet test test-race test-cover lint tidy check check-adapters ci all
 
 help:
 	@echo "Available targets:"
@@ -21,6 +21,7 @@ help:
 	@echo "  make lint        Run golangci-lint"
 	@echo "  make tidy        Run go mod tidy"
 	@echo "  make check       Run fmt, vet, and test"
+	@echo "  make check-adapters  Check each optional gotel backend module"
 	@echo "  make ci          Run vet and test without modifying files"
 
 fmt:
@@ -49,6 +50,12 @@ tidy:
 	$(GO) mod tidy
 
 check: fmt vet test
+
+check-adapters:
+	$(MAKE) -C gotel/adapters/otel -f ../../../Makefile check PKGS=./...
+	$(MAKE) -C gotel/adapters/prometheus -f ../../../Makefile check PKGS=./...
+	$(MAKE) -C gotel/adapters/otlp -f ../../../Makefile check PKGS=./...
+	$(MAKE) -C gotel/adapters/otelprometheus -f ../../../Makefile check PKGS=./...
 
 ci: vet test
 

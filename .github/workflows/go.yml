@@ -36,6 +36,32 @@ jobs:
       - name: Test
         run: go test ./...
 
+  adapters:
+    name: Adapter ${{ matrix.adapter }} / Go ${{ matrix.go-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        adapter: [otel, prometheus, otlp, otelprometheus]
+        go-version: ["1.25.x", "stable"]
+    defaults:
+      run:
+        working-directory: gotel/adapters/${{ matrix.adapter }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache-dependency-path: gotel/adapters/${{ matrix.adapter }}/go.sum
+      - name: Check module files
+        run: go mod tidy -diff
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race ./...
+
   preview:
     # Go 1.27 generic methods only exist in the go1.27 build-tagged files; verify them
     # with the released 1.27 toolchain (the former go1.27rc2 pin is obsolete now that
@@ -97,6 +123,34 @@ jobs:
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.13.2
+          args: ./...
+
+      - name: Lint OTel adapter
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.13.2
+          working-directory: gotel/adapters/otel
+          args: ./...
+
+      - name: Lint Prometheus adapter
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.13.2
+          working-directory: gotel/adapters/prometheus
+          args: ./...
+
+      - name: Lint OTLP adapter
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.13.2
+          working-directory: gotel/adapters/otlp
+          args: ./...
+
+      - name: Lint OTel Prometheus adapter
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.13.2
+          working-directory: gotel/adapters/otelprometheus
           args: ./...
 
   race:

@@ -11,9 +11,13 @@ import (
 )
 
 s := ghttp.NewServer()
+metrics, err := ghttpotel.Metrics(meter)
+if err != nil {
+    return err
+}
 s.Use(
     ghttpotel.Tracing(tracer, ghttpotel.WithTraceIDHeader("X-Trace-Id")),
-    ghttpotel.Metrics(meter),
+    metrics,
 )
 ```
 
@@ -30,11 +34,13 @@ s.Use(
 | 指标 | 类型 | 说明 |
 | --- | --- | --- |
 | `http.server.request.duration` | Histogram（秒） | 请求耗时 |
-| `http.server.active_requests` | Counter（+1/-1） | gotel 的 Gauge 只能 Record，故用 Counter 加减 |
+| `http.server.active_requests` | UpDownCounter（+1/-1） | 允许增减的活跃请求数 |
 | `http.server.request.body.size` | Histogram（字节） | 取 Content-Length，未知（-1）时不记录 |
 | `http.server.response.body.size` | Histogram（字节） | 已写出的响应体字节数 |
 
-属性仅含 `http.request.method`、`http.route`（未匹配省略）、`http.response.status_code`；active_requests 不含状态码。
+属性仅含 `http.request.method`、`http.route`、`http.response.status_code`；active_requests 不含状态码。中间件不为未匹配路由设置 route，后端按已声明的属性结构将缺失值补为 `""`。
+
+`Metrics` 在创建时注册全部 instrument，并返回 `(ghttp.Middleware, error)`；调用方须在服务启动前处理错误。指标名沿用 OTel 语义约定作为逻辑名称，具体后端负责名称转换；本中间件不依赖任何厂商 SDK。
 
 ## 选项
 
