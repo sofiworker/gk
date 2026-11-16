@@ -45,11 +45,15 @@ jobs:
         adapter: [otel, prometheus, otlp, otelprometheus]
         go-version: ["1.25.x", "stable"]
         exclude:
+          - adapter: otel
+            go-version: "1.25.x"
           - adapter: otlp
             go-version: "1.25.x"
           - adapter: otelprometheus
             go-version: "1.25.x"
         include:
+          - adapter: otel
+            go-version: "1.26.x"
           - adapter: otlp
             go-version: "1.26.x"
           - adapter: otelprometheus

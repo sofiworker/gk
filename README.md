@@ -32,7 +32,7 @@
 
 ## 安装
 
-根模块要求 Go 1.25.12+；可选的 `gotel/adapters/otlp` 和 `gotel/adapters/otelprometheus` 模块因 OpenTelemetry 依赖要求 Go 1.26.0+。
+根模块要求 Go 1.25.12+；可选的 `gotel/adapters/otel`、`gotel/adapters/otlp` 和 `gotel/adapters/otelprometheus` 模块因 OpenTelemetry 依赖要求 Go 1.26.0+。
 
 ```bash
 go get github.com/sofiworker/gk

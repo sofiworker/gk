@@ -2,6 +2,8 @@
 
 独立 Go module：可以借用调用方已有的 OpenTelemetry `trace.Tracer` / `metric.Meter`，也可以创建拥有 SDK 生命周期的 Provider。只有显式使用此 module 才引入 OTel 依赖；核心 `gotel` 不依赖本模块，本模块不依赖 OTLP/Prometheus exporter。
 
+要求 Go 1.26.0+（OpenTelemetry v1.47 的最低版本）。
+
 ## 借用现有 SDK
 
 ```go
