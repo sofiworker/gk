@@ -41,13 +41,15 @@ gnet（能力层）
 | `netinfo` | 网卡视图汇总 + **连接表/网卡统计/协议计数**（/proc 数据源） | linux / 依赖底层子包 | **M4 ✓** |
 | `packet` | 包统一适配 + layers 解析缓存（Parse/NetworkLayer/TransportLayer） | 跨平台 | **M3 ✓** |
 | `pcap` | 统一的抓包文件读写、格式自动识别、BPF 过滤拷贝（pcap / pcapng） | 跨平台 | 现状 |
-| `rawcap` | 实时抓包：Linux AF_PACKET / **macOS·BSD /dev/bpf** / **Windows npcap 动态加载** | linux ✓ / bsd·windows 交叉编译验证（未实测） | **M5 ✓** |
+| `rawcap` | 实时抓包：Linux AF_PACKET / **macOS·BSD /dev/bpf** / **Windows npcap 动态加载** | linux ✓ / bsd 交叉编译验证 / windows 打开失败路径已实测，实时抓包未实测 | **M5 ✓** |
 | `route` | 路由表增删查 | linux / windows / unsupported | 现状 |
 | `craft` | 报文构造与注入：layers 组合 + AF_PACKET/conn 双后端 | linux / 跨平台 | **M3 ✓** |
 | `sniff` | 嗅探管线：Source→FlowTracker（五元组）→Reassembler（TCP 重组）→Analyzer | 跨平台 | **M3 ✓** |
 | `replay` | 流量回放：时间戳/pps/倍速 pacing、IP+MAC 重写（增量校验和）、循环回放 | 跨平台 | **M4 ✓** |
 | `gateway` | L4 网关：规则路由 + TCP/UDP 端口转发 + 协议感知钩子 | 跨平台 | **M4 ✓** |
 | `actor` | actor 编排：Worker 独占连接 + 邮箱串行处理（zhenyi zactor 模型） | 跨平台 | **M5 ✓** |
+
+Windows 下 `rawcap.OpenLive` 打开失败时返回包含接口名和 Npcap 诊断信息的错误。
 
 ## 抓包文件统一入口
 

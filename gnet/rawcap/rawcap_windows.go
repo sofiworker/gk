@@ -3,6 +3,7 @@
 package rawcap
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"sync"
@@ -13,13 +14,14 @@ import (
 
 // 本文件是 Windows 捕获后端的 npcap 动态加载实现（purego：NewLazyDLL，
 // 无 cgo）。防 DLL 劫持：优先按全路径加载 System32\Npcap\wpcap.dll。
-// 注意：本后端未经 Windows 实测，仅交叉编译验证（见 README 平台矩阵）。
+// Windows 已验证打开失败的错误路径；实时抓包尚未实测（见 README 平台矩阵）。
 //
 // This file is the Windows capture backend via npcap dynamic loading
 // (purego: NewLazyDLL, no cgo). Anti-DLL-hijacking: load
-// System32\Npcap\wpcap.dll by full path first. Note: this backend is not
-// tested on Windows — cross-compilation verified only (see the README
-// platform matrix).
+// System32\Npcap\wpcap.dll by full path first. The open-failure path is tested
+// on Windows; live capture remains untested (see the README platform matrix).
+
+const pcapErrorBufferSize = 256 // PCAP_ERRBUF_SIZE from libpcap/Npcap.
 
 // pcapPkthdr 对应 pcap_pkthdr（Windows 上 timeval 为 32 位：16 字节）。
 // pcapPkthdr mirrors pcap_pkthdr (Windows timeval is 32-bit: 16 bytes).
@@ -98,17 +100,23 @@ func openLive(interfaceName string, cfg Config) (Handle, error) {
 		snaplen = DefaultSnapLen
 	}
 	timeout := int32(cfg.Timeout / time.Millisecond)
-	// int pcap_open_live(const char*, int snaplen, int promisc, int to_ms,
-	// char *errbuf)。
+	// Npcap requires a writable error buffer, including when opening fails.
+	var errbuf [pcapErrorBufferSize]byte
+	// pcap_t *pcap_open_live(const char*, int snaplen, int promisc, int to_ms,
+	// char *errbuf).
 	ret, _, _ := procOpen.Call(
 		uintptr(unsafe.Pointer(name)),
 		uintptr(snaplen),
 		uintptr(promisc),
 		uintptr(timeout),
-		0, // errbuf 省略：失败时 ret==0
+		uintptr(unsafe.Pointer(&errbuf[0])),
 	)
 	if ret == 0 {
-		return nil, fmt.Errorf("rawcap: pcap_open_live(%s) failed (no Npcap or no permission)", interfaceName)
+		message := errbuf[:]
+		if end := bytes.IndexByte(message, 0); end >= 0 {
+			message = message[:end]
+		}
+		return nil, fmt.Errorf("rawcap: pcap_open_live(%s) failed: %s", interfaceName, message)
 	}
 	return &wpcapHandle{pcap: ret}, nil
 }
@@ -172,6 +180,6 @@ func (h *wpcapHandle) Close() error {
 		return nil
 	}
 	h.closed = true
-	procClose.Call(h.pcap)
+	_, _, _ = procClose.Call(h.pcap) // pcap_close returns void.
 	return nil
 }

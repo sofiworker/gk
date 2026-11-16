@@ -42,13 +42,15 @@ gnet (capability layer)
 | `netinfo` | interface view + **connections/IO counters/proto counters** (/proc sources) | linux / depends on subpackages | **M4 ✓** |
 | `packet` | unified packet adapter + layers parse cache (Parse/NetworkLayer/TransportLayer) | cross-platform | **M3 ✓** |
 | `pcap` | unified capture file I/O, format detection, and BPF filtering (pcap / pcapng) | cross-platform | current |
-| `rawcap` | live capture: Linux AF_PACKET / **macOS·BSD /dev/bpf** / **Windows npcap dynamic loading** | linux ✓ / bsd·windows cross-compiled (untested) | **M5 ✓** |
+| `rawcap` | live capture: Linux AF_PACKET / **macOS·BSD /dev/bpf** / **Windows npcap dynamic loading** | linux ✓ / bsd cross-compiled / windows open-failure path tested, live capture untested | **M5 ✓** |
 | `route` | route add/delete/list | linux / windows / unsupported | current |
 | `craft` | packet crafting & injection: layers assembly + AF_PACKET/conn backends | linux / cross-platform | **M3 ✓** |
 | `sniff` | sniffing pipeline: Source→FlowTracker (5-tuple)→Reassembler (TCP reorder)→Analyzer | cross-platform | **M3 ✓** |
 | `replay` | traffic replay: timestamp/pps/multiplier pacing, IP+MAC rewrite (incremental checksums), looped replay | cross-platform | **M4 ✓** |
 | `gateway` | L4 gateway: rule routing + TCP/UDP port forwarding + protocol-aware hooks | cross-platform | **M4 ✓** |
 | `actor` | actor orchestration: Worker conn ownership + serial mailbox (zhenyi zactor model) | cross-platform | **M5 ✓** |
+
+On Windows, `rawcap.OpenLive` returns the interface name and Npcap diagnostic when opening fails.
 
 ## Unified capture file API
 
