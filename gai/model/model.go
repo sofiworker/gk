@@ -9,7 +9,7 @@ import (
 	"errors"
 	"math"
 
-	"github.com/sofiworker/gk/gai/core"
+	"github.com/sofiworker/keel/gai/core"
 )
 
 var ErrParameters = errors.New("invalid model parameters")

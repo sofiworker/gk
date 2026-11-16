@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	s "github.com/sofiworker/gk/gai/sandbox"
-	"github.com/sofiworker/gk/gai/sandbox/local"
-	"github.com/sofiworker/gk/gai/sandbox/memory"
+	s "github.com/sofiworker/keel/gai/sandbox"
+	"github.com/sofiworker/keel/gai/sandbox/local"
+	"github.com/sofiworker/keel/gai/sandbox/memory"
 )
 
 func must(t *testing.T, err error) {

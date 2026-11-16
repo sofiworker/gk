@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sofiworker/gk/gai/transport/httptransport"
+	"github.com/sofiworker/keel/gai/transport/httptransport"
 )
 
 func TestTransportBoundaries(t *testing.T) {

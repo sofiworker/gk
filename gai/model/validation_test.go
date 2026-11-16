@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/sofiworker/gk/gai/core"
+	"github.com/sofiworker/keel/gai/core"
 )
 
 func TestRequestValidation(t *testing.T) {

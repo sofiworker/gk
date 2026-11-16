@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/sofiworker/gk/gnet/ethtool"
+	"github.com/sofiworker/keel/gnet/ethtool"
 	"golang.org/x/sys/windows"
 )
 

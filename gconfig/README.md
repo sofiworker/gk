@@ -7,7 +7,7 @@
 ## 用法
 
 ```go
-import "github.com/sofiworker/gk/gconfig"
+import "github.com/sofiworker/keel/gconfig"
 
 loader, _ := gconfig.New(gconfig.WithFile("config.yaml"))
 loader.Unmarshal(&cfg)
@@ -27,7 +27,7 @@ loader.UnmarshalKey("server", &serverCfg)
 import (
 	_ "github.com/spf13/viper/remote"
 
-	"github.com/sofiworker/gk/gconfig"
+	"github.com/sofiworker/keel/gconfig"
 )
 
 loader, _ := gconfig.New(

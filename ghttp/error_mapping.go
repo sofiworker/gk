@@ -5,8 +5,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/sofiworker/gk/gerr"
-	"github.com/sofiworker/gk/ghttp/wire"
+	"github.com/sofiworker/keel/gerr"
+	"github.com/sofiworker/keel/ghttp/wire"
 )
 
 // StatusClientClosedRequest 是客户端在响应前断开（ctx 被取消）时使用的非标准状态码 499。

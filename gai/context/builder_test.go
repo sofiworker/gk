@@ -6,9 +6,9 @@ import (
 	"errors"
 	"testing"
 
-	gcontext "github.com/sofiworker/gk/gai/context"
-	"github.com/sofiworker/gk/gai/core"
-	"github.com/sofiworker/gk/gai/model"
+	gcontext "github.com/sofiworker/keel/gai/context"
+	"github.com/sofiworker/keel/gai/core"
+	"github.com/sofiworker/keel/gai/model"
 )
 
 func request() model.Request {

@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/sofiworker/gk/gretry"
+	"github.com/sofiworker/keel/gretry"
 )
 
 // RetryStrategy 重试策略，定义收敛到 gretry。

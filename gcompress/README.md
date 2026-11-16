@@ -7,7 +7,7 @@
 ## 用法
 
 ```go
-import "github.com/sofiworker/gk/gcompress"
+import "github.com/sofiworker/keel/gcompress"
 
 compressed, _ := gcompress.CompressString("data")
 ```

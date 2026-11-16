@@ -17,9 +17,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sofiworker/gk/gnet/layers"
-	"github.com/sofiworker/gk/gnet/packet"
-	"github.com/sofiworker/gk/gnet/pcap"
+	"github.com/sofiworker/keel/gnet/layers"
+	"github.com/sofiworker/keel/gnet/packet"
+	"github.com/sofiworker/keel/gnet/pcap"
 )
 
 // Source 是报文来源；流尽返回 io.EOF。

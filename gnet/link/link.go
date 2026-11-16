@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/sofiworker/gk/gnet/ethtool"
+	"github.com/sofiworker/keel/gnet/ethtool"
 )
 
 // UnknownSpeedMbps 表示无法确定速率时的占位值。

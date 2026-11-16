@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/sofiworker/gk/ghttp/wire"
+	"github.com/sofiworker/keel/ghttp/wire"
 )
 
 // RequestInfo 是 Observe 回调收到的请求观测数据。

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sofiworker/gk/gotel"
+	"github.com/sofiworker/keel/gotel"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"

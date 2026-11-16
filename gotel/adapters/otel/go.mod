@@ -1,9 +1,9 @@
-module github.com/sofiworker/gk/gotel/adapters/otel
+module github.com/sofiworker/keel/gotel/adapters/otel
 
 go 1.26.0
 
 require (
-	github.com/sofiworker/gk v0.0.0
+	github.com/sofiworker/keel v0.0.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/metric v1.47.0
 	go.opentelemetry.io/otel/sdk v1.47.0
@@ -21,4 +21,4 @@ require (
 	golang.org/x/sys v0.48.0 // indirect
 )
 
-replace github.com/sofiworker/gk => ../../..
+replace github.com/sofiworker/keel => ../../..

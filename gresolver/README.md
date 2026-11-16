@@ -7,7 +7,7 @@ DNS 解析器配置解析与工具。
 ## 用法
 
 ```go
-import "github.com/sofiworker/gk/gresolver"
+import "github.com/sofiworker/keel/gresolver"
 
 conf, _ := gresolver.ParseResolveFile("/etc/resolv.conf")
 ```

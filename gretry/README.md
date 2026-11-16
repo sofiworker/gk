@@ -18,7 +18,7 @@
 ## 安装
 
 ```bash
-go get github.com/sofiworker/gk/gretry
+go get github.com/sofiworker/keel/gretry
 ```
 
 ## 用法

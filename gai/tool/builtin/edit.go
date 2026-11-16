@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/sofiworker/gk/gai/core"
+	"github.com/sofiworker/keel/gai/core"
 )
 
 // 替换逻辑改编自 Eino InMemoryBackend.Edit；存储与并发检查改为本 SDK 能力接口。

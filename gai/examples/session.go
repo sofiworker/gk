@@ -7,8 +7,8 @@ package examples
 import (
 	"context"
 
-	"github.com/sofiworker/gk/gai/agent"
-	"github.com/sofiworker/gk/gai/model"
+	"github.com/sofiworker/keel/gai/agent"
+	"github.com/sofiworker/keel/gai/model"
 )
 
 // RunSession 的第二次请求自动包含同一会话的历史。

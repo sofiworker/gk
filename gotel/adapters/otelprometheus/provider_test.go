@@ -10,8 +10,8 @@ import (
 
 	prom "github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/sofiworker/gk/gotel"
-	oteladapter "github.com/sofiworker/gk/gotel/adapters/otel"
+	"github.com/sofiworker/keel/gotel"
+	oteladapter "github.com/sofiworker/keel/gotel/adapters/otel"
 	otelexport "go.opentelemetry.io/otel/exporters/prometheus"
 	"go.opentelemetry.io/otel/metric"
 )

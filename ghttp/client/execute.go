@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sofiworker/gk/ghttp/wire"
+	"github.com/sofiworker/keel/ghttp/wire"
 )
 
 // 本文件是 client 的执行引擎：把 *Request 落实为 *http.Request，跑中间件链，发送，

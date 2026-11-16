@@ -9,7 +9,7 @@ import (
 
 	prom "github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
-	"github.com/sofiworker/gk/gotel"
+	"github.com/sofiworker/keel/gotel"
 )
 
 func newTestMeter(t *testing.T) (*Meter, *prom.Registry) {

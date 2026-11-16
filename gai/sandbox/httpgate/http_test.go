@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	s "github.com/sofiworker/gk/gai/sandbox"
-	"github.com/sofiworker/gk/gai/sandbox/httpgate"
+	s "github.com/sofiworker/keel/gai/sandbox"
+	"github.com/sofiworker/keel/gai/sandbox/httpgate"
 )
 
 func rule(t *testing.T, raw string) httpgate.Rule {

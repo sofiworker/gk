@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sofiworker/gk/ghttp/wire"
+	"github.com/sofiworker/keel/ghttp/wire"
 )
 
 // sseTestServer 启动一个由 fn 驱动 SSEWriter 的 httptest 服务器。

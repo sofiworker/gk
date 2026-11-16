@@ -9,7 +9,7 @@ package craft
 import (
 	"net"
 
-	"github.com/sofiworker/gk/gnet/layers"
+	"github.com/sofiworker/keel/gnet/layers"
 )
 
 // Injector 注入一个完整报文（L2 帧）。

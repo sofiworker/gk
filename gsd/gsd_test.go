@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sofiworker/gk/gretry"
+	"github.com/sofiworker/keel/gretry"
 )
 
 func TestRetryWithBackoff(t *testing.T) {

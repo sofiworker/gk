@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sofiworker/gk/ghttp/wire"
+	"github.com/sofiworker/keel/ghttp/wire"
 )
 
 func TestWriteJSON_Success(t *testing.T) {

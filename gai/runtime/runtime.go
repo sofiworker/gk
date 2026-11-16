@@ -9,12 +9,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sofiworker/gk/gai/agent"
-	"github.com/sofiworker/gk/gai/core"
-	"github.com/sofiworker/gk/gai/id"
-	"github.com/sofiworker/gk/gai/model"
-	sandbox "github.com/sofiworker/gk/gai/sandbox/memory"
-	"github.com/sofiworker/gk/gai/session"
+	"github.com/sofiworker/keel/gai/agent"
+	"github.com/sofiworker/keel/gai/core"
+	"github.com/sofiworker/keel/gai/id"
+	"github.com/sofiworker/keel/gai/model"
+	sandbox "github.com/sofiworker/keel/gai/sandbox/memory"
+	"github.com/sofiworker/keel/gai/session"
 )
 
 var (

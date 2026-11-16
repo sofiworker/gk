@@ -11,7 +11,7 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/sofiworker/gk/gai/core"
+	"github.com/sofiworker/keel/gai/core"
 )
 
 var (

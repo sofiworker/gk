@@ -6,9 +6,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/sofiworker/gk/gai/core"
-	"github.com/sofiworker/gk/gai/session"
-	"github.com/sofiworker/gk/gai/session/memory"
+	"github.com/sofiworker/keel/gai/core"
+	"github.com/sofiworker/keel/gai/session"
+	"github.com/sofiworker/keel/gai/session/memory"
 )
 
 func TestAtomicCommitAndCopies(t *testing.T) {

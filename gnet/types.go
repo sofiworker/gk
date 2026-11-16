@@ -1,8 +1,8 @@
-// Package gnet 是 gk 的事件驱动网络底座：基于 gpoller 的 reactor 服务器
+// Package gnet 是 Keel 的事件驱动网络底座：基于 gpoller 的 reactor 服务器
 // 与协议识别入口。M1 提供单引擎单循环的 fd 引擎模式（Linux epoll /
 // BSD kqueue）；Windows 的 netpoller 接入路径见重构 spec §7（M5）。
 //
-// Package gnet is the gk event-driven networking foundation: a gpoller-based
+// Package gnet is the Keel event-driven networking foundation: a gpoller-based
 // reactor server plus protocol detection entry points. M1 ships the fd-engine
 // mode (Linux epoll / BSD kqueue, single engine single loop); the Windows
 // netpoller path is planned in M5 (see the redesign spec, §7).
@@ -16,7 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sofiworker/gk/gpoller"
+	"github.com/sofiworker/keel/gpoller"
 )
 
 // Action 是事件回调返回的连接处置动作。

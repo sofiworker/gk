@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sofiworker/gk/gnet/pcap"
+	"github.com/sofiworker/keel/gnet/pcap"
 )
 
 type captureWriter struct {

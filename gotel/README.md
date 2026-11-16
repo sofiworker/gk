@@ -10,11 +10,11 @@
 
 | 导入路径 | 能力 | 独立 module |
 | --- | --- | --- |
-| `github.com/sofiworker/gk/gotel` | 公共接口、配置、错误 | 属于根 module，仅依赖标准库 |
-| `github.com/sofiworker/gk/gotel/adapters/otel` | OpenTelemetry tracing / metrics | 是，仅使用此模块时引入 OTel |
-| `github.com/sofiworker/gk/gotel/adapters/prometheus` | 原生 Prometheus metrics | 是，仅使用此模块时引入 Prometheus |
-| `github.com/sofiworker/gk/gotel/adapters/otlp` | 托管 OTel tracing / metrics，经 OTLP HTTP/gRPC 导出到 Jaeger、Collector 等 | 是，依赖 OTel 与 OTLP exporter，不依赖 Prometheus |
-| `github.com/sofiworker/gk/gotel/adapters/otelprometheus` | 托管 OTel metrics、Prometheus exporter 与抓取 handler | 是，依赖 OTel 与 Prometheus，不依赖 OTLP exporter |
+| `github.com/sofiworker/keel/gotel` | 公共接口、配置、错误 | 属于根 module，仅依赖标准库 |
+| `github.com/sofiworker/keel/gotel/adapters/otel` | OpenTelemetry tracing / metrics | 是，仅使用此模块时引入 OTel |
+| `github.com/sofiworker/keel/gotel/adapters/prometheus` | 原生 Prometheus metrics | 是，仅使用此模块时引入 Prometheus |
+| `github.com/sofiworker/keel/gotel/adapters/otlp` | 托管 OTel tracing / metrics，经 OTLP HTTP/gRPC 导出到 Jaeger、Collector 等 | 是，依赖 OTel 与 OTLP exporter，不依赖 Prometheus |
+| `github.com/sofiworker/keel/gotel/adapters/otelprometheus` | 托管 OTel metrics、Prometheus exporter 与抓取 handler | 是，依赖 OTel 与 Prometheus，不依赖 OTLP exporter |
 
 与 Rust 的独立 crate 类似，每个后端目录有自己的 `go.mod` / `go.sum`。根 module 不 require 后端模块；只使用 `gotel` 的项目不会因此引入厂商 SDK。Go 的 build tag 无法实现这层隔离：`go mod tidy` 会检查带自定义 tag 的代码，所以后端采用 module 边界。
 

@@ -6,9 +6,9 @@
 
 ```go
 import (
-    "github.com/sofiworker/gk/gotel"
-    oteladapter "github.com/sofiworker/gk/gotel/adapters/otel"
-    "github.com/sofiworker/gk/gotel/adapters/otelprometheus"
+    "github.com/sofiworker/keel/gotel"
+    oteladapter "github.com/sofiworker/keel/gotel/adapters/otel"
+    "github.com/sofiworker/keel/gotel/adapters/otelprometheus"
 )
 
 provider, err := otelprometheus.New(ctx,

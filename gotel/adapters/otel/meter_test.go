@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/sofiworker/gk/gotel"
+	"github.com/sofiworker/keel/gotel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"

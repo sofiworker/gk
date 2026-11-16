@@ -12,7 +12,7 @@ import (
 	"sync"
 
 	prom "github.com/prometheus/client_golang/prometheus"
-	"github.com/sofiworker/gk/gotel"
+	"github.com/sofiworker/keel/gotel"
 )
 
 var (

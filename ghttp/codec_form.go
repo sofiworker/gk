@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sofiworker/gk/ghttp/wire"
+	"github.com/sofiworker/keel/ghttp/wire"
 )
 
 // DefaultFormMaxMemory 是 multipart 解析时驻留内存的默认上限（32 MiB），超出部分写入临时文件。

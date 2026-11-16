@@ -3,7 +3,7 @@ package replay
 import (
 	"io"
 
-	"github.com/sofiworker/gk/gnet/packet"
+	"github.com/sofiworker/keel/gnet/packet"
 )
 
 // SliceSource 是可重复读取的内存报文来源（循环回放用）：流尽后自动

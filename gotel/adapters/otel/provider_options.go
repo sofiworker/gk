@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sofiworker/gk/gotel"
+	"github.com/sofiworker/keel/gotel"
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -89,7 +89,7 @@ func WithProviderPropagator(propagator propagation.TextMapPropagator) ProviderOp
 
 func newProviderConfig(opts []ProviderOption) (providerConfig, error) {
 	c := providerConfig{
-		instrumentationName: "github.com/sofiworker/gk/gotel",
+		instrumentationName: "github.com/sofiworker/keel/gotel",
 		resource:            resource.Default(),
 		samplingRatio:       1,
 		batchOptions:        []sdktrace.BatchSpanProcessorOption{sdktrace.WithBatchTimeout(5 * time.Second), sdktrace.WithExportTimeout(30 * time.Second)},

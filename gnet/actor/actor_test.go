@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sofiworker/gk/gnet"
+	"github.com/sofiworker/keel/gnet"
 )
 
 // echoHandler 是回显处理器，记录消息与关闭。

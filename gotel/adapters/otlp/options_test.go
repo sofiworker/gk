@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	oteladapter "github.com/sofiworker/gk/gotel/adapters/otel"
+	oteladapter "github.com/sofiworker/keel/gotel/adapters/otel"
 )
 
 func TestInvalidConfig(t *testing.T) {

@@ -7,7 +7,7 @@ Cryptographic utilities: AES (CBC/GCM), DES/3DES, RSA (encrypt/sign/OAEP), Ed255
 ## Usage
 
 ```go
-import "github.com/sofiworker/gk/gcrypt"
+import "github.com/sofiworker/keel/gcrypt"
 
 key, _ := gcrypt.GenerateAESKey(32)
 encrypted, _ := gcrypt.AESEncrypt(data, key)

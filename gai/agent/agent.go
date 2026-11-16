@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	gcontext "github.com/sofiworker/gk/gai/context"
-	"github.com/sofiworker/gk/gai/core"
-	"github.com/sofiworker/gk/gai/id"
-	"github.com/sofiworker/gk/gai/model"
-	"github.com/sofiworker/gk/gai/tool"
+	gcontext "github.com/sofiworker/keel/gai/context"
+	"github.com/sofiworker/keel/gai/core"
+	"github.com/sofiworker/keel/gai/id"
+	"github.com/sofiworker/keel/gai/model"
+	"github.com/sofiworker/keel/gai/tool"
 )
 
 var (

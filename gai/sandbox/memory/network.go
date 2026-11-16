@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"time"
 
-	s "github.com/sofiworker/gk/gai/sandbox"
+	s "github.com/sofiworker/keel/gai/sandbox"
 )
 
 // Request 仅记录方法和不含查询参数的目标，不采集请求或响应正文、头及凭据。

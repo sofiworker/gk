@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sofiworker/gk/ghttp/wire"
+	"github.com/sofiworker/keel/ghttp/wire"
 )
 
 // ErrSSENotSupported 表示底层 ResponseWriter 不支持 Flush，无法做 SSE。

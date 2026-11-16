@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/sofiworker/gk/ghttp"
-	"github.com/sofiworker/gk/ghttp/wire"
-	"github.com/sofiworker/gk/gotel"
+	"github.com/sofiworker/keel/ghttp"
+	"github.com/sofiworker/keel/ghttp/wire"
+	"github.com/sofiworker/keel/gotel"
 )
 
 // 指标名（OTel 语义约定）。

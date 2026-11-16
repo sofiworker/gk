@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sofiworker/gk/gcache"
+	"github.com/sofiworker/keel/gcache"
 )
 
 // RunKV 验证 gcache.KV 契约：读写、覆盖、未命中、删除幂等与返回值所有权。

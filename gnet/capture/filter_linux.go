@@ -5,7 +5,7 @@ package capture
 import (
 	"fmt"
 
-	"github.com/sofiworker/gk/gnet/rawcap"
+	"github.com/sofiworker/keel/gnet/rawcap"
 	"golang.org/x/net/bpf"
 	"golang.org/x/sys/unix"
 )

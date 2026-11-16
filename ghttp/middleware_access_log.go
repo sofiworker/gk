@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/sofiworker/gk/ghttp/wire"
+	"github.com/sofiworker/keel/ghttp/wire"
 )
 
 // ColorMode 控制访问日志的 ANSI 颜色输出。

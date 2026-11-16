@@ -18,7 +18,7 @@ English | [中文](README.md)
 ## Installation
 
 ```bash
-go get github.com/sofiworker/gk/gretry
+go get github.com/sofiworker/keel/gretry
 ```
 
 ## Usage

@@ -5,7 +5,7 @@ import (
 
 	prom "github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	oteladapter "github.com/sofiworker/gk/gotel/adapters/otel"
+	oteladapter "github.com/sofiworker/keel/gotel/adapters/otel"
 	otelexport "go.opentelemetry.io/otel/exporters/prometheus"
 )
 

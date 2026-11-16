@@ -7,7 +7,7 @@ Compression utilities for Gzip, Zlib, Flate, Zip, Tar, and Tgz.
 ## Usage
 
 ```go
-import "github.com/sofiworker/gk/gcompress"
+import "github.com/sofiworker/keel/gcompress"
 
 compressed, _ := gcompress.CompressString("data")
 ```

@@ -4,7 +4,7 @@ import (
 	"context"
 	"sort"
 
-	s "github.com/sofiworker/gk/gai/sandbox"
+	s "github.com/sofiworker/keel/gai/sandbox"
 )
 
 func (b *Sandbox) Snapshot(ctx context.Context) (s.Snapshot, error) {

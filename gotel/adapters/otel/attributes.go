@@ -3,7 +3,7 @@ package otel
 import (
 	"fmt"
 
-	"github.com/sofiworker/gk/gotel"
+	"github.com/sofiworker/keel/gotel"
 	"go.opentelemetry.io/otel/attribute"
 )
 

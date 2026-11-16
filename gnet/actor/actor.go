@@ -11,7 +11,7 @@ package actor
 import (
 	"sync"
 
-	"github.com/sofiworker/gk/gnet"
+	"github.com/sofiworker/keel/gnet"
 )
 
 // MessageHandler 在 actor goroutine 上串行处理消息。

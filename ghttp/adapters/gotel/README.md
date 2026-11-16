@@ -6,8 +6,8 @@
 
 ```go
 import (
-    "github.com/sofiworker/gk/ghttp"
-    ghttpotel "github.com/sofiworker/gk/ghttp/adapters/gotel"
+    "github.com/sofiworker/keel/ghttp"
+    ghttpotel "github.com/sofiworker/keel/ghttp/adapters/gotel"
 )
 
 s := ghttp.NewServer()

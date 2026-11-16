@@ -1,15 +1,15 @@
-# gk: Go Generic Kit
+# Keel: Go Libraries
 
 > **⚠️ UNDER DEVELOPMENT — DO NOT USE IN PRODUCTION.**
 > This repository is actively developed; APIs are unstable and unverified for production use.
 
-[![CI](https://github.com/sofiworker/gk/actions/workflows/go.yml/badge.svg?branch=master&event=push)](https://github.com/sofiworker/gk/actions/workflows/go.yml)
-[![codecov](https://codecov.io/gh/sofiworker/gk/branch/master/graph/badge.svg)](https://app.codecov.io/gh/sofiworker/gk)
-[![Go Reference](https://pkg.go.dev/badge/github.com/sofiworker/gk.svg)](https://pkg.go.dev/github.com/sofiworker/gk)
+[![CI](https://github.com/sofiworker/keel/actions/workflows/go.yml/badge.svg?branch=master&event=push)](https://github.com/sofiworker/keel/actions/workflows/go.yml)
+[![codecov](https://codecov.io/gh/sofiworker/keel/branch/master/graph/badge.svg)](https://app.codecov.io/gh/sofiworker/keel)
+[![Go Reference](https://pkg.go.dev/badge/github.com/sofiworker/keel.svg)](https://pkg.go.dev/github.com/sofiworker/keel)
 
 English | [中文](README.md)
 
-A collection of Go libraries for building robust applications; packages are independent and composable.
+Keel takes its name from the backbone of a ship. It is a collection of Go libraries for building robust applications; packages are independent and composable.
 
 ## Modules
 
@@ -34,5 +34,13 @@ A collection of Go libraries for building robust applications; packages are inde
 The root module requires Go 1.25.12+. The optional `gotel/adapters/otel`, `gotel/adapters/otlp` and `gotel/adapters/otelprometheus` modules require Go 1.26.0+ for their OpenTelemetry dependencies.
 
 ```bash
-go get github.com/sofiworker/gk
+go get github.com/sofiworker/keel
 ```
+
+## Migrating from gk (breaking change)
+
+The project is now named Keel. Replace the `github.com/sofiworker/gk` prefix with `github.com/sofiworker/keel` in Go imports and `go.mod` (including `require` and `replace`), then run `go mod tidy` and your project's tests. Update all four standalone `gotel/adapters/*` module paths as well. Subpackage names such as `ghttp` and `gnet` are unchanged.
+
+For example: `import "github.com/sofiworker/keel/ghttp"`.
+
+The OpenTelemetry adapter's default instrumentation scope name is now `github.com/sofiworker/keel/gotel`. Update dashboards and queries that depend on the old scope name, or explicitly configure the previous name with `WithInstrumentationName`.

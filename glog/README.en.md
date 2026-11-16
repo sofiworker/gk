@@ -14,7 +14,7 @@ Structured logging based on Zap.
 ## Quick Start
 
 ```go
-import "github.com/sofiworker/gk/glog"
+import "github.com/sofiworker/keel/glog"
 
 glog.Info("message", "key", "value")
 ```

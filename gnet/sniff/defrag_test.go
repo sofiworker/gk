@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sofiworker/gk/gnet/layers"
+	"github.com/sofiworker/keel/gnet/layers"
 )
 
 // TestDefragmenter 覆盖分片重组：乱序到达、连续拼接、未分片透传。

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sofiworker/gk/glog"
+	"github.com/sofiworker/keel/glog"
 )
 
 func TestContextLoggingTraceFields(t *testing.T) {

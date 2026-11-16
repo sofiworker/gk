@@ -10,8 +10,8 @@ Jaeger 通过 OTLP 接收 traces，无需 Jaeger 专用 exporter。对接已启�
 
 ```go
 import (
-    oteladapter "github.com/sofiworker/gk/gotel/adapters/otel"
-    "github.com/sofiworker/gk/gotel/adapters/otlp"
+    oteladapter "github.com/sofiworker/keel/gotel/adapters/otel"
+    "github.com/sofiworker/keel/gotel/adapters/otlp"
 )
 
 provider, err := otlp.New(ctx,

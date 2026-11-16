@@ -2,7 +2,7 @@ package memory
 
 import (
 	"context"
-	s "github.com/sofiworker/gk/gai/sandbox"
+	s "github.com/sofiworker/keel/gai/sandbox"
 )
 
 func (b *Sandbox) beginExternal(ctx context.Context) (context.Context, uint64) {

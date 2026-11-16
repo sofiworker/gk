@@ -9,10 +9,10 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/sofiworker/gk/gai/agent"
-	"github.com/sofiworker/gk/gai/core"
-	"github.com/sofiworker/gk/gai/hook"
-	"github.com/sofiworker/gk/gai/model"
+	"github.com/sofiworker/keel/gai/agent"
+	"github.com/sofiworker/keel/gai/core"
+	"github.com/sofiworker/keel/gai/hook"
+	"github.com/sofiworker/keel/gai/model"
 )
 
 // RunWithHooks 展示每次模型请求前配置参数、响应后转换及业务校验。

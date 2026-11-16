@@ -6,8 +6,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/sofiworker/gk/gai/model"
-	"github.com/sofiworker/gk/gai/transport/httptransport"
+	"github.com/sofiworker/keel/gai/model"
+	"github.com/sofiworker/keel/gai/transport/httptransport"
 )
 
 var ErrConfig = errors.New("invalid model HTTP adapter configuration")

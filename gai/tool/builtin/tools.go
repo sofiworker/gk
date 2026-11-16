@@ -10,8 +10,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/sofiworker/gk/gai/core"
-	"github.com/sofiworker/gk/gai/tool"
+	"github.com/sofiworker/keel/gai/core"
+	"github.com/sofiworker/keel/gai/tool"
 )
 
 const (

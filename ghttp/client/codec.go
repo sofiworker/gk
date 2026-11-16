@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/sofiworker/gk/ghttp/wire"
+	"github.com/sofiworker/keel/ghttp/wire"
 )
 
 // 本文件定义请求体编码与响应体解码的扩展点，以及内置的 JSON/XML/Text/Form 实现。

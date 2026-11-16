@@ -2,7 +2,7 @@
 
 [English](README.en.md) | 中文
 
-gk 的网络底座模块：事件驱动服务器（reactor）、报文解码（layers）、
+Keel 的网络底座模块：事件驱动服务器（reactor）、报文解码（layers）、
 抓包与转发等。**非 panjf2000/gnet 的 fork。**
 
 > ⚠️ 重构进行中（pre-v1.0.0）：gnet 正按
@@ -53,7 +53,7 @@ Windows 下 `rawcap.OpenLive` 打开失败时返回包含接口名和 Npcap 诊�
 
 ## 抓包文件统一入口
 
-所有抓包文件格式都封装在 `github.com/sofiworker/gk/gnet/pcap` 内。
+所有抓包文件格式都封装在 `github.com/sofiworker/keel/gnet/pcap` 内。
 `NewReader(io.Reader)` 根据文件头自动识别 classic pcap（微秒/纳秒、大小端）和
 pcapng，不要求输入支持 seek；两种格式都返回同一个 `Packet` 类型。
 `NewWriter` 默认输出 classic pcap，通过 `WithFormat(pcap.FormatPCAPNG)` 选择 pcapng。
@@ -106,7 +106,7 @@ Reader 不关闭输入；Writer 的 `Close` 会刷新缓冲并关闭底层 `io.C
 ```go
 package main
 
-import "github.com/sofiworker/gk/gnet"
+import "github.com/sofiworker/keel/gnet"
 
 type echo struct{}
 
@@ -172,5 +172,5 @@ _ = httpSrv.Serve(ln) // net/http 直接消费
 ## 使用示例（layers）
 
 ```go
-import "github.com/sofiworker/gk/gnet/layers"
+import "github.com/sofiworker/keel/gnet/layers"
 ```

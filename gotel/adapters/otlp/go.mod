@@ -1,10 +1,10 @@
-module github.com/sofiworker/gk/gotel/adapters/otlp
+module github.com/sofiworker/keel/gotel/adapters/otlp
 
 go 1.26.0
 
 require (
-	github.com/sofiworker/gk v0.0.0
-	github.com/sofiworker/gk/gotel/adapters/otel v0.0.0
+	github.com/sofiworker/keel v0.0.0
+	github.com/sofiworker/keel/gotel/adapters/otel v0.0.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.38.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.43.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.45.0
@@ -36,6 +36,6 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d // indirect
 )
 
-replace github.com/sofiworker/gk => ../../..
+replace github.com/sofiworker/keel => ../../..
 
-replace github.com/sofiworker/gk/gotel/adapters/otel => ../otel
+replace github.com/sofiworker/keel/gotel/adapters/otel => ../otel

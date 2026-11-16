@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sofiworker/gk/gnet/pcap"
+	"github.com/sofiworker/keel/gnet/pcap"
 )
 
 type writerOutput struct {

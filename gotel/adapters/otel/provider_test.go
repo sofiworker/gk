@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sofiworker/gk/gotel"
+	"github.com/sofiworker/keel/gotel"
 	api "go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -147,6 +147,55 @@ func TestProviderExportsResourcesAndNativeCapabilities(t *testing.T) {
 	}
 	if value, ok := metrics.data.Resource.Set().Value("service.name"); !ok || value.AsString() != "checkout" {
 		t.Fatalf("metric resource = %v", metrics.data.Resource)
+	}
+}
+
+func TestProviderInstrumentationScope(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		opts []ProviderOption
+		want string
+	}{
+		{name: "default", want: "github.com/sofiworker/keel/gotel"},
+		{name: "custom", opts: []ProviderOption{WithInstrumentationName("example/custom")}, want: "example/custom"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			spans := &spanSink{}
+			reader := sdkmetric.NewManualReader()
+			opts := append([]ProviderOption{WithTraceExporter(spans), WithMetricReader(reader)}, tt.opts...)
+			p, err := NewProvider(ctx, opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := p.Shutdown(ctx); err != nil {
+					t.Error(err)
+				}
+			})
+			_, span := p.Start(ctx, "request")
+			span.End()
+			counter, err := p.Counter("requests")
+			if err != nil {
+				t.Fatal(err)
+			}
+			counter.Increment(ctx)
+			if err := p.ForceFlush(ctx); err != nil {
+				t.Fatal(err)
+			}
+			spans.mu.Lock()
+			defer spans.mu.Unlock()
+			if len(spans.spans) != 1 || spans.spans[0].InstrumentationScope().Name != tt.want {
+				t.Fatalf("exported spans = %v, want scope %q", spans.spans, tt.want)
+			}
+			var data metricdata.ResourceMetrics
+			if err := reader.Collect(ctx, &data); err != nil {
+				t.Fatal(err)
+			}
+			if len(data.ScopeMetrics) != 1 || data.ScopeMetrics[0].Scope.Name != tt.want {
+				t.Fatalf("exported metrics = %v, want scope %q", data.ScopeMetrics, tt.want)
+			}
+		})
 	}
 }
 

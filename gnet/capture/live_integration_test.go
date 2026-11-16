@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sofiworker/gk/gnet/layers"
-	"github.com/sofiworker/gk/gnet/pcap"
-	"github.com/sofiworker/gk/gnet/rawcap"
+	"github.com/sofiworker/keel/gnet/layers"
+	"github.com/sofiworker/keel/gnet/pcap"
+	"github.com/sofiworker/keel/gnet/rawcap"
 )
 
 // requireRoot 跳过无 CAP_NET_RAW 的环境。

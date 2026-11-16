@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/sofiworker/gk/ghttp/wire"
-	"github.com/sofiworker/gk/gretry"
+	"github.com/sofiworker/keel/ghttp/wire"
+	"github.com/sofiworker/keel/gretry"
 )
 
 // 本文件实现 client 侧的 Server-Sent Events 消费。线格式解析复用 ghttp/wire

@@ -15,8 +15,8 @@ import (
 	"io"
 	"time"
 
-	"github.com/sofiworker/gk/gnet/craft"
-	"github.com/sofiworker/gk/gnet/packet"
+	"github.com/sofiworker/keel/gnet/craft"
+	"github.com/sofiworker/keel/gnet/packet"
 )
 
 // Source 是报文来源；流尽返回 io.EOF。与 sniff.Source 同形，实现可互用。

@@ -27,7 +27,7 @@ Deciding which dependencies to pull in belongs to the user, not to a cache libra
 ## Installation
 
 ```bash
-go get github.com/sofiworker/gk/gcache
+go get github.com/sofiworker/keel/gcache
 ```
 
 ## Contracts
@@ -114,7 +114,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/sofiworker/gk/gcache"
+	"github.com/sofiworker/keel/gcache"
 )
 
 func main() {
@@ -169,7 +169,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/sofiworker/gk/gcache"
+	"github.com/sofiworker/keel/gcache"
 )
 
 type RedisStore struct{ c *redis.Client }
@@ -289,7 +289,7 @@ package mycache_test
 import (
 	"testing"
 
-	"github.com/sofiworker/gk/gcache/cachetest"
+	"github.com/sofiworker/keel/gcache/cachetest"
 )
 
 func TestRedisStoreConformance(t *testing.T) {

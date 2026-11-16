@@ -9,7 +9,7 @@ import (
 	"os"
 	"runtime/debug"
 
-	"github.com/sofiworker/gk/ghttp/wire"
+	"github.com/sofiworker/keel/ghttp/wire"
 )
 
 // Recovery 返回一个恢复 panic 的中间件。

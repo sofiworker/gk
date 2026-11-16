@@ -2,7 +2,7 @@
 
 English | [中文](README.md)
 
-The gk networking foundation module: event-driven server (reactor), packet
+The Keel networking foundation module: event-driven server (reactor), packet
 decoding (layers), capture and forwarding. **Not a fork of panjf2000/gnet.**
 
 > ⚠️ Under reorganization (pre-v1.0.0): gnet is being restructured into the
@@ -54,7 +54,7 @@ On Windows, `rawcap.OpenLive` returns the interface name and Npcap diagnostic wh
 
 ## Unified capture file API
 
-All capture file formats live in `github.com/sofiworker/gk/gnet/pcap`.
+All capture file formats live in `github.com/sofiworker/keel/gnet/pcap`.
 `NewReader(io.Reader)` detects classic pcap (microseconds/nanoseconds, either byte
 order) and pcapng from the file signature without seeking. Both return the same
 `Packet` type. `NewWriter` defaults to classic pcap; use
@@ -112,7 +112,7 @@ both formats; `FromPCAPNG` and `NewPcapngSource` remain as alias entry points.
 ```go
 package main
 
-import "github.com/sofiworker/gk/gnet"
+import "github.com/sofiworker/keel/gnet"
 
 type echo struct{}
 
@@ -181,5 +181,5 @@ For throughput scenarios prefer the multi-connection benchmarks.
 ## Usage (layers)
 
 ```go
-import "github.com/sofiworker/gk/gnet/layers"
+import "github.com/sofiworker/keel/gnet/layers"
 ```

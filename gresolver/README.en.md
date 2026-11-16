@@ -7,7 +7,7 @@ DNS resolver configuration parsing and utilities.
 ## Usage
 
 ```go
-import "github.com/sofiworker/gk/gresolver"
+import "github.com/sofiworker/keel/gresolver"
 
 conf, _ := gresolver.ParseResolveFile("/etc/resolv.conf")
 ```

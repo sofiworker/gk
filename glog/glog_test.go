@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sofiworker/gk/glog"
+	"github.com/sofiworker/keel/glog"
 )
 
 // --- Helpers ---

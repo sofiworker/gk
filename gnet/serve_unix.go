@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sofiworker/gk/gpoller"
+	"github.com/sofiworker/keel/gpoller"
 	"golang.org/x/sys/unix"
 )
 

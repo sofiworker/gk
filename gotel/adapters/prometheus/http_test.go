@@ -5,8 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/sofiworker/gk/ghttp"
-	ghttpotel "github.com/sofiworker/gk/ghttp/adapters/gotel"
+	"github.com/sofiworker/keel/ghttp"
+	ghttpotel "github.com/sofiworker/keel/ghttp/adapters/gotel"
 )
 
 func TestHTTPMetrics(t *testing.T) {

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sofiworker/gk/gai/core"
-	"github.com/sofiworker/gk/gai/model"
+	"github.com/sofiworker/keel/gai/core"
+	"github.com/sofiworker/keel/gai/model"
 )
 
 var ErrCompaction = errors.New("context compaction failed")

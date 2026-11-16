@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"io"
 
-	"github.com/sofiworker/gk/gai/core"
+	"github.com/sofiworker/keel/gai/core"
 )
 
 // Function 显式使用调用方提供的 Schema 和语义校验，不声称自动执行完整 JSON Schema 校验。

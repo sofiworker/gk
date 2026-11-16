@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/sofiworker/gk/gotel"
-	oteladapter "github.com/sofiworker/gk/gotel/adapters/otel"
+	"github.com/sofiworker/keel/gotel"
+	oteladapter "github.com/sofiworker/keel/gotel/adapters/otel"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 )
 

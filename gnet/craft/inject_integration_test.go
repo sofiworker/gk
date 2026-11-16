@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sofiworker/gk/gnet/layers"
-	"github.com/sofiworker/gk/gnet/rawcap"
+	"github.com/sofiworker/keel/gnet/layers"
+	"github.com/sofiworker/keel/gnet/rawcap"
 )
 
 // TestInjectCaptureLoopback 集成：AF_PACKET 注入 lo → rawcap 回捕解码验证

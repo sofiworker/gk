@@ -13,8 +13,8 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/sofiworker/gk/gerr"
-	"github.com/sofiworker/gk/ghttp/wire"
+	"github.com/sofiworker/keel/gerr"
+	"github.com/sofiworker/keel/ghttp/wire"
 )
 
 // apiNoData 是不读取 body 的 typed handler 工厂。

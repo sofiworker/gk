@@ -8,8 +8,8 @@
 
 ```go
 import (
-    "github.com/sofiworker/gk/gotel"
-    oteladapter "github.com/sofiworker/gk/gotel/adapters/otel"
+    "github.com/sofiworker/keel/gotel"
+    oteladapter "github.com/sofiworker/keel/gotel/adapters/otel"
 )
 
 // traceProvider / meterProvider 由应用初始化，可以配置任意 exporter / reader。

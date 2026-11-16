@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sofiworker/gk/gnet/layers"
-	"github.com/sofiworker/gk/gnet/packet"
+	"github.com/sofiworker/keel/gnet/layers"
+	"github.com/sofiworker/keel/gnet/packet"
 )
 
 // buildTCPPacket 构造 TCP 报文（以太网+IPv4+TCP）。

@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/sofiworker/gk/ghttp/wire"
+	"github.com/sofiworker/keel/ghttp/wire"
 )
 
 // WriteJSON 将数据以 JSON 格式写入响应。

@@ -3,7 +3,7 @@ package ghttpotel
 import (
 	"net/http"
 
-	"github.com/sofiworker/gk/gotel"
+	"github.com/sofiworker/keel/gotel"
 )
 
 // HeaderCarrier 是基于 http.Header 的 gotel.TextMapCarrier。

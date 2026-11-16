@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sofiworker/gk/gotel"
-	oteladapter "github.com/sofiworker/gk/gotel/adapters/otel"
+	"github.com/sofiworker/keel/gotel"
+	oteladapter "github.com/sofiworker/keel/gotel/adapters/otel"
 	metricpb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"

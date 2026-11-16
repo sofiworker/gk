@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sofiworker/gk/ghttp/wire"
-	"github.com/sofiworker/gk/gretry"
+	"github.com/sofiworker/keel/ghttp/wire"
+	"github.com/sofiworker/keel/gretry"
 )
 
 // 本文件实现 HTTP 重试：判定条件与"请求体能否重放"留在本包（HTTP 专属），退避算法复用

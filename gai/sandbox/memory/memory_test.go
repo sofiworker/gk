@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	s "github.com/sofiworker/gk/gai/sandbox"
-	"github.com/sofiworker/gk/gai/sandbox/memory"
+	s "github.com/sofiworker/keel/gai/sandbox"
+	"github.com/sofiworker/keel/gai/sandbox/memory"
 )
 
 var ctx = context.Background()

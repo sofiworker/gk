@@ -8,9 +8,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/sofiworker/gk/gai/agent"
-	"github.com/sofiworker/gk/gai/model"
-	"github.com/sofiworker/gk/gai/output"
+	"github.com/sofiworker/keel/gai/agent"
+	"github.com/sofiworker/keel/gai/model"
+	"github.com/sofiworker/keel/gai/output"
 )
 
 type Person struct {

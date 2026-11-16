@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sofiworker/gk/gnet/forward"
+	"github.com/sofiworker/keel/gnet/forward"
 )
 
 // Rule 是端口转发规则。

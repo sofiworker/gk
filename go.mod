@@ -1,4 +1,4 @@
-module github.com/sofiworker/gk
+module github.com/sofiworker/keel
 
 go 1.25.12
 

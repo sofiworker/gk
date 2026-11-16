@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	s "github.com/sofiworker/gk/gai/sandbox"
+	s "github.com/sofiworker/keel/gai/sandbox"
 )
 
 func (b *Sandbox) read(ctx context.Context, call s.Call, name, kind string) (node, string, error) {

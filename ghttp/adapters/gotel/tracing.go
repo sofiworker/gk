@@ -5,9 +5,9 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/sofiworker/gk/ghttp"
-	"github.com/sofiworker/gk/ghttp/wire"
-	"github.com/sofiworker/gk/gotel"
+	"github.com/sofiworker/keel/ghttp"
+	"github.com/sofiworker/keel/ghttp/wire"
+	"github.com/sofiworker/keel/gotel"
 )
 
 // OTel 语义约定属性名。

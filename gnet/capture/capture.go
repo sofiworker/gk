@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sofiworker/gk/gnet/pcap"
-	"github.com/sofiworker/gk/gnet/rawcap"
+	"github.com/sofiworker/keel/gnet/pcap"
+	"github.com/sofiworker/keel/gnet/rawcap"
 	"golang.org/x/net/bpf"
 )
 

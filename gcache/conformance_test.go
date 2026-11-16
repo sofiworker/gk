@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sofiworker/gk/gcache"
-	"github.com/sofiworker/gk/gcache/cachetest"
+	"github.com/sofiworker/keel/gcache"
+	"github.com/sofiworker/keel/gcache/cachetest"
 )
 
 func TestMemoryCacheConformance(t *testing.T) {

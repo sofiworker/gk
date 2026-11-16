@@ -9,7 +9,7 @@ import (
 	"slices"
 	"time"
 
-	oteladapter "github.com/sofiworker/gk/gotel/adapters/otel"
+	oteladapter "github.com/sofiworker/keel/gotel/adapters/otel"
 )
 
 var ErrInvalidConfig = errors.New("gotel/otlp: invalid configuration")

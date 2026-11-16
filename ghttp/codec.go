@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/sofiworker/gk/ghttp/wire"
+	"github.com/sofiworker/keel/ghttp/wire"
 )
 
 // Input 把请求体解码为 T。通过 WithInput 为路由指定；未指定时使用 JSONInput。

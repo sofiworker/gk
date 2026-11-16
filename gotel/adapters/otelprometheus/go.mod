@@ -1,11 +1,11 @@
-module github.com/sofiworker/gk/gotel/adapters/otelprometheus
+module github.com/sofiworker/keel/gotel/adapters/otelprometheus
 
 go 1.26.0
 
 require (
 	github.com/prometheus/client_golang v1.23.2
-	github.com/sofiworker/gk v0.0.0
-	github.com/sofiworker/gk/gotel/adapters/otel v0.0.0
+	github.com/sofiworker/keel v0.0.0
+	github.com/sofiworker/keel/gotel/adapters/otel v0.0.0
 	go.opentelemetry.io/otel/exporters/prometheus v0.57.0
 	go.opentelemetry.io/otel/metric v1.47.0
 )
@@ -32,6 +32,6 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 )
 
-replace github.com/sofiworker/gk => ../../..
+replace github.com/sofiworker/keel => ../../..
 
-replace github.com/sofiworker/gk/gotel/adapters/otel => ../otel
+replace github.com/sofiworker/keel/gotel/adapters/otel => ../otel

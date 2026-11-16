@@ -6,8 +6,8 @@
 import (
     prom "github.com/prometheus/client_golang/prometheus"
     "github.com/prometheus/client_golang/prometheus/promhttp"
-    "github.com/sofiworker/gk/gotel"
-    promadapter "github.com/sofiworker/gk/gotel/adapters/prometheus"
+    "github.com/sofiworker/keel/gotel"
+    promadapter "github.com/sofiworker/keel/gotel/adapters/prometheus"
 )
 
 registry := prom.NewRegistry()

@@ -4,7 +4,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/sofiworker/gk/gnet/ethtool"
+	"github.com/sofiworker/keel/gnet/ethtool"
 )
 
 func TestHasCarrier(t *testing.T) {

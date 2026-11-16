@@ -8,13 +8,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sofiworker/gk/gai/agent"
-	gcontext "github.com/sofiworker/gk/gai/context"
-	"github.com/sofiworker/gk/gai/core"
-	"github.com/sofiworker/gk/gai/model"
-	runtime "github.com/sofiworker/gk/gai/runtime"
-	"github.com/sofiworker/gk/gai/session"
-	"github.com/sofiworker/gk/gai/session/memory"
+	"github.com/sofiworker/keel/gai/agent"
+	gcontext "github.com/sofiworker/keel/gai/context"
+	"github.com/sofiworker/keel/gai/core"
+	"github.com/sofiworker/keel/gai/model"
+	runtime "github.com/sofiworker/keel/gai/runtime"
+	"github.com/sofiworker/keel/gai/session"
+	"github.com/sofiworker/keel/gai/session/memory"
 )
 
 func compactionRuntime(t *testing.T, store session.Store, summary model.Client, hard int64) (*runtime.Runtime, *int) {

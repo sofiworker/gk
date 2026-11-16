@@ -9,17 +9,17 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/sofiworker/gk/gai/adapters/modelhttp"
-	"github.com/sofiworker/gk/gai/agent"
-	gcontext "github.com/sofiworker/gk/gai/context"
-	"github.com/sofiworker/gk/gai/core"
-	"github.com/sofiworker/gk/gai/model"
-	runtime "github.com/sofiworker/gk/gai/runtime"
-	"github.com/sofiworker/gk/gai/session"
-	"github.com/sofiworker/gk/gai/session/memory"
-	"github.com/sofiworker/gk/gai/tool"
-	"github.com/sofiworker/gk/gai/tool/builtin"
-	"github.com/sofiworker/gk/gai/transport/httptransport"
+	"github.com/sofiworker/keel/gai/adapters/modelhttp"
+	"github.com/sofiworker/keel/gai/agent"
+	gcontext "github.com/sofiworker/keel/gai/context"
+	"github.com/sofiworker/keel/gai/core"
+	"github.com/sofiworker/keel/gai/model"
+	runtime "github.com/sofiworker/keel/gai/runtime"
+	"github.com/sofiworker/keel/gai/session"
+	"github.com/sofiworker/keel/gai/session/memory"
+	"github.com/sofiworker/keel/gai/tool"
+	"github.com/sofiworker/keel/gai/tool/builtin"
+	"github.com/sofiworker/keel/gai/transport/httptransport"
 )
 
 type modelFunc func(context.Context, model.Request) (model.Response, error)

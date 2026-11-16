@@ -6,10 +6,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/sofiworker/gk/gai/core"
-	"github.com/sofiworker/gk/gai/sandbox/memory"
-	"github.com/sofiworker/gk/gai/tool"
-	"github.com/sofiworker/gk/gai/tool/builtin"
+	"github.com/sofiworker/keel/gai/core"
+	"github.com/sofiworker/keel/gai/sandbox/memory"
+	"github.com/sofiworker/keel/gai/tool"
+	"github.com/sofiworker/keel/gai/tool/builtin"
 )
 
 func TestFileTools(t *testing.T) {

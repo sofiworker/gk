@@ -2,7 +2,7 @@
 // Package sandbox exposes environment contracts whose authoritative shared types live in core.
 package sandbox
 
-import "github.com/sofiworker/gk/gai/core"
+import "github.com/sofiworker/keel/gai/core"
 
 type Access = core.Access
 type SyncMode = core.SyncMode

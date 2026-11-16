@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	s "github.com/sofiworker/gk/gai/sandbox"
+	s "github.com/sofiworker/keel/gai/sandbox"
 )
 
 type Limits struct {

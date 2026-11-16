@@ -5,9 +5,9 @@ import (
 	"net"
 	"strconv"
 
-	"github.com/sofiworker/gk/gnet/addr"
-	"github.com/sofiworker/gk/gnet/link"
-	"github.com/sofiworker/gk/gnet/route"
+	"github.com/sofiworker/keel/gnet/addr"
+	"github.com/sofiworker/keel/gnet/link"
+	"github.com/sofiworker/keel/gnet/route"
 )
 
 // Interface 汇总网卡及其常见网络属性。

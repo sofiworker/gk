@@ -43,7 +43,7 @@ import (
     "fmt"
     "time"
 
-    "github.com/sofiworker/gk/ghttp/client"
+    "github.com/sofiworker/keel/ghttp/client"
 )
 
 type User struct {

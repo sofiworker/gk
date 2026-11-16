@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/sofiworker/gk/ghttp"
-	"github.com/sofiworker/gk/gotel"
+	"github.com/sofiworker/keel/ghttp"
+	"github.com/sofiworker/keel/gotel"
 )
 
 // ---- fake tracer ----

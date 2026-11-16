@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/sofiworker/gk/gnet/pcap"
+	"github.com/sofiworker/keel/gnet/pcap"
 )
 
 const (

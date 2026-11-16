@@ -7,8 +7,8 @@ package examples
 import (
 	"context"
 
-	"github.com/sofiworker/gk/gai/agent"
-	"github.com/sofiworker/gk/gai/model"
+	"github.com/sofiworker/keel/gai/agent"
+	"github.com/sofiworker/keel/gai/model"
 )
 
 // RunAgent 使用调用方已配置的模型，执行一次独立请求。

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sofiworker/gk/gnet/rawcap"
+	"github.com/sofiworker/keel/gnet/rawcap"
 )
 
 type stubHandle struct {

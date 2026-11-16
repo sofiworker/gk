@@ -1,11 +1,11 @@
 // Package gpoller 提供网络事件运行时原语：readiness 事件引擎、completion 引擎、
 // 时间轮与环形缓冲。本包属于基础契约层·运行时原语组，仅依赖标准库与
-// x/sys，不得 import 任何 gk 包。
+// x/sys，不得 import 任何 Keel 包。
 //
 // Package gpoller provides network event runtime primitives: a readiness event
 // engine, a completion engine, a timing wheel, and a ring buffer. It belongs to
 // the runtime-primitive group of the base contract layer: stdlib and x/sys only,
-// no gk imports allowed.
+// no Keel imports allowed.
 package gpoller
 
 import (

@@ -1,11 +1,11 @@
-module github.com/sofiworker/gk/gotel/adapters/prometheus
+module github.com/sofiworker/keel/gotel/adapters/prometheus
 
 go 1.25.12
 
 require (
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
-	github.com/sofiworker/gk v0.0.0
+	github.com/sofiworker/keel v0.0.0
 )
 
 require (
@@ -20,4 +20,4 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 )
 
-replace github.com/sofiworker/gk => ../../..
+replace github.com/sofiworker/keel => ../../..

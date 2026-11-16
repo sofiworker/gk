@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/sofiworker/gk/gai/core"
-	"github.com/sofiworker/gk/gai/model"
-	"github.com/sofiworker/gk/gai/transport/httptransport"
+	"github.com/sofiworker/keel/gai/core"
+	"github.com/sofiworker/keel/gai/model"
+	"github.com/sofiworker/keel/gai/transport/httptransport"
 )
 
 type testProtocol struct {

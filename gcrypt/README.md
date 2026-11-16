@@ -7,7 +7,7 @@
 ## 用法
 
 ```go
-import "github.com/sofiworker/gk/gcrypt"
+import "github.com/sofiworker/keel/gcrypt"
 
 key, _ := gcrypt.GenerateAESKey(32)
 encrypted, _ := gcrypt.AESEncrypt(data, key)

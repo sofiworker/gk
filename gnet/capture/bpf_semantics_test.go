@@ -5,7 +5,7 @@ import (
 	"os/exec"
 	"testing"
 
-	"github.com/sofiworker/gk/gnet/layers"
+	"github.com/sofiworker/keel/gnet/layers"
 	"golang.org/x/net/bpf"
 )
 

@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sofiworker/gk/gai/core"
-	"github.com/sofiworker/gk/gai/session"
+	"github.com/sofiworker/keel/gai/core"
+	"github.com/sofiworker/keel/gai/session"
 )
 
 type revision struct {

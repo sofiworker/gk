@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/sofiworker/gk/ghttp/wire"
+	"github.com/sofiworker/keel/ghttp/wire"
 )
 
 // StatusCoder 是携带 HTTP 状态码的错误契约，与 wire.StatusCoder 及 ghttp.StatusCoder 是同一类型。

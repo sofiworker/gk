@@ -8,14 +8,14 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/sofiworker/gk/gai/adapters/modelhttp"
-	"github.com/sofiworker/gk/gai/agent"
-	"github.com/sofiworker/gk/gai/core"
-	"github.com/sofiworker/gk/gai/model"
-	"github.com/sofiworker/gk/gai/sandbox/memory"
-	"github.com/sofiworker/gk/gai/tool"
-	"github.com/sofiworker/gk/gai/tool/builtin"
-	"github.com/sofiworker/gk/gai/transport/httptransport"
+	"github.com/sofiworker/keel/gai/adapters/modelhttp"
+	"github.com/sofiworker/keel/gai/agent"
+	"github.com/sofiworker/keel/gai/core"
+	"github.com/sofiworker/keel/gai/model"
+	"github.com/sofiworker/keel/gai/sandbox/memory"
+	"github.com/sofiworker/keel/gai/tool"
+	"github.com/sofiworker/keel/gai/tool/builtin"
+	"github.com/sofiworker/keel/gai/transport/httptransport"
 )
 
 func TestHTTPToolLoop(t *testing.T) {

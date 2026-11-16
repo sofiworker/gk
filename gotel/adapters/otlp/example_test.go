@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	oteladapter "github.com/sofiworker/gk/gotel/adapters/otel"
-	"github.com/sofiworker/gk/gotel/adapters/otlp"
+	oteladapter "github.com/sofiworker/keel/gotel/adapters/otel"
+	"github.com/sofiworker/keel/gotel/adapters/otlp"
 )
 
 func ExampleNew_jaeger() {

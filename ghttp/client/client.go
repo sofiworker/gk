@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/sofiworker/gk/ghttp/wire"
+	"github.com/sofiworker/keel/ghttp/wire"
 )
 
 // defaultResponseBodyLimit 是响应体读入内存的默认上限。取 32 MiB：足够容纳常规 API 的

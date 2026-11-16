@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/sofiworker/gk/gai/core"
-	"github.com/sofiworker/gk/gai/model"
-	runtime "github.com/sofiworker/gk/gai/runtime"
-	"github.com/sofiworker/gk/gai/session/memory"
+	"github.com/sofiworker/keel/gai/core"
+	"github.com/sofiworker/keel/gai/model"
+	runtime "github.com/sofiworker/keel/gai/runtime"
+	"github.com/sofiworker/keel/gai/session/memory"
 )
 
 func ExampleRuntime_Run() {

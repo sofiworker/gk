@@ -4,7 +4,7 @@ import (
 	"errors"
 	"strconv"
 
-	"github.com/sofiworker/gk/gerr"
+	"github.com/sofiworker/keel/gerr"
 )
 
 // 本文件把 client 的错误接入基础契约层的 gerr：领域错误的 Kind 语义在仓库里只定义一次，

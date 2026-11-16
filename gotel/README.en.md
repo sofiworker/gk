@@ -10,11 +10,11 @@ The core package imports only the standard library. `Tracer` and `Meter` are ind
 
 | Import | Capabilities | Dependency boundary |
 | --- | --- | --- |
-| `github.com/sofiworker/gk/gotel` | Interfaces, typed options, errors | Root module; standard library imports only |
-| `github.com/sofiworker/gk/gotel/adapters/otel` | OTel tracing and metrics | Separate `go.mod` / `go.sum` |
-| `github.com/sofiworker/gk/gotel/adapters/prometheus` | Native Prometheus metrics | Separate `go.mod` / `go.sum` |
-| `github.com/sofiworker/gk/gotel/adapters/otlp` | Managed traces/metrics over OTLP HTTP or gRPC | Separate module; no Prometheus dependency |
-| `github.com/sofiworker/gk/gotel/adapters/otelprometheus` | Managed OTel Prometheus exporter and scrape handler | Separate module; no OTLP exporter dependency |
+| `github.com/sofiworker/keel/gotel` | Interfaces, typed options, errors | Root module; standard library imports only |
+| `github.com/sofiworker/keel/gotel/adapters/otel` | OTel tracing and metrics | Separate `go.mod` / `go.sum` |
+| `github.com/sofiworker/keel/gotel/adapters/prometheus` | Native Prometheus metrics | Separate `go.mod` / `go.sum` |
+| `github.com/sofiworker/keel/gotel/adapters/otlp` | Managed traces/metrics over OTLP HTTP or gRPC | Separate module; no Prometheus dependency |
+| `github.com/sofiworker/keel/gotel/adapters/otelprometheus` | Managed OTel Prometheus exporter and scrape handler | Separate module; no OTLP exporter dependency |
 
 Like separate Rust crates, adapters are opt-in modules. The root module does not require them, so using gotel does not add vendor SDK dependencies. Build tags cannot provide this isolation because `go mod tidy` examines code with custom build tags too.
 
