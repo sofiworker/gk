@@ -191,18 +191,27 @@ func providerSettings() Option {
 }
 
 func TestHTTPExport(t *testing.T) {
-	for _, secure := range []bool{false, true} {
-		t.Run(map[bool]string{false: "http", true: "https"}[secure], func(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		secure   bool
+		basePath string
+	}{
+		{name: "http"},
+		{name: "https", secure: true},
+		{name: "http_prefix", basePath: "/collector"},
+		{name: "https_prefix", secure: true, basePath: "/collector"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
 			capture := &capturedExports{}
 			server := httptest.NewUnstartedServer(capture)
-			if secure {
+			if tt.secure {
 				server.StartTLS()
 			} else {
 				server.Start()
 			}
 			defer server.Close()
-			opts := []Option{WithEndpointURL(server.URL + "/collector"), WithHeaders(map[string]string{"Authorization": "Bearer test"}), WithMetricInterval(time.Hour), providerSettings()}
-			if secure {
+			opts := []Option{WithEndpointURL(server.URL + tt.basePath), WithHeaders(map[string]string{"Authorization": "Bearer test"}), WithMetricInterval(time.Hour), providerSettings()}
+			if tt.secure {
 				opts = append(opts, WithTLSConfig(server.Client().Transport.(*http.Transport).TLSClientConfig))
 			}
 			p, err := New(context.Background(), opts...)
@@ -225,7 +234,7 @@ func TestHTTPExport(t *testing.T) {
 			capture.mu.Lock()
 			defer capture.mu.Unlock()
 			for _, path := range capture.paths {
-				if path != "/collector/v1/traces" && path != "/collector/v1/metrics" {
+				if path != tt.basePath+"/v1/traces" && path != tt.basePath+"/v1/metrics" {
 					t.Fatalf("path = %q", path)
 				}
 			}

@@ -44,6 +44,16 @@ jobs:
       matrix:
         adapter: [otel, prometheus, otlp, otelprometheus]
         go-version: ["1.25.x", "stable"]
+        exclude:
+          - adapter: otlp
+            go-version: "1.25.x"
+          - adapter: otelprometheus
+            go-version: "1.25.x"
+        include:
+          - adapter: otlp
+            go-version: "1.26.x"
+          - adapter: otelprometheus
+            go-version: "1.26.x"
     defaults:
       run:
         working-directory: gotel/adapters/${{ matrix.adapter }}

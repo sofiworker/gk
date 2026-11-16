@@ -2,6 +2,8 @@
 
 独立 Go module：创建 OTel Prometheus exporter/reader、托管 Provider、独立 Registry 与抓取 handler。不依赖 OTLP exporter，不自动启动 HTTP 服务，不修改全局 Registry 或 OTel provider。
 
+要求 Go 1.26.0+（OpenTelemetry SDK v1.47 的最低版本）。
+
 ```go
 import (
     "github.com/sofiworker/gk/gotel"

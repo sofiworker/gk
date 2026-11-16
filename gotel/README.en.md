@@ -32,6 +32,8 @@ Span options are backend-independent: `WithSpanKind`, `WithSpanAttributes`, `Wit
 
 ## Migration and development
 
+The root module and the `otel` and native `prometheus` adapters require Go 1.25.12+. The `otlp` and `otelprometheus` adapters require Go 1.26.0+ for OpenTelemetry v1.47. CI checks each adapter on its minimum supported Go version and the latest stable release.
+
 Breaking changes: Meter creation methods now return errors, Meter adds UpDownCounter, and untyped options become typed function options. HTTP `Metrics` now returns `(ghttp.Middleware, error)`; handle registration errors before serving.
 
 Root `go test ./...` excludes nested modules. Run `go test ./gotel ./ghttp/adapters/gotel` and `make check-adapters`, or run `go mod tidy`, `go vet ./...`, `go test ./...` in each of the four adapter directories. CI checks them separately. OTLP tests decode actual requests at local HTTP/gRPC receivers; Prometheus tests scrape the handler, without external backend services. No global go.work is required.

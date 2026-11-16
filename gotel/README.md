@@ -56,6 +56,8 @@ requests.Increment(ctx, gotel.KV("method", "GET"), gotel.KV("route", "/users/:id
 
 ## 兼容性与开发
 
+根模块、`otel` 和原生 `prometheus` 适配器要求 Go 1.25.12+；`otlp` 和 `otelprometheus` 适配器因 OpenTelemetry v1.47 依赖要求 Go 1.26.0+。CI 分别使用各模块最低支持的 Go 版本及最新稳定版验证。
+
 本次为破坏性 API 调整：`Meter` 各创建方法增加 `error` 返回值，增加 `UpDownCounter`；原来的任意类型 option 改为类型明确的函数选项。HTTP `Metrics` 也改为返回 `(ghttp.Middleware, error)`，必须在启动服务前处理创建错误。
 
 根目录 `go test ./...` 不进入嵌套 module。分别检查：

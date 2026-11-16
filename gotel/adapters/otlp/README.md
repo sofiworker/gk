@@ -2,6 +2,8 @@
 
 独立 Go module，创建托管 OTel Provider，支持 tracing 和 metrics 的 OTLP HTTP/protobuf、gRPC 导出。使用官方 exporter，包括重试、TLS 和环境变量配置；不依赖 Prometheus SDK。
 
+要求 Go 1.26.0+（OpenTelemetry v1.47 API 的最低版本）。
+
 ## Jaeger
 
 Jaeger 通过 OTLP 接收 traces，无需 Jaeger 专用 exporter。对接已启用 OTLP 的 Jaeger：

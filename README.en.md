@@ -31,6 +31,8 @@ A collection of Go libraries for building robust applications; packages are inde
 
 ## Installation
 
+The root module requires Go 1.25.12+. The optional `gotel/adapters/otlp` and `gotel/adapters/otelprometheus` modules require Go 1.26.0+ for their OpenTelemetry dependencies.
+
 ```bash
 go get github.com/sofiworker/gk
 ```
