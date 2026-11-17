@@ -60,7 +60,7 @@ jobs:
             go-version: "1.26.x"
     defaults:
       run:
-        working-directory: gotel/adapters/${{ matrix.adapter }}
+        working-directory: otel/adapters/${{ matrix.adapter }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -68,7 +68,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ matrix.go-version }}
-          cache-dependency-path: gotel/adapters/${{ matrix.adapter }}/go.sum
+          cache-dependency-path: otel/adapters/${{ matrix.adapter }}/go.sum
       - name: Check module files
         run: go mod tidy -diff
       - name: Vet
@@ -143,28 +143,28 @@ jobs:
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.13.2
-          working-directory: gotel/adapters/otel
+          working-directory: otel/adapters/otel
           args: ./...
 
       - name: Lint Prometheus adapter
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.13.2
-          working-directory: gotel/adapters/prometheus
+          working-directory: otel/adapters/prometheus
           args: ./...
 
       - name: Lint OTLP adapter
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.13.2
-          working-directory: gotel/adapters/otlp
+          working-directory: otel/adapters/otlp
           args: ./...
 
       - name: Lint OTel Prometheus adapter
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.13.2
-          working-directory: gotel/adapters/otelprometheus
+          working-directory: otel/adapters/otelprometheus
           args: ./...
 
   race:

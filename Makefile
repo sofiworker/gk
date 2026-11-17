@@ -13,7 +13,7 @@ GOFMT ?= gofmt
 help:
 	@echo "Available targets:"
 	@echo "  make fmt         Format Go code with go fmt"
-	@echo "  make fmt-check   Check formatting (requires Go 1.27+ gofmt for ghttp/*.go with //go:build go1.27)"
+	@echo "  make fmt-check   Check formatting (requires Go 1.27+ gofmt for http/*.go with //go:build go1.27)"
 	@echo "  make vet         Run go vet"
 	@echo "  make test        Run unit tests"
 	@echo "  make test-race   Run unit tests with the race detector"
@@ -21,7 +21,7 @@ help:
 	@echo "  make lint        Run golangci-lint"
 	@echo "  make tidy        Run go mod tidy"
 	@echo "  make check       Run fmt, vet, and test"
-	@echo "  make check-adapters  Check each optional gotel backend module"
+	@echo "  make check-adapters  Check each optional otel backend module"
 	@echo "  make ci          Run vet and test without modifying files"
 
 fmt:
@@ -52,10 +52,10 @@ tidy:
 check: fmt vet test
 
 check-adapters:
-	$(MAKE) -C gotel/adapters/otel -f ../../../Makefile check PKGS=./...
-	$(MAKE) -C gotel/adapters/prometheus -f ../../../Makefile check PKGS=./...
-	$(MAKE) -C gotel/adapters/otlp -f ../../../Makefile check PKGS=./...
-	$(MAKE) -C gotel/adapters/otelprometheus -f ../../../Makefile check PKGS=./...
+	$(MAKE) -C otel/adapters/otel -f ../../../Makefile check PKGS=./...
+	$(MAKE) -C otel/adapters/prometheus -f ../../../Makefile check PKGS=./...
+	$(MAKE) -C otel/adapters/otlp -f ../../../Makefile check PKGS=./...
+	$(MAKE) -C otel/adapters/otelprometheus -f ../../../Makefile check PKGS=./...
 
 ci: vet test
 

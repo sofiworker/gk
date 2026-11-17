@@ -6,5 +6,6 @@
 
 ### Changed
 
-- **破坏性变更：** 项目更名为 Keel，根 module 从 `github.com/sofiworker/gk` 迁移到 `github.com/sofiworker/keel`，4 个独立的 `gotel/adapters/*` module 同步迁移。使用者需更新 Go import 和 `go.mod` 中的旧路径，然后运行 `go mod tidy` 与项目测试；子包名保持不变。迁移说明见中英文 README。
+- **破坏性变更：** 项目更名为 Keel，根 module 从 `github.com/sofiworker/gk` 迁移到 `github.com/sofiworker/keel`，4 个独立的 `otel/adapters/*` module 同步迁移。使用者需更新 Go import 和 `go.mod` 中的旧路径，然后运行 `go mod tidy` 与项目测试；包目录与导入路径的后续调整见[迁移指南](docs/zh-CN/migration.md)。
 - OpenTelemetry 适配器默认 instrumentation scope 名称改为 `github.com/sofiworker/keel/gotel`；依赖旧名称的查询需更新，或通过 `WithInstrumentationName` 显式保留原名称。
+- 文档统一为英文 README.md、中文 README.zh-CN.md 与 docs/、docs/zh-CN/ 同名主题页；原包内 README 迁入文档目录，补充入门、架构、平台、迁移和开发导航。
